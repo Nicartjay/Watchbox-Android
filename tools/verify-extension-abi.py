@@ -109,7 +109,13 @@ CHECKS = [
  ("animesource.model.Video", ["getQuality","getUrl","getVideoUrl","getHeaders",
    "getSubtitleTracks","getAudioTracks","<init>"]),
  ("animesource.online.AnimeHttpSource", ["getHeaders","getId","getNetwork",
-   "headersBuilder","setUrlWithoutDomain","getBaseUrl","getClient","generateId"]),
+   "headersBuilder","setUrlWithoutDomain","getBaseUrl","getClient","generateId",
+   # Related-anime suggestions. Extensions were already overriding these while
+   # AnimeHttpSource did not declare them, so the overrides were dead code and
+   # suggestions silently never appeared.
+   "relatedAnimeListRequest","relatedAnimeListParse","fetchRelatedAnimeList",
+   "getSupportsRelatedAnimes","getDisableRelatedAnimes",
+   "getDisableRelatedAnimesBySearch"]),
  ("animesource.online.ParsedAnimeHttpSource", ["getHeaders","getNetwork",
    "headersBuilder","setUrlWithoutDomain"]),
  ("animesource.AnimeSource", ["getId","getName","getLang","getAnimeDetails",

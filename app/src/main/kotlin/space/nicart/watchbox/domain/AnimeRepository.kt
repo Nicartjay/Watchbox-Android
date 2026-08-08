@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -245,6 +246,85 @@ class AnimeRepository(
         return if (hasNumbers) mapped.sortedBy { it.number } else mapped.reversed()
     }
 
+    // ----------------------------------------------------------- suggestions
+
+    /**
+     * Related-anime suggestions for a title.
+     *
+     * Two tiers, in the order Anikku uses:
+     *
+     *  1. **The source's own related feed** (`fetchRelatedAnimeList`). Best
+     *     quality, because the site itself decided what is related — but most
+     *     extensions do not implement it and throw.
+     *  2. **A keyword search on the same source.** Titles are split into
+     *     meaningful words and the longest is searched, which finds sequels and
+     *     spin-offs sharing a franchise name.
+     *
+     * Fetched separately from [detail] rather than inline: tier 2 is a second
+     * network round-trip, and blocking the detail screen on it would delay the
+     * episode list for a section the user may never scroll to.
+     */
+    suspend fun suggestions(
+        sourceId: Long,
+        animeUrl: String,
+        title: String,
+    ): List<AnimeCard> {
+        val source = extensions.catalogueSourceById(sourceId) ?: return emptyList()
+        val stub = SAnime.create().apply { url = animeUrl; this.title = title }
+
+        val http = source as? AnimeHttpSource
+
+        // Tier 1: the source's own related list.
+        if (http?.disableRelatedAnimes != true) {
+            val own = guarded("related(${source.name})") {
+                withTimeout(SOURCE_TIMEOUT_MS) {
+                    http?.fetchRelatedAnimeList(stub)
+                }
+            }.orEmpty()
+
+            if (own.isNotEmpty()) return own.toCards(source, excluding = animeUrl)
+        }
+
+        // Tier 2: keyword search, unless the source says its search is unhelpful.
+        if (http?.disableRelatedAnimesBySearch == true) return emptyList()
+
+        val keyword = title.toSearchKeyword() ?: return emptyList()
+
+        val found = guarded("relatedSearch(${source.name})") {
+            withTimeout(SOURCE_TIMEOUT_MS) {
+                source.getSearchAnime(1, keyword, AnimeFilterList()).animes
+            }
+        }.orEmpty()
+
+        return found.toCards(source, excluding = animeUrl)
+    }
+
+    private fun List<SAnime>.toCards(
+        source: AnimeCatalogueSource,
+        excluding: String,
+    ): List<AnimeCard> = asSequence()
+        // Drop the title being viewed; a source's own related feed often
+        // includes it, and search almost always does.
+        .filter { it.url != excluding }
+        .filter { it.title.isNotBlank() }
+        .distinctBy { it.url }
+        .take(MAX_SUGGESTIONS)
+        .map { it.toCard(source) }
+        .toList()
+
+    /**
+     * Picks a search term from a title.
+     *
+     * The longest word is used because that is the most distinctive part of a
+     * franchise name; short words and generic season markers match everything.
+     */
+    private fun String.toSearchKeyword(): String? = TmdbApi.cleanTitle(this)
+        .split(' ', ':', '-', '–', '·')
+        .map { it.trim() }
+        .filter { it.length >= MIN_KEYWORD_LENGTH }
+        .filterNot { it.lowercase() in GENERIC_WORDS }
+        .maxByOrNull { it.length }
+
     // -------------------------------------------------------------- playback
 
     /**
@@ -326,6 +406,14 @@ class AnimeRepository(
         const val TAG = "AnimeRepository"
         const val NO_SOURCES = "No sources installed yet."
         const val SOURCE_TIMEOUT_MS = 15_000L
+        const val MAX_SUGGESTIONS = 20
+        const val MIN_KEYWORD_LENGTH = 4
+
+        /** Words too common to distinguish one title from another. */
+        val GENERIC_WORDS = setOf(
+            "the", "and", "movie", "season", "part", "final", "special",
+            "series", "story", "anime", "film", "episode", "chapter",
+        )
         const val MAX_ROWS = 12
         const val MAX_HERO = 6
     }

@@ -3,6 +3,7 @@ package space.nicart.watchbox.ui.detail
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -10,6 +11,7 @@ import kotlinx.coroutines.launch
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.data.local.WatchHistoryEntry
 import space.nicart.watchbox.data.local.WatchlistEntry
+import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.domain.AnimeDetail
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.EpisodeEntry
@@ -18,6 +20,8 @@ data class DetailUiState(
     val isLoading: Boolean = true,
     val detail: AnimeDetail? = null,
     val inWatchlist: Boolean = false,
+    val suggestions: List<AnimeCard> = emptyList(),
+    val suggestionsLoading: Boolean = false,
     val history: WatchHistoryEntry? = null,
     val errorMessage: String? = null,
 ) {
@@ -60,6 +64,8 @@ class DetailViewModel(
     private val animeUrl: String,
 ) : ViewModel() {
 
+    private var suggestionsJob: Job? = null
+
     private val _uiState = MutableStateFlow(DetailUiState())
     val uiState: StateFlow<DetailUiState> = _uiState.asStateFlow()
 
@@ -79,6 +85,10 @@ class DetailViewModel(
                         detail = detail,
                         errorMessage = null,
                     )
+                    // Fetched after the detail is on screen: tier 2 is a second
+                    // network round-trip, and the episode list should not wait on
+                    // a section the user may never scroll to.
+                    loadSuggestions(detail)
                 }
                 .onFailure { error ->
                     _uiState.value = _uiState.value.copy(
@@ -150,6 +160,23 @@ class DetailViewModel(
                     progress = 1f,
                     updatedAt = System.currentTimeMillis(),
                 ),
+            )
+        }
+    }
+
+    private fun loadSuggestions(detail: AnimeDetail) {
+        suggestionsJob?.cancel()
+        _uiState.value = _uiState.value.copy(suggestionsLoading = true)
+
+        suggestionsJob = viewModelScope.launch {
+            val found = repository.suggestions(
+                sourceId = detail.sourceId,
+                animeUrl = detail.url,
+                title = detail.title,
+            )
+            _uiState.value = _uiState.value.copy(
+                suggestions = found,
+                suggestionsLoading = false,
             )
         }
     }

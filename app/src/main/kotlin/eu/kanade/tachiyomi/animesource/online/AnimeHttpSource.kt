@@ -159,6 +159,50 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
      */
     protected open fun List<Video>.sort(): List<Video> = this
 
+    // -------------------------------------------------------- related anime
+
+    /**
+     * Related-anime suggestions.
+     *
+     * These members are part of the ABI and were already being overridden by
+     * real extensions (AnimePahe overrides both `relatedAnimeListRequest` and
+     * `relatedAnimeListParse`, Cineby the request, AniDB the flag) while this
+     * class did not declare them — so those overrides were dead code and the
+     * suggestions never appeared. Declaring them here activates the source's own
+     * implementation.
+     *
+     * Signatures are fixed: `protected` visibility and these exact parameter and
+     * return types, otherwise an override links as a separate method and the
+     * default below runs instead.
+     */
+    open val supportsRelatedAnimes: Boolean get() = false
+
+    /** Set by a source that has no usable related feed at all. */
+    open val disableRelatedAnimes: Boolean get() = false
+
+    /**
+     * Set by a source whose own search makes a poor fallback, e.g. AniDB, where
+     * searching the title returns the same entry rather than similar ones.
+     */
+    open val disableRelatedAnimesBySearch: Boolean get() = false
+
+    /**
+     * Fetches the source's own related list.
+     *
+     * Throws when the source does not implement it; the host treats that as
+     * "no extension-provided suggestions" and falls back to a keyword search.
+     */
+    open suspend fun fetchRelatedAnimeList(anime: SAnime): List<SAnime> {
+        val response = client.newCall(relatedAnimeListRequest(anime)).awaitSuccess()
+        return response.use { relatedAnimeListParse(it) }
+    }
+
+    protected open fun relatedAnimeListRequest(anime: SAnime): Request =
+        GET(baseUrl + anime.url, headers)
+
+    protected open fun relatedAnimeListParse(response: Response): List<SAnime> =
+        throw UnsupportedOperationException("Not implemented")
+
     // -------------------------------------------------------------- helpers
 
     /** Stores [url] on [anime] with [baseUrl] stripped, so a domain change survives. */

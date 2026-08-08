@@ -113,6 +113,9 @@ fun WatchBoxApp(
                 DetailScreen(
                     viewModel = viewModel,
                     onBack = navController::popBackStack,
+                    // A suggestion opens its own detail page, pushed onto the
+                    // stack so Back returns to the title it was suggested from.
+                    onOpenAnime = navController::openAnime,
                     onPlay = { episode, resumeMs ->
                         navController.navigate(
                             Routes.Player(

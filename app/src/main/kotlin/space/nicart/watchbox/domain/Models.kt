@@ -87,6 +87,8 @@ data class AnimeDetail(
     val genres: List<String>,
     val status: AnimeStatus,
     val episodes: List<EpisodeEntry>,
+    /** Related-anime suggestions, empty until they have been fetched. */
+    val suggestions: List<AnimeCard> = emptyList(),
 ) {
     val key: String get() = "$sourceId::$url"
 

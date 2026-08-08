@@ -24,11 +24,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.R
+import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.WbBackButton
 import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
+import space.nicart.watchbox.ui.components.WbPosterCard
+import space.nicart.watchbox.ui.components.WbShelfSection
 
 /**
  * Title detail page.
@@ -45,6 +48,7 @@ fun DetailScreen(
     viewModel: DetailViewModel,
     onBack: () -> Unit,
     onPlay: (episode: EpisodeEntry, resumeMs: Long) -> Unit,
+    onOpenAnime: (AnimeCard) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -179,6 +183,28 @@ fun DetailScreen(
                                 onPlay = { onPlay(it, 0L) },
                                 modifier = Modifier.padding(bottom = 20.dp),
                             )
+                        }
+                    }
+
+                    // Suggestions load after the detail, so the section simply
+                    // does not appear until there is something to show. No
+                    // skeleton: an empty result is a normal outcome for sources
+                    // with neither a related feed nor useful search.
+                    if (state.suggestions.isNotEmpty()) {
+                        item(key = "suggestions") {
+                            WbShelfSection(
+                                title = stringResource(R.string.detail_more_like_this),
+                                items = state.suggestions,
+                                key = { it.key },
+                                horizontalPadding = contentPadding,
+                                modifier = Modifier.padding(bottom = 20.dp),
+                            ) { card ->
+                                WbPosterCard(
+                                    card = card,
+                                    subtitle = card.sourceName,
+                                    onClick = { onOpenAnime(card) },
+                                )
+                            }
                         }
                     }
                 }
