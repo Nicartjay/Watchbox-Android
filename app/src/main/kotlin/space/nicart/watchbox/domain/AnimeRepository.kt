@@ -35,13 +35,26 @@ class AnimeRepository(private val extensions: ExtensionManager) {
         val sources = extensions.catalogueSources()
         if (sources.isEmpty()) error(NO_SOURCES)
 
+        sourceErrors.clear()
+
         val rows = coroutineScope {
             sources.take(MAX_ROWS)
                 .map { source -> async { source.popularRow() } }
                 .mapNotNull { it.await() }
         }
 
-        if (rows.isEmpty()) error("No source returned any titles.")
+        if (rows.isEmpty()) {
+            // Report what actually went wrong per source. Most failures here are
+            // the source rejecting the request (WAF / TLS), not a bug in the app,
+            // and a generic "nothing found" makes that impossible to tell apart.
+            val detail = sourceErrors.entries
+                .joinToString("\n") { (id, message) ->
+                    val name = extensions.catalogueSourceById(id)?.name ?: "Source $id"
+                    "$name: $message"
+                }
+                .ifBlank { "No source returned any titles." }
+            error(detail)
+        }
 
         HomeFeed(
             hero = rows.first().items.take(MAX_HERO),
@@ -49,7 +62,10 @@ class AnimeRepository(private val extensions: ExtensionManager) {
         )
     }
 
-    private suspend fun AnimeCatalogueSource.popularRow(): AnimeRow? = guarded {
+    private suspend fun AnimeCatalogueSource.popularRow(): AnimeRow? = guarded(
+        what = "popular($name)",
+        sourceId = id,
+    ) {
         val page = withTimeout(SOURCE_TIMEOUT_MS) { getPopularAnime(1) }
         val items = page.animes.map { it.toCard(this) }
         if (items.isEmpty()) return@guarded null
@@ -108,7 +124,7 @@ class AnimeRepository(private val extensions: ExtensionManager) {
             sources
                 .map { source ->
                     async {
-                        guarded {
+                        guarded("search(${source.name})", source.id) {
                             val page = withTimeout(SOURCE_TIMEOUT_MS) {
                                 source.getSearchAnime(1, query, AnimeFilterList())
                             }
@@ -208,13 +224,46 @@ class AnimeRepository(private val extensions: ExtensionManager) {
      * mismatch surfaces as `NoSuchMethodError` or `AbstractMethodError` rather
      * than an `Exception`, and one bad source should not break the whole feed.
      */
-    private inline fun <T> guarded(block: () -> T?): T? = try {
+    private inline fun <T> guarded(
+        what: String,
+        sourceId: Long? = null,
+        block: () -> T?,
+    ): T? = try {
         block()
-    } catch (_: Throwable) {
+    } catch (t: Throwable) {
+        sourceId?.let { sourceErrors[it] = t.friendlyMessage() }
+        // Logged, not silently dropped: these are the failures that matter most
+        // when diagnosing a source, and they arrive as NoSuchMethodError or
+        // AbstractMethodError rather than Exception because extensions are
+        // linked at runtime.
+        android.util.Log.w(TAG, "$what failed: ${t::class.java.simpleName}: ${t.message}", t)
         null
     }
 
+    /** Last failure per source, so the UI can explain an empty feed. */
+    val sourceErrors: MutableMap<Long, String> = java.util.concurrent.ConcurrentHashMap()
+
+    /**
+     * Turns a raw throwable into something a user can act on.
+     *
+     * Most source failures are the site refusing the request rather than a bug,
+     * so the common network cases get plain wording; anything unexpected keeps
+     * its class name because that is what makes an ABI mismatch identifiable.
+     */
+    private fun Throwable.friendlyMessage(): String = when {
+        this is javax.net.ssl.SSLException ->
+            "TLS handshake failed - the site rejected the connection"
+        this is java.net.UnknownHostException -> "Host not found"
+        this is java.net.SocketTimeoutException ||
+            this is kotlinx.coroutines.TimeoutCancellationException -> "Timed out"
+        this is NoSuchMethodError || this is AbstractMethodError ||
+            this is NoClassDefFoundError ->
+            "Incompatible extension (${this::class.java.simpleName})"
+        else -> message?.takeIf { it.isNotBlank() } ?: this::class.java.simpleName
+    }
+
     private companion object {
+        const val TAG = "AnimeRepository"
         const val NO_SOURCES = "No sources installed yet."
         const val SOURCE_TIMEOUT_MS = 15_000L
         const val MAX_ROWS = 12

@@ -30,9 +30,28 @@
     <init>();
 }
 
-# Injekt resolves NetworkHelper and Application by type token, so generic
-# signatures must survive.
+# Injekt resolves types by reflection, not by a type token it is handed.
+#
+# `addSingleton<T>()` / `injectLazy<T>()` compile to an anonymous subclass of
+# FullTypeReference, whose constructor reads
+# `getClass().getGenericSuperclass()` and throws
+# "TypeReference constructed without actual type information" when that comes
+# back as a plain Class instead of a ParameterizedType.
+#
+# Two things break it, and both need suppressing:
+#   * dropping the Signature/EnclosingMethod attributes erases the type argument;
+#   * R8 class merging flattens the anonymous subclass into its base, which
+#     removes the generic superclass relationship entirely.
+#
+# This crashed the first 2.0.0 release on launch while the debug build ran fine,
+# so it is minification-only and invisible without an instrumented run.
+-keepattributes Signature, InnerClasses, EnclosingMethod
 -keep class uy.kohesive.injekt.** { *; }
+-keep,allowobfuscation class uy.kohesive.injekt.api.TypeReference
+-keep,allowobfuscation class uy.kohesive.injekt.api.FullTypeReference
+-keep,allowobfuscation class * extends uy.kohesive.injekt.api.FullTypeReference
+-keep,allowobfuscation class * implements uy.kohesive.injekt.api.TypeReference
+-optimizations !class/merging/*
 -dontwarn uy.kohesive.injekt.**
 
 # RxJava 1 is only reached through the deprecated half of the source API, i.e.

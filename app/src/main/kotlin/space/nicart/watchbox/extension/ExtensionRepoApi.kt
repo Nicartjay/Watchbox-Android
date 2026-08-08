@@ -1,13 +1,14 @@
 package space.nicart.watchbox.extension
 
 import io.ktor.client.HttpClient
-import io.ktor.client.call.body
 import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import space.nicart.watchbox.extension.loader.ExtensionLoader
 import space.nicart.watchbox.extension.model.AvailableSource
 import space.nicart.watchbox.extension.model.Extension
@@ -24,6 +25,13 @@ import space.nicart.watchbox.extension.model.Extension
  */
 class ExtensionRepoApi(private val client: HttpClient) {
 
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+        explicitNulls = false
+        coerceInputValues = true
+    }
+
     suspend fun fetchIndex(repoUrl: String): Result<List<Extension.Available>> =
         withContext(Dispatchers.IO) {
             runCatching {
@@ -34,7 +42,12 @@ class ExtensionRepoApi(private val client: HttpClient) {
                     error("Repository returned HTTP ${response.status.value}")
                 }
 
-                response.body<List<RepoEntry>>()
+                // Parsed explicitly rather than via ContentNegotiation: repo
+                // indexes are static files, and GitHub serves them as
+                // text/plain, which makes content negotiation refuse to
+                // deserialize them.
+                val raw = response.bodyAsText()
+                json.decodeFromString<List<RepoEntry>>(raw)
                     .mapNotNull { it.toAvailable(base) }
                     .sortedBy { it.name.lowercase() }
             }
