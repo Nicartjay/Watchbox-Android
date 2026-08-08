@@ -1,6 +1,5 @@
 package space.nicart.watchbox.ui.player
 
-import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -12,11 +11,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.data.local.WatchHistoryEntry
-import space.nicart.watchbox.domain.EpisodeItem
-import space.nicart.watchbox.domain.MediaDetail
-import space.nicart.watchbox.domain.MediaRepository
-import space.nicart.watchbox.domain.PlayableStream
-import space.nicart.watchbox.domain.PlaybackSource
+import space.nicart.watchbox.domain.AnimeDetail
+import space.nicart.watchbox.domain.AnimeRepository
+import space.nicart.watchbox.domain.EpisodeEntry
+import space.nicart.watchbox.domain.StreamOption
+import space.nicart.watchbox.domain.SubtitleOption
 
 /** Aspect-ratio modes, cycled by the player's aspect button. */
 enum class AspectMode(val label: String) {
@@ -30,64 +29,61 @@ enum class AspectMode(val label: String) {
 
 data class PlayerUiState(
     val isResolving: Boolean = true,
-    val detail: MediaDetail? = null,
-    val source: PlaybackSource? = null,
-    val selectedStream: PlayableStream? = null,
+    val detail: AnimeDetail? = null,
+    val episode: EpisodeEntry? = null,
+    val streams: List<StreamOption> = emptyList(),
+    val selectedStream: StreamOption? = null,
     val selectedSubtitleIndex: Int = -1,
-    val selectedAudioIndex: Int = -1,
-    val season: Int = 1,
-    val episode: Int = 1,
-    val episodes: List<EpisodeItem> = emptyList(),
     val resumeMs: Long = 0L,
     val speed: Float = 1f,
     val aspectMode: AspectMode = AspectMode.FIT,
     val locked: Boolean = false,
     val autoPlayNext: Boolean = true,
     val errorMessage: String? = null,
-    val resolvingServer: String? = null,
 ) {
     val title: String get() = detail?.title.orEmpty()
 
-    val episodeLabel: String?
-        get() = if (detail?.isSeries == true) {
-            val name = episodes.firstOrNull { it.episode == episode && it.season == season }?.title
-            "S%02dE%02d".format(season, episode) + name?.let { " · $it" }.orEmpty()
-        } else {
-            null
-        }
+    val episodeLabel: String? get() = episode?.displayName
+
+    val subtitles: List<SubtitleOption> get() = selectedStream?.subtitles.orEmpty()
+
+    val episodes: List<EpisodeEntry> get() = detail?.episodes.orEmpty()
+
+    private val episodeIndex: Int
+        get() = episodes.indexOfFirst { it.url == episode?.url }
 
     val hasNextEpisode: Boolean
-        get() = detail?.isSeries == true && episodes.any { it.episode > episode }
+        get() = episodeIndex >= 0 && episodeIndex < episodes.lastIndex
 
-    val hasPreviousEpisode: Boolean
-        get() = detail?.isSeries == true && episodes.any { it.episode < episode }
+    val hasPreviousEpisode: Boolean get() = episodeIndex > 0
+
+    val nextEpisode: EpisodeEntry?
+        get() = episodes.getOrNull(episodeIndex + 1).takeIf { episodeIndex >= 0 }
+
+    val previousEpisode: EpisodeEntry?
+        get() = if (episodeIndex > 0) episodes[episodeIndex - 1] else null
 }
 
 /**
  * Player state holder.
  *
- * Owns source resolution, quality/subtitle/audio selection, episode navigation
- * and the throttled history writes. The Compose layer only renders the state and
- * forwards intents, which keeps the 570-line `switchPlayerMode` monolith from the
- * web app from reappearing here.
+ * Owns stream resolution, track selection, episode navigation and the throttled
+ * history writes; the Compose layer only renders state and forwards intents.
+ *
+ * Resolution is deliberately per-episode rather than cached: the URLs extensions
+ * return are usually signed and short-lived, so reusing an old one across an
+ * episode change tends to 403.
  */
 class PlayerViewModel(
-    application: Application,
-    private val repository: MediaRepository,
+    private val repository: AnimeRepository,
     private val store: WatchBoxStore,
-    private val detailPath: String,
-    initialSeason: Int,
-    initialEpisode: Int,
+    private val sourceId: Long,
+    private val animeUrl: String,
+    private val initialEpisodeUrl: String,
     initialResumeMs: Long,
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(
-        PlayerUiState(
-            season = initialSeason,
-            episode = initialEpisode,
-            resumeMs = initialResumeMs,
-        ),
-    )
+    private val _uiState = MutableStateFlow(PlayerUiState(resumeMs = initialResumeMs))
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
     private var resolveJob: Job? = null
@@ -97,24 +93,26 @@ class PlayerViewModel(
         viewModelScope.launch {
             val settings = store.currentSettings()
             _uiState.value = _uiState.value.copy(autoPlayNext = settings.autoPlayNext)
-            loadDetail(settings.preferredQuality)
+            loadDetail()
         }
     }
 
-    private suspend fun loadDetail(preferredQuality: String) {
-        repository.detail(detailPath)
+    private suspend fun loadDetail() {
+        repository.detail(sourceId, animeUrl)
             .onSuccess { detail ->
-                val episodes = if (detail.isSeries) {
-                    val count = detail.seasons
-                        .firstOrNull { it.season == _uiState.value.season }
-                        ?.episodeCount
-                        ?: 1
-                    repository.episodes(detail.tmdbId, _uiState.value.season, count)
+                val episode = detail.episodes.firstOrNull { it.url == initialEpisodeUrl }
+                    ?: detail.episodes.firstOrNull()
+
+                _uiState.value = _uiState.value.copy(detail = detail, episode = episode)
+
+                if (episode == null) {
+                    _uiState.value = _uiState.value.copy(
+                        isResolving = false,
+                        errorMessage = "This title has no episodes.",
+                    )
                 } else {
-                    emptyList()
+                    resolve(episode)
                 }
-                _uiState.value = _uiState.value.copy(detail = detail, episodes = episodes)
-                resolve(preferredQuality)
             }
             .onFailure { error ->
                 _uiState.value = _uiState.value.copy(
@@ -124,45 +122,46 @@ class PlayerViewModel(
             }
     }
 
-    private fun resolve(preferredQuality: String = "1080") {
-        val detail = _uiState.value.detail ?: return
+    private fun resolve(episode: EpisodeEntry) {
         resolveJob?.cancel()
 
         _uiState.value = _uiState.value.copy(
             isResolving = true,
             errorMessage = null,
-            source = null,
+            streams = emptyList(),
             selectedStream = null,
         )
 
         resolveJob = viewModelScope.launch {
-            repository.resolvePlayback(detail, _uiState.value.season, _uiState.value.episode)
-                .onSuccess { source ->
-                    // Honour the saved quality preference when that height exists.
-                    val preferredHeight = preferredQuality.filter(Char::isDigit).toIntOrNull()
-                    val stream = source.streams.firstOrNull { it.height == preferredHeight }
-                        ?: source.best
-                        ?: source.streams.firstOrNull()
+            val preferredHeight = store.currentSettings()
+                .preferredQuality
+                .filter(Char::isDigit)
+                .toIntOrNull()
 
-                    val defaultSubtitle = source.subtitles.indexOfFirst {
-                        it.language.equals(store.currentSettings().subtitleLanguage, true)
-                    }
+            repository.streams(sourceId, episode.url)
+                .onSuccess { streams ->
+                    // Honour the saved quality when that height exists, else take
+                    // the best available.
+                    val chosen = streams.firstOrNull { it.resolution == preferredHeight }
+                        ?: streams.firstOrNull()
+
+                    val subtitleLang = store.currentSettings().subtitleLanguage
+                    val subtitleIndex = chosen?.subtitles
+                        ?.indexOfFirst { it.language.equals(subtitleLang, true) }
+                        ?: -1
 
                     _uiState.value = _uiState.value.copy(
                         isResolving = false,
-                        source = source,
-                        selectedStream = stream,
-                        selectedSubtitleIndex = defaultSubtitle,
-                        selectedAudioIndex = if (source.audioTracks.isNotEmpty()) 0 else -1,
-                        errorMessage = if (stream == null) "No playable source found." else null,
-                        resolvingServer = null,
+                        streams = streams,
+                        selectedStream = chosen,
+                        selectedSubtitleIndex = subtitleIndex,
+                        errorMessage = if (chosen == null) NO_STREAM else null,
                     )
                 }
                 .onFailure { error ->
                     _uiState.value = _uiState.value.copy(
                         isResolving = false,
-                        errorMessage = error.message ?: "No playable source found.",
-                        resolvingServer = null,
+                        errorMessage = error.message ?: NO_STREAM,
                     )
                 }
         }
@@ -170,45 +169,19 @@ class PlayerViewModel(
 
     // ---------------------------------------------------------- selections
 
-    fun selectStream(stream: PlayableStream) {
+    fun selectStream(stream: StreamOption) {
         _uiState.value = _uiState.value.copy(selectedStream = stream)
         viewModelScope.launch {
-            store.setPreferredQuality(stream.height.takeIf { it > 0 }?.toString() ?: "auto")
+            store.setPreferredQuality(
+                stream.resolution.takeIf { it > 0 }?.toString() ?: "auto",
+            )
         }
     }
 
     fun selectSubtitle(index: Int) {
         _uiState.value = _uiState.value.copy(selectedSubtitleIndex = index)
-        val language = _uiState.value.source?.subtitles?.getOrNull(index)?.language
-        viewModelScope.launch {
-            store.setSubtitleLanguage(language ?: "off")
-        }
-    }
-
-    fun selectAudio(index: Int) {
-        val track = _uiState.value.source?.audioTracks?.getOrNull(index) ?: return
-        _uiState.value = _uiState.value.copy(
-            selectedAudioIndex = index,
-            selectedStream = PlayableStream(
-                url = track.url,
-                label = track.label,
-                height = 0,
-                isHls = track.isHls,
-            ),
-        )
-    }
-
-    /** Swap to an alternate upstream host (Atlas / Rigel multi-host providers). */
-    fun selectHost(index: Int) {
-        val host = _uiState.value.source?.hosts?.getOrNull(index) ?: return
-        _uiState.value = _uiState.value.copy(
-            selectedStream = PlayableStream(
-                url = host.url,
-                label = host.label,
-                height = 0,
-                isHls = host.isHls,
-            ),
-        )
+        val language = _uiState.value.subtitles.getOrNull(index)?.language
+        viewModelScope.launch { store.setSubtitleLanguage(language ?: "off") }
     }
 
     fun setSpeed(speed: Float) {
@@ -223,43 +196,29 @@ class PlayerViewModel(
         _uiState.value = _uiState.value.copy(locked = locked)
     }
 
-    // ------------------------------------------------------ episode nav
+    // ------------------------------------------------------- episode nav
 
-    fun goToEpisode(episode: Int) {
-        if (episode == _uiState.value.episode) return
-        _uiState.value = _uiState.value.copy(
-            episode = episode,
-            resumeMs = 0L,
-        )
-        resolve()
+    fun goToEpisode(episode: EpisodeEntry) {
+        if (episode.url == _uiState.value.episode?.url) return
+        _uiState.value = _uiState.value.copy(episode = episode, resumeMs = 0L)
+        resolve(episode)
     }
 
     fun nextEpisode() {
-        val next = _uiState.value.episodes
-            .filter { it.episode > _uiState.value.episode }
-            .minByOrNull { it.episode }
-            ?: return
-        goToEpisode(next.episode)
+        _uiState.value.nextEpisode?.let(::goToEpisode)
     }
 
     fun previousEpisode() {
-        val previous = _uiState.value.episodes
-            .filter { it.episode < _uiState.value.episode }
-            .maxByOrNull { it.episode }
-            ?: return
-        goToEpisode(previous.episode)
+        _uiState.value.previousEpisode?.let(::goToEpisode)
     }
 
     fun retry() {
-        viewModelScope.launch { resolve(store.currentSettings().preferredQuality) }
+        _uiState.value.episode?.let(::resolve)
     }
 
-    // --------------------------------------------------------- history
+    // ------------------------------------------------------------ history
 
-    /**
-     * Persist progress, throttled to one write per 10s (plus an immediate write on
-     * pause/exit via [flushProgress]).
-     */
+    /** Throttled to one write per 10s; [flushProgress] covers pause and exit. */
     fun onProgress(positionMs: Long, durationMs: Long) {
         if (durationMs <= 0L) return
         val now = System.currentTimeMillis()
@@ -276,31 +235,31 @@ class PlayerViewModel(
 
     private fun writeHistory(positionMs: Long, durationMs: Long) {
         val detail = _uiState.value.detail ?: return
-        val state = _uiState.value
+        val episode = _uiState.value.episode ?: return
+
         viewModelScope.launch {
             store.saveHistory(
                 WatchHistoryEntry(
-                    subjectId = detail.subjectId,
-                    detailPath = detail.detailPath,
+                    sourceId = detail.sourceId,
+                    animeUrl = detail.url,
                     title = detail.title,
-                    coverUrl = detail.posterUrl,
-                    subjectType = detail.subjectType,
-                    season = state.season,
-                    episode = state.episode,
-                    maxEpisode = state.episodes.maxOfOrNull { it.episode } ?: state.episode,
+                    posterUrl = detail.posterUrl,
+                    sourceName = detail.sourceName,
+                    episodeUrl = episode.url,
+                    episodeName = episode.displayName,
+                    episodeNumber = episode.number,
                     positionMs = positionMs,
                     durationMs = durationMs,
                     progress = (positionMs.toFloat() / durationMs).coerceIn(0f, 1f),
-                    serverId = state.source?.serverId,
                     updatedAt = System.currentTimeMillis(),
                 ),
             )
         }
     }
 
-    /** Called when playback reaches the end. */
     fun onPlaybackEnded(positionMs: Long, durationMs: Long) {
         flushProgress(durationMs.takeIf { it > 0 } ?: positionMs, durationMs)
+
         if (_uiState.value.autoPlayNext && _uiState.value.hasNextEpisode) {
             viewModelScope.launch {
                 delay(600)
@@ -310,23 +269,23 @@ class PlayerViewModel(
     }
 
     companion object {
+        private const val NO_STREAM = "No playable stream found."
+
         fun factory(
-            application: Application,
-            repository: MediaRepository,
+            repository: AnimeRepository,
             store: WatchBoxStore,
-            detailPath: String,
-            season: Int,
-            episode: Int,
+            sourceId: Long,
+            animeUrl: String,
+            episodeUrl: String,
             resumeMs: Long,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = PlayerViewModel(
-                application = application,
                 repository = repository,
                 store = store,
-                detailPath = detailPath,
-                initialSeason = season,
-                initialEpisode = episode,
+                sourceId = sourceId,
+                animeUrl = animeUrl,
+                initialEpisodeUrl = episodeUrl,
                 initialResumeMs = resumeMs,
             ) as T
         }

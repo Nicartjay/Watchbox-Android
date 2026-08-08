@@ -5,8 +5,15 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!--
+      Deliberately absent: REQUEST_INSTALL_PACKAGES and QUERY_ALL_PACKAGES.
+
+      Extensions are downloaded into this app's private storage and loaded
+      straight from there, so no system installer and no package enumeration is
+      needed. That keeps the permission set minimal at the cost of extensions
+      being private to this app rather than shared with other Aniyomi clients.
+    -->
 
     <application
         android:name=".WatchBoxApplication"
@@ -17,7 +24,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.WatchBox.Splash"
         android:enableOnBackInvokedCallback="true"
-        android:usesCleartextTraffic="false"
+        android:usesCleartextTraffic="true"
         tools:targetApi="33">
 
         <activity
@@ -33,14 +40,6 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-
-            <!-- Deep links: watchbox://detail/tv/1396 -->
-            <intent-filter android:autoVerify="false">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="watchbox" />
             </intent-filter>
         </activity>
     </application>

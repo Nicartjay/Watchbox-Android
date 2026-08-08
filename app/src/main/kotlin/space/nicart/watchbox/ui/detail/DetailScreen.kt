@@ -1,27 +1,20 @@
 package space.nicart.watchbox.ui.detail
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -31,40 +24,32 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.R
-import space.nicart.watchbox.core.ui.wb
-import space.nicart.watchbox.domain.EpisodeItem
-import space.nicart.watchbox.domain.MediaCard
+import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.WbBackButton
 import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
-import space.nicart.watchbox.ui.components.WbPosterCard
-import space.nicart.watchbox.ui.components.WbShelfSection
 
 /**
  * Title detail page.
  *
- * Structure follows NuvioMobile `features/details/MetaDetailsScreen.kt`: a bare
- * `LazyColumn` (no Scaffold, no TopAppBar) with the hero as item 0 and a floating
- * collapsed header layered above at a higher z-index. Sections are padded 18dp
- * horizontally with 20dp bottom gaps.
+ * Keeps Nuvio's structure: a bare `LazyColumn` with the parallax hero as item 0
+ * and a collapsing floating header layered above at a higher z-index. Sections
+ * are padded 18dp horizontally with 20dp gaps.
+ *
+ * No season selector, cast rail or recommendations row: `getEpisodeList` returns
+ * one flat list and extensions expose no cast or related titles.
  */
 @Composable
 fun DetailScreen(
     viewModel: DetailViewModel,
     onBack: () -> Unit,
-    onPlay: (season: Int, episode: Int, resumeMs: Long) -> Unit,
-    onOpenTitle: (MediaCard) -> Unit,
+    onPlay: (episode: EpisodeEntry, resumeMs: Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val density = LocalDensity.current
-
-    var watchedEpisodes by remember { mutableStateOf(emptySet<Int>()) }
-    LaunchedEffect(state.history, state.selectedSeason) {
-        watchedEpisodes = viewModel.watchedEpisodes()
-    }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val isTablet = maxWidth >= 720.dp
@@ -76,7 +61,6 @@ fun DetailScreen(
         }
         val heroHeight = detailHeroHeight(maxWidth, isTablet)
 
-        // Scroll offset in px, used for hero parallax and header reveal.
         val scrollOffset by remember {
             derivedStateOf {
                 if (listState.firstVisibleItemIndex == 0) {
@@ -89,8 +73,11 @@ fun DetailScreen(
         val headerProgress by remember {
             derivedStateOf {
                 val threshold = with(density) { (heroHeight - 120.dp).toPx() }
-                if (listState.firstVisibleItemIndex > 0) 1f
-                else (scrollOffset / threshold).coerceIn(0f, 1f)
+                if (listState.firstVisibleItemIndex > 0) {
+                    1f
+                } else {
+                    (scrollOffset / threshold).coerceIn(0f, 1f)
+                }
             }
         }
 
@@ -139,18 +126,17 @@ fun DetailScreen(
                                     if (state.isResume) R.string.action_resume
                                     else R.string.action_play,
                                 ),
-                                isUpcoming = detail.isUpcoming,
-                                releaseDate = detail.releaseDate,
+                                enabled = state.startTarget != null,
                                 watched = state.history?.isFinished == true,
                                 inWatchlist = state.inWatchlist,
                                 isTablet = isTablet,
                                 onPlay = {
-                                    val target = state.resumeTarget
-                                    onPlay(
-                                        target?.first ?: state.selectedSeason,
-                                        target?.second ?: 1,
-                                        target?.third ?: 0L,
-                                    )
+                                    val resume = state.resumeTarget
+                                    if (resume != null) {
+                                        onPlay(resume.first, resume.second)
+                                    } else {
+                                        state.startTarget?.let { onPlay(it, 0L) }
+                                    }
                                 },
                                 onToggleWatched = viewModel::toggleWatched,
                                 onToggleWatchlist = viewModel::toggleWatchlist,
@@ -172,22 +158,10 @@ fun DetailScreen(
                         )
                     }
 
-                    if (detail.isSeries) {
-                        if (detail.seasons.size > 1) {
-                            item(key = "seasons") {
-                                SeasonSelector(
-                                    seasons = detail.seasons,
-                                    selected = state.selectedSeason,
-                                    onSelect = viewModel::selectSeason,
-                                    horizontalPadding = contentPadding,
-                                    modifier = Modifier.padding(bottom = 20.dp),
-                                )
-                            }
-                        }
-
+                    if (detail.episodes.isNotEmpty()) {
                         item(key = "episodes-title") {
                             DetailSectionTitle(
-                                title = "Season ${state.selectedSeason}",
+                                title = stringResource(R.string.detail_episodes),
                                 isTablet = isTablet,
                                 modifier = Modifier
                                     .padding(horizontal = contentPadding)
@@ -196,48 +170,19 @@ fun DetailScreen(
                         }
 
                         item(key = "episodes") {
-                            EpisodeRow(
-                                episodes = state.episodes,
-                                watchedEpisodes = watchedEpisodes,
-                                currentEpisode = state.history
-                                    ?.takeIf { it.season == state.selectedSeason }
-                                    ?.episode,
-                                isLoading = state.episodesLoading,
+                            EpisodeList(
+                                episodes = detail.episodes,
+                                watchedUrls = state.watchedEpisodeUrls,
+                                currentUrl = state.history?.episodeUrl,
+                                isLoading = false,
                                 horizontalPadding = contentPadding,
-                                onPlay = { episode: EpisodeItem ->
-                                    onPlay(episode.season, episode.episode, 0L)
-                                },
+                                onPlay = { onPlay(it, 0L) },
                                 modifier = Modifier.padding(bottom = 20.dp),
                             )
-                        }
-                    }
-
-                    if (detail.cast.isNotEmpty()) {
-                        item(key = "cast") {
-                            CastRow(
-                                cast = detail.cast,
-                                horizontalPadding = contentPadding,
-                                modifier = Modifier.padding(bottom = 20.dp),
-                            )
-                        }
-                    }
-
-                    if (detail.recommendations.isNotEmpty()) {
-                        item(key = "recommendations") {
-                            WbShelfSection(
-                                title = stringResource(R.string.detail_more_like_this),
-                                items = detail.recommendations,
-                                key = { it.detailPath },
-                                horizontalPadding = contentPadding,
-                                modifier = Modifier.padding(bottom = 20.dp),
-                            ) { card ->
-                                WbPosterCard(card = card, onClick = { onOpenTitle(card) })
-                            }
                         }
                     }
                 }
 
-                // --- floating chrome above the list
                 Box(modifier = Modifier.fillMaxSize().zIndex(2f)) {
                     DetailFloatingHeader(
                         detail = detail,
@@ -248,7 +193,6 @@ fun DetailScreen(
                         modifier = Modifier.align(Alignment.TopCenter),
                     )
 
-                    // A bare back button while the collapsed header is hidden.
                     if (headerProgress <= 0.05f) {
                         WbBackButton(
                             onClick = onBack,

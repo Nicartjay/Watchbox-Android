@@ -42,7 +42,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import space.nicart.watchbox.core.ui.wb
-import space.nicart.watchbox.domain.HeroItem
+import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.ui.components.WbAsyncImage
 import space.nicart.watchbox.ui.components.WbSkeletonBlock
 import kotlin.math.absoluteValue
@@ -114,8 +114,8 @@ fun rememberHeroLayout(maxWidth: Dp, maxHeight: Dp): HeroLayout = remember(maxWi
 
 @Composable
 fun HomeHeroSection(
-    items: List<HeroItem>,
-    onOpen: (HeroItem) -> Unit,
+    items: List<AnimeCard>,
+    onOpen: (AnimeCard) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (items.isEmpty()) return
@@ -169,7 +169,7 @@ private fun PagerState.pageOffsetFor(page: Int): Float =
 
 @Composable
 private fun HeroPage(
-    item: HeroItem,
+    item: AnimeCard,
     layout: HeroLayout,
     pageOffset: Float,
     onOpen: () -> Unit,
@@ -179,10 +179,11 @@ private fun HeroPage(
     val fade = (1f - pageOffset.absoluteValue).coerceIn(0f, 1f)
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // --- backdrop, over-scaled so parallax never exposes an edge
+        // Sources only provide a portrait poster, so it is used as the backdrop
+        // and cropped. Over-scaled so parallax never exposes an edge.
         WbAsyncImage(
-            url = item.backdropUrl,
-            contentDescription = item.card.title,
+            url = item.posterUrl,
+            contentDescription = item.title,
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxSize()
@@ -237,30 +238,21 @@ private fun HeroPage(
                 },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if (item.logoUrl != null) {
-                WbAsyncImage(
-                    url = item.logoUrl,
-                    contentDescription = item.card.title,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxWidth(layout.logoWidthFraction)
-                        .aspectRatio(2.6f),
-                )
-            } else {
-                Text(
-                    text = item.card.title,
-                    style = MaterialTheme.typography.displaySmall,
-                    fontWeight = FontWeight.Black,
-                    color = tokens.colors.textPrimary,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            // No title logos exist in this ecosystem, so the title is always
+            // rendered as text.
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.displaySmall,
+                fontWeight = FontWeight.Black,
+                color = tokens.colors.textPrimary,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
 
             Spacer(Modifier.height(12.dp))
 
-            HeroMetaRow(item = item)
+            HeroMetaRow(sourceName = item.sourceName)
 
             Spacer(Modifier.height(14.dp))
 
@@ -273,7 +265,7 @@ private fun HeroPage(
                     .padding(horizontal = 28.dp, vertical = 12.dp),
             ) {
                 Text(
-                    text = if (item.card.isUpcoming) "View Details" else "Watch Now",
+                    text = "Watch Now",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = tokens.colors.background,
@@ -283,37 +275,18 @@ private fun HeroPage(
     }
 }
 
-/** `type • genre • date`, separated by 4dp dots. */
+/** Shows which extension provided the entry. */
 @Composable
-private fun HeroMetaRow(item: HeroItem) {
+private fun HeroMetaRow(sourceName: String) {
     val tokens = MaterialTheme.wb
-    val parts = buildList {
-        add(if (item.card.isSeries) "Series" else "Movie")
-        item.card.genres.firstOrNull()?.let(::add)
-        item.card.releaseDate.takeIf { it.isNotBlank() }?.let(::add)
-    }
+    if (sourceName.isBlank()) return
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        parts.forEachIndexed { index, part ->
-            if (index > 0) {
-                Box(
-                    modifier = Modifier
-                        .size(4.dp)
-                        .clip(CircleShape)
-                        .background(tokens.colors.textPrimary.copy(alpha = 0.7f)),
-                )
-            }
-            Text(
-                text = part,
-                style = MaterialTheme.typography.labelLarge,
-                color = tokens.colors.textPrimary.copy(alpha = 0.9f),
-                maxLines = 1,
-            )
-        }
-    }
+    Text(
+        text = sourceName,
+        style = MaterialTheme.typography.labelLarge,
+        color = tokens.colors.textPrimary.copy(alpha = 0.9f),
+        maxLines = 1,
+    )
 }
 
 /** Dots that stretch 8dp -> 32dp for the active page. */

@@ -15,9 +15,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -40,9 +39,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.wb
-import space.nicart.watchbox.domain.MediaCard
+import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.ui.components.NavOverlayPadding
-import space.nicart.watchbox.ui.components.WbChip
+import space.nicart.watchbox.ui.components.WbShelfSection
 import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
 import space.nicart.watchbox.ui.components.WbPosterCard
@@ -59,7 +58,7 @@ import space.nicart.watchbox.ui.components.sectionHorizontalPadding
 @Composable
 fun SearchScreen(
     viewModel: SearchViewModel,
-    onOpenTitle: (MediaCard) -> Unit,
+    onOpenAnime: (AnimeCard) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -134,17 +133,6 @@ fun SearchScreen(
 
                 Spacer(Modifier.height(12.dp))
 
-                // Type filter: All / Movies / Series
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SearchFilter.entries.forEach { filter ->
-                        WbChip(
-                            label = filter.label,
-                            selected = state.filter == filter,
-                            onClick = { viewModel.setFilter(filter) },
-                        )
-                    }
-                }
-
                 Spacer(Modifier.height(14.dp))
             }
 
@@ -164,30 +152,34 @@ fun SearchScreen(
                         )
                     }
 
-                    state.query.isNotBlank() && state.results.isEmpty() -> WbEmptyState(
+                    state.hasNoSources -> WbEmptyState(
+                        title = stringResource(R.string.empty_no_sources_title),
+                        body = stringResource(R.string.empty_no_sources_body),
+                        modifier = Modifier.align(Alignment.TopCenter),
+                    )
+
+                    state.hasSearched && state.results.isEmpty() -> WbEmptyState(
                         title = stringResource(R.string.empty_search_title),
                         body = "Try a different title.",
                         modifier = Modifier.align(Alignment.TopCenter),
                     )
 
-                    else -> LazyVerticalGrid(
-                        columns = GridCells.Fixed(columns),
-                        contentPadding = PaddingValues(
-                            start = padding,
-                            end = padding,
-                            bottom = 18.dp + NavOverlayPadding,
-                        ),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    // One rail per source: a merged list would bury good matches
+                    // behind whichever source happened to return most rows.
+                    else -> LazyColumn(
+                        contentPadding = PaddingValues(bottom = 18.dp + NavOverlayPadding),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        items(items = state.results, key = { it.detailPath }) { card ->
-                            WbPosterCard(
-                                card = card,
-                                onClick = { onOpenTitle(card) },
-                                modifier = Modifier.fillMaxWidth(),
-                                width = null,
-                            )
+                        items(items = state.results, key = { it.sourceId }) { row ->
+                            WbShelfSection(
+                                title = row.title,
+                                items = row.items,
+                                key = { it.key },
+                                horizontalPadding = padding,
+                            ) { card ->
+                                WbPosterCard(card = card, onClick = { onOpenAnime(card) })
+                            }
                         }
                     }
                 }

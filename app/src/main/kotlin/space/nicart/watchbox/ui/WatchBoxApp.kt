@@ -18,18 +18,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.media3.common.util.UnstableApi
 import androidx.navigation.toRoute
 import space.nicart.watchbox.AppContainer
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.data.local.WatchHistoryEntry
-import space.nicart.watchbox.domain.MediaCard
+import space.nicart.watchbox.data.local.WatchlistEntry
+import space.nicart.watchbox.domain.AnimeCard
+import space.nicart.watchbox.ui.browse.BrowseScreen
+import space.nicart.watchbox.ui.browse.BrowseViewModel
+import space.nicart.watchbox.ui.browse.SourceListScreen
+import space.nicart.watchbox.ui.browse.SourceListViewModel
 import space.nicart.watchbox.ui.detail.DetailScreen
 import space.nicart.watchbox.ui.detail.DetailViewModel
+import space.nicart.watchbox.ui.extensions.ExtensionsScreen
+import space.nicart.watchbox.ui.extensions.ExtensionsViewModel
 import space.nicart.watchbox.ui.home.HomeScreen
 import space.nicart.watchbox.ui.home.HomeViewModel
 import space.nicart.watchbox.ui.library.LibraryScreen
@@ -48,9 +55,9 @@ import space.nicart.watchbox.ui.settings.SettingsViewModel
 /**
  * Root navigation.
  *
- * A single flat back stack, matching Nuvio's Navigation-3 model: the tab shell is
- * one destination and detail/player push on top of it, so full-screen routes
- * naturally cover the nav pill.
+ * One flat back stack, matching Nuvio's model: the tab shell is a single
+ * destination and detail/player/browse push on top, so full-screen routes cover
+ * the nav pill without any per-tab stack bookkeeping.
  */
 @UnstableApi
 @Composable
@@ -76,99 +83,147 @@ fun WatchBoxApp(
             composable<Routes.Tabs> {
                 TabShell(
                     container = container,
-                    onOpenDetail = { detailPath, title ->
-                        navController.navigate(Routes.Detail(detailPath, title))
+                    onOpenAnime = navController::openAnime,
+                    onResume = navController::openPlayer,
+                    onOpenExtensions = { navController.navigate(Routes.Extensions) },
+                    onOpenSource = { id, name ->
+                        navController.navigate(Routes.SourceBrowse(id, name))
                     },
-                    onResume = { entry -> navController.navigateToPlayer(entry) },
                 )
             }
 
             composable<Routes.Detail>(
-                enterTransition = { slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(220)) },
+                enterTransition = {
+                    slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(220))
+                },
                 popExitTransition = {
                     slideOutHorizontally(tween(220)) { it / 4 } + fadeOut(tween(180))
                 },
             ) { entry ->
                 val route = entry.toRoute<Routes.Detail>()
                 val viewModel: DetailViewModel = viewModel(
-                    key = "detail-${route.detailPath}",
+                    key = "detail-${route.sourceId}-${route.animeUrl}",
                     factory = DetailViewModel.factory(
                         repository = container.repository,
                         store = container.store,
-                        detailPath = route.detailPath,
+                        sourceId = route.sourceId,
+                        animeUrl = route.animeUrl,
                     ),
                 )
                 DetailScreen(
                     viewModel = viewModel,
-                    onBack = { navController.popBackStack() },
-                    onPlay = { season, episode, resumeMs ->
+                    onBack = navController::popBackStack,
+                    onPlay = { episode, resumeMs ->
                         navController.navigate(
-                            Routes.Player(route.detailPath, season, episode, resumeMs),
+                            Routes.Player(
+                                sourceId = route.sourceId,
+                                animeUrl = route.animeUrl,
+                                episodeUrl = episode.url,
+                                resumeMs = resumeMs,
+                            ),
                         )
-                    },
-                    onOpenTitle = { card ->
-                        navController.navigate(Routes.Detail(card.detailPath, card.title))
                     },
                 )
             }
 
-            composable<Routes.Player>(
-                enterTransition = { fadeIn(tween(220)) },
-                exitTransition = { fadeOut(tween(180)) },
-            ) { entry ->
+            composable<Routes.Player> { entry ->
                 val route = entry.toRoute<Routes.Player>()
-                val application = androidx.compose.ui.platform.LocalContext.current
-                    .applicationContext as android.app.Application
                 val viewModel: PlayerViewModel = viewModel(
-                    key = "player-${route.detailPath}-${route.season}",
+                    key = "player-${route.sourceId}-${route.episodeUrl}",
                     factory = PlayerViewModel.factory(
-                        application = application,
                         repository = container.repository,
                         store = container.store,
-                        detailPath = route.detailPath,
-                        season = route.season,
-                        episode = route.episode,
+                        sourceId = route.sourceId,
+                        animeUrl = route.animeUrl,
+                        episodeUrl = route.episodeUrl,
                         resumeMs = route.resumeMs,
                     ),
                 )
                 PlayerScreen(
                     viewModel = viewModel,
-                    onBack = { navController.popBackStack() },
+                    onBack = navController::popBackStack,
+                )
+            }
+
+            composable<Routes.SourceBrowse> { entry ->
+                val route = entry.toRoute<Routes.SourceBrowse>()
+                val viewModel: BrowseViewModel = viewModel(
+                    key = "browse-${route.sourceId}",
+                    factory = BrowseViewModel.factory(container.repository, route.sourceId),
+                )
+                BrowseScreen(
+                    sourceName = route.sourceName,
+                    viewModel = viewModel,
+                    supportsLatest = container.extensionManager
+                        .catalogueSourceById(route.sourceId)
+                        ?.let { runCatching { it.supportsLatest }.getOrDefault(false) }
+                        ?: false,
+                    onBack = navController::popBackStack,
+                    onOpenAnime = navController::openAnime,
+                )
+            }
+
+            composable<Routes.Extensions> {
+                val viewModel: ExtensionsViewModel = viewModel(
+                    key = "extensions",
+                    factory = ExtensionsViewModel.factory(
+                        container.extensionManager,
+                        container.store,
+                    ),
+                )
+                ExtensionsScreen(
+                    viewModel = viewModel,
+                    onBack = navController::popBackStack,
                 )
             }
         }
     }
 }
 
-private fun NavHostController.navigateToPlayer(entry: WatchHistoryEntry) {
+private fun NavHostController.openAnime(card: AnimeCard) {
+    navigate(Routes.Detail(card.sourceId, card.url, card.title))
+}
+
+private fun NavHostController.openPlayer(entry: WatchHistoryEntry) {
     navigate(
         Routes.Player(
-            detailPath = entry.detailPath,
-            season = entry.season,
-            episode = entry.episode,
+            sourceId = entry.sourceId,
+            animeUrl = entry.animeUrl,
+            episodeUrl = entry.episodeUrl,
             resumeMs = entry.positionMs,
         ),
     )
 }
 
 /**
- * The four-tab shell.
+ * The tab shell.
  *
- * Tab content is kept alive via a `SaveableStateHolder` keyed by tab name, which
- * is how Nuvio's `AppTabHost` preserves scroll position without giving each tab
- * its own back stack.
+ * Tab content is kept alive by a `SaveableStateHolder` keyed on tab name, so
+ * scroll position survives switching without giving each tab its own back stack.
  */
 @Composable
 private fun TabShell(
     container: AppContainer,
-    onOpenDetail: (detailPath: String, title: String) -> Unit,
+    onOpenAnime: (AnimeCard) -> Unit,
     onResume: (WatchHistoryEntry) -> Unit,
+    onOpenExtensions: () -> Unit,
+    onOpenSource: (sourceId: Long, sourceName: String) -> Unit,
 ) {
     var selectedTab by remember { mutableStateOf(AppTab.HOME) }
     val stateHolder = rememberSaveableStateHolder()
     val navScrollState = rememberWbNavBarScrollState()
 
-    val openCard: (MediaCard) -> Unit = { card -> onOpenDetail(card.detailPath, card.title) }
+    val openSaved: (WatchlistEntry) -> Unit = { entry ->
+        onOpenAnime(
+            AnimeCard(
+                sourceId = entry.sourceId,
+                url = entry.animeUrl,
+                title = entry.title,
+                posterUrl = entry.posterUrl,
+                sourceName = entry.sourceName,
+            ),
+        )
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         stateHolder.SaveableStateProvider(selectedTab.name) {
@@ -176,14 +231,19 @@ private fun TabShell(
                 AppTab.HOME -> {
                     val viewModel: HomeViewModel = viewModel(
                         key = "home",
-                        factory = HomeViewModel.factory(container.repository, container.store),
+                        factory = HomeViewModel.factory(
+                            container.repository,
+                            container.extensionManager,
+                            container.store,
+                        ),
                     )
                     HomeScreen(
                         viewModel = viewModel,
-                        onOpenTitle = openCard,
-                        onOpenDetailPath = onOpenDetail,
+                        onOpenAnime = onOpenAnime,
                         onResume = onResume,
-                        onViewAll = { _, _ -> },
+                        onOpenSaved = openSaved,
+                        onBrowseSource = onOpenSource,
+                        onInstallExtensions = onOpenExtensions,
                         navScrollState = navScrollState,
                     )
                 }
@@ -191,9 +251,24 @@ private fun TabShell(
                 AppTab.SEARCH -> {
                     val viewModel: SearchViewModel = viewModel(
                         key = "search",
-                        factory = SearchViewModel.factory(container.repository, container.store),
+                        factory = SearchViewModel.factory(
+                            container.repository,
+                            container.store,
+                        ),
                     )
-                    SearchScreen(viewModel = viewModel, onOpenTitle = openCard)
+                    SearchScreen(viewModel = viewModel, onOpenAnime = onOpenAnime)
+                }
+
+                AppTab.BROWSE -> {
+                    val viewModel: SourceListViewModel = viewModel(
+                        key = "sources",
+                        factory = SourceListViewModel.factory(container.extensionManager),
+                    )
+                    SourceListScreen(
+                        viewModel = viewModel,
+                        onOpenSource = { onOpenSource(it.id, it.name) },
+                        onOpenExtensions = onOpenExtensions,
+                    )
                 }
 
                 AppTab.LIBRARY -> {
@@ -203,7 +278,7 @@ private fun TabShell(
                     )
                     LibraryScreen(
                         viewModel = viewModel,
-                        onOpenTitle = onOpenDetail,
+                        onOpenAnime = onOpenAnime,
                         onResume = onResume,
                     )
                 }

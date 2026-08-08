@@ -6,21 +6,25 @@ import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.request.CachePolicy
+import eu.kanade.tachiyomi.network.NetworkHelper
 import io.ktor.client.HttpClient
 import space.nicart.watchbox.core.network.HttpClientFactory
 import space.nicart.watchbox.data.local.WatchBoxStore
-import space.nicart.watchbox.data.remote.OneRoomApi
-import space.nicart.watchbox.data.remote.TmdbApi
-import space.nicart.watchbox.data.remote.WatchBoxApi
-import space.nicart.watchbox.data.source.NativeSourceResolver
-import space.nicart.watchbox.domain.MediaRepository
+import space.nicart.watchbox.extension.ExtensionInstaller
+import space.nicart.watchbox.extension.ExtensionManager
+import space.nicart.watchbox.extension.ExtensionRepoApi
+import space.nicart.watchbox.domain.AnimeRepository
+import space.nicart.watchbox.extension.installExtensionInjekt
 
 /**
  * Application + service locator.
  *
- * A hand-rolled container rather than Hilt/Koin: the graph is small (one store,
- * three API clients, one repository) and this keeps the build free of an
- * annotation processor and of the Compose-Multiplatform artifacts Koin drags in.
+ * A hand-rolled container rather than Hilt/Koin: the graph is small, and this
+ * keeps the build free of an annotation processor.
+ *
+ * Note the ordering constraint in [onCreate] — the Injekt graph the extension
+ * runtime depends on must exist before any extension class is instantiated, so
+ * it is installed first and eagerly.
  */
 class WatchBoxApplication : Application(), ImageLoaderFactory {
 
@@ -29,14 +33,24 @@ class WatchBoxApplication : Application(), ImageLoaderFactory {
 
     override fun onCreate() {
         super.onCreate()
-        container = AppContainer(this)
+
+        // Extensions resolve NetworkHelper and Application through Injekt from
+        // their own constructors, so this must run before any source is loaded.
+        val networkHelper = installExtensionInjekt(this)
+
+        container = AppContainer(this, networkHelper)
+        container.extensionManager.init()
     }
 
     /**
-     * Shared Coil loader. Generous caches because poster rails and hero
-     * backdrops are revisited constantly.
+     * Shared Coil loader.
+     *
+     * Deliberately reuses the extensions' OkHttp client: source artwork usually
+     * lives on the same hosts as the pages it was scraped from, and several
+     * require the session cookies and User-Agent that client carries.
      */
     override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this)
+        .okHttpClient { container.networkHelper.client }
         .crossfade(true)
         .crossfade(220)
         .memoryCache {
@@ -55,28 +69,24 @@ class WatchBoxApplication : Application(), ImageLoaderFactory {
         .build()
 }
 
-class AppContainer(application: Application) {
+class AppContainer(
+    application: Application,
+    val networkHelper: NetworkHelper,
+) {
 
     val store: WatchBoxStore = WatchBoxStore(application)
 
-    private val oneRoomClient: HttpClient = HttpClientFactory.createOneRoomClient(store)
     private val plainClient: HttpClient = HttpClientFactory.createPlainClient()
 
-    private val workerBase: suspend () -> String = { store.currentSettings().workerBaseUrl }
+    private val repoApi = ExtensionRepoApi(plainClient)
 
-    private val oneRoomApi = OneRoomApi(oneRoomClient)
-    private val tmdbApi = TmdbApi(plainClient)
-    private val watchBoxApi = WatchBoxApi(plainClient, workerBase)
-    private val resolver = NativeSourceResolver(plainClient, workerBase)
+    private val installer = ExtensionInstaller(application, plainClient)
 
-    val repository = MediaRepository(
-        oneRoom = oneRoomApi,
-        tmdb = tmdbApi,
-        watchBox = watchBoxApi,
-        resolver = resolver,
-        store = store,
-        // Dev-only providers are WAF-blocked from datacentre egress, so they are
-        // only worth attempting from a debug build on a residential connection.
-        allowDevOnlyServers = BuildConfig.DEBUG,
+    val extensionManager = ExtensionManager(
+        context = application,
+        repoApi = repoApi,
+        installer = installer,
     )
+
+    val repository = AnimeRepository(extensionManager)
 }

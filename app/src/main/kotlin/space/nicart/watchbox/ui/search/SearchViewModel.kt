@@ -3,7 +3,6 @@ package space.nicart.watchbox.ui.search
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -11,30 +10,21 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import space.nicart.watchbox.data.local.WatchBoxStore
-import space.nicart.watchbox.data.model.SubjectType
-import space.nicart.watchbox.domain.MediaCard
-import space.nicart.watchbox.domain.MediaRepository
-
-/** Content-type filter chips. */
-enum class SearchFilter(val label: String, val subjectType: Int?) {
-    ALL("All", null),
-    MOVIES("Movies", SubjectType.MOVIE),
-    SERIES("Series", SubjectType.TV),
-}
+import space.nicart.watchbox.domain.AnimeRepository
+import space.nicart.watchbox.domain.AnimeRow
 
 data class SearchUiState(
     val query: String = "",
-    val filter: SearchFilter = SearchFilter.ALL,
-    val results: List<MediaCard> = emptyList(),
-    val trending: List<MediaCard> = emptyList(),
+    /** Results grouped per source; relevance is not comparable across sources. */
+    val results: List<AnimeRow> = emptyList(),
     val recentSearches: List<String> = emptyList(),
     val isLoading: Boolean = false,
-    val hasMore: Boolean = false,
-    val errorMessage: String? = null,
+    val hasSearched: Boolean = false,
+    val hasNoSources: Boolean = false,
 )
 
 class SearchViewModel(
-    private val repository: MediaRepository,
+    private val repository: AnimeRepository,
     private val store: WatchBoxStore,
 ) : ViewModel() {
 
@@ -42,7 +32,6 @@ class SearchViewModel(
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
 
     private var searchJob: Job? = null
-    private var page = 1
 
     init {
         viewModelScope.launch {
@@ -50,13 +39,16 @@ class SearchViewModel(
                 _uiState.value = _uiState.value.copy(recentSearches = terms)
             }
         }
-        viewModelScope.launch {
-            val trending = repository.trending()
-            _uiState.value = _uiState.value.copy(trending = trending)
-        }
+        _uiState.value = _uiState.value.copy(hasNoSources = !repository.hasSources())
     }
 
-    /** Debounced live search (300ms), so typing doesn't spam the API. */
+    /**
+     * Debounced live search.
+     *
+     * The delay is longer than a typical single-API search because every
+     * keystroke fans out to every installed source, and each one is a separate
+     * scrape.
+     */
     fun onQueryChange(query: String) {
         _uiState.value = _uiState.value.copy(query = query)
         searchJob?.cancel()
@@ -65,70 +57,36 @@ class SearchViewModel(
             _uiState.value = _uiState.value.copy(
                 results = emptyList(),
                 isLoading = false,
-                errorMessage = null,
+                hasSearched = false,
             )
             return
         }
 
         searchJob = viewModelScope.launch {
-            delay(300)
-            runSearch(query, reset = true)
+            delay(450)
+            runSearch(query)
         }
     }
 
     fun submit() {
         val query = _uiState.value.query
         if (query.isBlank()) return
+
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             store.addRecentSearch(query)
-            runSearch(query, reset = true)
+            runSearch(query)
         }
     }
 
-    fun setFilter(filter: SearchFilter) {
-        if (filter == _uiState.value.filter) return
-        _uiState.value = _uiState.value.copy(filter = filter)
-        val query = _uiState.value.query
-        if (query.isNotBlank()) {
-            searchJob?.cancel()
-            searchJob = viewModelScope.launch { runSearch(query, reset = true) }
-        }
-    }
-
-    fun loadMore() {
-        val query = _uiState.value.query
-        if (query.isBlank() || _uiState.value.isLoading || !_uiState.value.hasMore) return
-        searchJob = viewModelScope.launch { runSearch(query, reset = false) }
-    }
-
-    private suspend fun runSearch(query: String, reset: Boolean) {
-        if (reset) page = 1 else page++
-
+    private suspend fun runSearch(query: String) {
+        _uiState.value = _uiState.value.copy(isLoading = true)
+        val rows = repository.searchAll(query)
         _uiState.value = _uiState.value.copy(
-            isLoading = reset,
-            errorMessage = null,
+            results = rows,
+            isLoading = false,
+            hasSearched = true,
         )
-
-        repository.search(query, page)
-            .onSuccess { results ->
-                val filtered = _uiState.value.filter.subjectType
-                    ?.let { type -> results.filter { it.subjectType == type } }
-                    ?: results
-
-                _uiState.value = _uiState.value.copy(
-                    results = if (reset) filtered else _uiState.value.results + filtered,
-                    isLoading = false,
-                    hasMore = results.isNotEmpty(),
-                    errorMessage = null,
-                )
-            }
-            .onFailure { error ->
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    errorMessage = error.message,
-                )
-            }
     }
 
     fun clearRecent() {
@@ -137,7 +95,7 @@ class SearchViewModel(
 
     companion object {
         fun factory(
-            repository: MediaRepository,
+            repository: AnimeRepository,
             store: WatchBoxStore,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")

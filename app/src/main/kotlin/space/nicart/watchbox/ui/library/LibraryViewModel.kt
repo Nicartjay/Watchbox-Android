@@ -12,7 +12,7 @@ import kotlinx.coroutines.launch
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.data.local.WatchHistoryEntry
 import space.nicart.watchbox.data.local.WatchlistEntry
-import space.nicart.watchbox.domain.MediaCard
+import space.nicart.watchbox.domain.AnimeCard
 
 data class LibraryUiState(
     val myList: List<WatchlistEntry> = emptyList(),
@@ -44,10 +44,10 @@ class LibraryViewModel(private val store: WatchBoxStore) : ViewModel() {
         viewModelScope.launch { store.removeHistory(key) }
     }
 
-    fun removeFromWatchlist(detailPath: String) {
+    fun removeFromWatchlist(key: String) {
         viewModelScope.launch {
             store.watchlist.first()
-                .firstOrNull { it.detailPath == detailPath }
+                .firstOrNull { it.key == key }
                 ?.let { store.toggleWatchlist(it) }
         }
     }
@@ -64,28 +64,18 @@ class LibraryViewModel(private val store: WatchBoxStore) : ViewModel() {
 
 // --------------------------------------------------------------- mappers
 
-internal fun WatchlistEntry.toCard(): MediaCard = MediaCard(
-    subjectId = subjectId,
-    detailPath = detailPath,
+internal fun WatchlistEntry.toCard(): AnimeCard = AnimeCard(
+    sourceId = sourceId,
+    url = animeUrl,
     title = title,
-    posterUrl = coverUrl,
-    subjectType = subjectType,
-    year = null,
-    rating = imdbRating.takeIf { it.isNotBlank() },
-    genres = genre.split(',').map { it.trim() }.filter { it.isNotEmpty() },
-    isUpcoming = false,
-    releaseDate = "",
+    posterUrl = posterUrl,
+    sourceName = sourceName,
 )
 
-internal fun WatchHistoryEntry.toCard(): MediaCard = MediaCard(
-    subjectId = subjectId,
-    detailPath = detailPath,
+internal fun WatchHistoryEntry.toCard(): AnimeCard = AnimeCard(
+    sourceId = sourceId,
+    url = animeUrl,
     title = title,
-    posterUrl = coverUrl,
-    subjectType = subjectType,
-    year = null,
-    rating = null,
-    genres = emptyList(),
-    isUpcoming = false,
-    releaseDate = "",
+    posterUrl = posterUrl,
+    sourceName = sourceName,
 )

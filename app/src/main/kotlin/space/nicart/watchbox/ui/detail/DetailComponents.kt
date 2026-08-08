@@ -54,8 +54,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.wb
-import space.nicart.watchbox.domain.MediaDetail
-import space.nicart.watchbox.domain.formatRuntime
+import space.nicart.watchbox.domain.AnimeDetail
 import space.nicart.watchbox.ui.components.WbAsyncImage
 import space.nicart.watchbox.ui.components.WbBackButton
 
@@ -77,7 +76,7 @@ fun detailHeroHeight(maxWidth: Dp, isTablet: Boolean): Dp = if (isTablet) {
  */
 @Composable
 fun DetailHero(
-    detail: MediaDetail,
+    detail: AnimeDetail,
     heroHeight: Dp,
     scrollOffset: Float,
     isTablet: Boolean,
@@ -94,7 +93,7 @@ fun DetailHero(
             .height(heroHeight),
     ) {
         WbAsyncImage(
-            url = detail.backdropUrl,
+            url = detail.posterUrl,
             contentDescription = detail.title,
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -134,31 +133,21 @@ fun DetailHero(
                 .padding(bottom = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if (detail.logoUrl != null) {
-                WbAsyncImage(
-                    url = detail.logoUrl,
-                    contentDescription = detail.title,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxWidth(if (isTablet) 0.56f else 0.6f)
-                        .widthIn(max = contentMaxWidth)
-                        .height(if (isTablet) 72.dp else 80.dp),
-                )
-            } else {
-                Text(
-                    text = detail.title,
-                    style = if (isTablet) {
-                        MaterialTheme.typography.displaySmall
-                    } else {
-                        MaterialTheme.typography.displayLarge
-                    },
-                    fontWeight = FontWeight.Bold,
-                    color = tokens.colors.textPrimary,
-                    textAlign = TextAlign.Center,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            // Sources provide no title artwork, so the title is always text.
+            Text(
+                text = detail.title,
+                style = if (isTablet) {
+                    MaterialTheme.typography.displaySmall
+                } else {
+                    MaterialTheme.typography.displayLarge
+                },
+                fontWeight = FontWeight.Bold,
+                color = tokens.colors.textPrimary,
+                textAlign = TextAlign.Center,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = contentMaxWidth),
+            )
 
             Spacer(Modifier.height(8.dp))
 
@@ -180,7 +169,7 @@ fun DetailHero(
  */
 @Composable
 fun DetailFloatingHeader(
-    detail: MediaDetail,
+    detail: AnimeDetail,
     progress: Float,
     inWatchlist: Boolean,
     onBack: () -> Unit,
@@ -215,30 +204,18 @@ fun DetailFloatingHeader(
     ) {
         WbBackButton(onClick = onBack, size = 40.dp)
 
-        if (detail.logoUrl != null) {
-            WbAsyncImage(
-                url = detail.logoUrl,
-                contentDescription = detail.title,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(42.dp)
-                    .padding(horizontal = 12.dp),
-            )
-        } else {
-            Text(
-                text = detail.title,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = tokens.colors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 12.dp),
-            )
-        }
+        Text(
+            text = detail.title,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = tokens.colors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 12.dp),
+        )
 
         DetailCircleButton(
             icon = if (inWatchlist) Icons.Filled.Check else Icons.Filled.Add,
@@ -255,8 +232,7 @@ fun DetailFloatingHeader(
 @Composable
 fun DetailActionButtons(
     playLabel: String,
-    isUpcoming: Boolean,
-    releaseDate: String,
+    enabled: Boolean,
     watched: Boolean,
     inWatchlist: Boolean,
     onPlay: () -> Unit,
@@ -275,8 +251,8 @@ fun DetailActionButtons(
         label = "menuProgress",
     )
 
-    // Upcoming titles get a non-interactive "Coming Soon" pill instead of Play.
-    if (isUpcoming) {
+    // With no episodes there is nothing to play, so the pill is inert.
+    if (!enabled) {
         Box(
             modifier = modifier
                 .widthIn(max = if (isTablet) 520.dp else 420.dp)
@@ -287,8 +263,7 @@ fun DetailActionButtons(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = stringResource(R.string.detail_coming_soon) +
-                    releaseDate.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(),
+                text = "No episodes",
                 style = MaterialTheme.typography.titleMedium,
                 color = tokens.colors.textSecondary,
             )
@@ -456,7 +431,7 @@ private fun DetailCircleButton(
  */
 @Composable
 fun DetailMetaInfo(
-    detail: MediaDetail,
+    detail: AnimeDetail,
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.wb
@@ -472,43 +447,27 @@ fun DetailMetaInfo(
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            listOfNotNull(
-                detail.year,
-                detail.runtimeMinutes?.takeIf { it > 0 }?.let(::formatRuntime),
-                detail.country.takeIf { it.isNotBlank() },
-            ).forEach { part ->
+            detail.metaLine.takeIf { it.isNotBlank() }?.let { meta ->
                 Text(
-                    text = part,
+                    text = meta,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = tokens.colors.textPrimary,
                 )
             }
-
-            detail.imdbRating?.let { rating ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Text(
-                        text = "IMDb",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = IMDB_YELLOW,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        text = rating,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = tokens.colors.textPrimary,
-                    )
-                }
-            }
         }
 
-        if (detail.overview.isNotBlank()) {
+        if (detail.sourceName.isNotBlank()) {
             Text(
-                text = detail.overview,
+                text = detail.sourceName,
+                style = MaterialTheme.typography.labelLarge,
+                color = tokens.colors.textMuted,
+            )
+        }
+
+        if (detail.description.isNotBlank()) {
+            Text(
+                text = detail.description,
                 style = MaterialTheme.typography.bodyMedium.copy(
                     lineHeight = androidx.compose.ui.unit.TextUnit(
                         22f,
@@ -552,4 +511,3 @@ fun DetailSectionTitle(
     )
 }
 
-private val IMDB_YELLOW = Color(0xFFF5C518)

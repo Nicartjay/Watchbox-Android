@@ -1,15 +1,12 @@
 package space.nicart.watchbox.ui.home
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -45,7 +42,7 @@ import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.data.local.WatchHistoryEntry
 import space.nicart.watchbox.data.local.WatchlistEntry
-import space.nicart.watchbox.domain.MediaCard
+import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.PosterMetrics
 import space.nicart.watchbox.ui.components.WbAsyncImage
@@ -61,17 +58,20 @@ import space.nicart.watchbox.ui.navigation.WbNavBarScrollState
 /**
  * Home.
  *
- * Layout follows NuvioMobile `features/home/HomeScreen.kt`: a `LazyColumn` with
- * 12dp item spacing, **no top app bar**, the hero running edge-to-edge under the
- * status bar, then Continue Watching, My List, and the API rows in feed order.
+ * Keeps the Nuvio layout — hero running edge-to-edge under the status bar, no top
+ * app bar, 12dp-spaced rails below — but every row is fed by an installed
+ * extension. There is no cross-source trending feed in this ecosystem, so the
+ * hero is drawn from the first source's popular list and each source contributes
+ * one rail.
  */
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel,
-    onOpenTitle: (MediaCard) -> Unit,
-    onOpenDetailPath: (detailPath: String, title: String) -> Unit,
+    onOpenAnime: (AnimeCard) -> Unit,
     onResume: (WatchHistoryEntry) -> Unit,
-    onViewAll: (rowId: String, title: String) -> Unit,
+    onOpenSaved: (WatchlistEntry) -> Unit,
+    onBrowseSource: (sourceId: Long, sourceName: String) -> Unit,
+    onInstallExtensions: () -> Unit,
     navScrollState: WbNavBarScrollState,
     modifier: Modifier = Modifier,
 ) {
@@ -82,10 +82,7 @@ fun HomeScreen(
     // Drive the nav-pill collapse from this list's scroll delta.
     val nestedScroll = remember(navScrollState) {
         object : NestedScrollConnection {
-            override fun onPreScroll(
-                available: Offset,
-                source: NestedScrollSource,
-            ): Offset {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 navScrollState.onScroll(available.y)
                 return Offset.Zero
             }
@@ -95,6 +92,19 @@ fun HomeScreen(
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val sectionPadding = sectionHorizontalPadding(maxWidth)
 
+        // Nothing installed yet: the feed is empty by definition, so prompt
+        // rather than showing an error.
+        if (state.hasNoSources) {
+            WbEmptyState(
+                title = stringResource(R.string.empty_no_sources_title),
+                body = stringResource(R.string.empty_no_sources_body),
+                actionLabel = stringResource(R.string.action_browse_extensions),
+                onAction = onInstallExtensions,
+                modifier = Modifier.align(Alignment.Center),
+            )
+            return@BoxWithConstraints
+        }
+
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -103,18 +113,17 @@ fun HomeScreen(
             contentPadding = PaddingValues(bottom = 18.dp + NavOverlayPadding),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // ---------------------------------------------------------- hero
             item(key = "hero") {
+                val hero = state.feed?.hero
                 when {
                     state.isLoading -> HomeHeroSkeleton()
-                    !state.content?.hero.isNullOrEmpty() -> HomeHeroSection(
-                        items = state.content!!.hero,
-                        onOpen = { onOpenDetailPath(it.card.detailPath, it.card.title) },
+                    !hero.isNullOrEmpty() -> HomeHeroSection(
+                        items = hero,
+                        onOpen = onOpenAnime,
                     )
                 }
             }
 
-            // --------------------------------------------- continue watching
             if (personal.continueWatching.isNotEmpty()) {
                 item(key = "continue") {
                     ContinueWatchingSection(
@@ -127,7 +136,6 @@ fun HomeScreen(
                 }
             }
 
-            // ------------------------------------------------------- my list
             if (personal.myList.isNotEmpty()) {
                 item(key = "mylist") {
                     WbShelfSection(
@@ -139,40 +147,36 @@ fun HomeScreen(
                     ) { entry ->
                         WbPosterCard(
                             card = entry.toCard(),
-                            onClick = { onOpenDetailPath(entry.detailPath, entry.title) },
+                            subtitle = entry.sourceName,
+                            onClick = { onOpenSaved(entry) },
                             onLongClick = { viewModel.removeFromWatchlist(entry) },
                         )
                     }
                 }
             }
 
-            // ---------------------------------------------------- API rows
             if (state.isLoading) {
                 items(3, key = { "skeleton-$it" }) {
                     WbSkeletonRow(horizontalPadding = sectionPadding)
                 }
             } else {
-                state.content?.rows?.forEach { row ->
-                    item(key = "row-${row.id}") {
+                state.feed?.rows?.forEach { row ->
+                    item(key = "row-${row.sourceId}-${row.title}") {
                         WbShelfSection(
                             title = row.title,
                             items = row.items,
-                            key = { it.detailPath },
+                            key = { it.key },
                             horizontalPadding = sectionPadding,
-                            onViewAll = { onViewAll(row.id, row.title) },
+                            onViewAll = { onBrowseSource(row.sourceId, row.sourceName) },
                             modifier = Modifier.padding(bottom = 12.dp),
                         ) { card ->
-                            WbPosterCard(
-                                card = card,
-                                onClick = { onOpenTitle(card) },
-                            )
+                            WbPosterCard(card = card, onClick = { onOpenAnime(card) })
                         }
                     }
                 }
             }
 
-            // ------------------------------------------------------- error
-            state.errorMessage?.takeIf { state.content == null }?.let { message ->
+            state.errorMessage?.takeIf { state.feed == null }?.let { message ->
                 item(key = "error") {
                     WbEmptyState(
                         title = stringResource(R.string.error_generic),
@@ -187,9 +191,8 @@ fun HomeScreen(
 }
 
 /**
- * Continue Watching, "Card" style: landscape thumbnails with a progress strip.
- * Phone metrics from `HomeContinueWatchingSection.kt:1167-1245` — 16dp gaps,
- * 16dp radius, 4dp progress bar.
+ * Continue Watching rail, "Card" style: landscape thumbnails with a progress
+ * strip. 16dp gaps and a 16dp radius, per Nuvio's phone metrics.
  */
 @Composable
 private fun ContinueWatchingSection(
@@ -230,7 +233,6 @@ private fun ContinueWatchingCard(
     onLongClick: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
-    // Card style: landscape poster width * 1.2 (`HomeContinueWatchingSection.kt:76-83`).
     val cardWidth = PosterMetrics.LandscapeWidth * 1.2f
     val cardHeight = cardWidth / PosterMetrics.LANDSCAPE_ASPECT
 
@@ -247,14 +249,13 @@ private fun ContinueWatchingCard(
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         ) {
             WbAsyncImage(
-                url = entry.coverUrl,
+                url = entry.posterUrl,
                 contentDescription = entry.title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
                 fallbackLabel = entry.title,
             )
 
-            // Bottom scrim so the episode label stays legible.
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -274,17 +275,16 @@ private fun ContinueWatchingCard(
                     .padding(10.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                if (entry.isSeries) {
+                entry.episodeLabel.takeIf { it.isNotBlank() }?.let { label ->
                     Text(
-                        text = "S%02dE%02d".format(entry.season, entry.episode),
+                        text = label,
                         style = MaterialTheme.typography.labelMedium,
                         color = Color.White.copy(alpha = 0.9f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-                WbProgressBar(
-                    progress = entry.progress,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                WbProgressBar(progress = entry.progress, modifier = Modifier.fillMaxWidth())
             }
         }
 
@@ -299,15 +299,10 @@ private fun ContinueWatchingCard(
     }
 }
 
-private fun WatchlistEntry.toCard(): MediaCard = MediaCard(
-    subjectId = subjectId,
-    detailPath = detailPath,
+private fun WatchlistEntry.toCard(): AnimeCard = AnimeCard(
+    sourceId = sourceId,
+    url = animeUrl,
     title = title,
-    posterUrl = coverUrl,
-    subjectType = subjectType,
-    year = null,
-    rating = imdbRating.takeIf { it.isNotBlank() },
-    genres = genre.split(',').map { it.trim() }.filter { it.isNotEmpty() },
-    isUpcoming = false,
-    releaseDate = "",
+    posterUrl = posterUrl,
+    sourceName = sourceName,
 )

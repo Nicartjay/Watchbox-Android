@@ -4,6 +4,7 @@ import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -13,42 +14,58 @@ import space.nicart.watchbox.R
 /**
  * Navigation graph.
  *
- * Nuvio uses Navigation 3 with `NavKey` routes and a single flat back stack; the
- * closest stable Android-only equivalent is Navigation-Compose with typed
- * `@Serializable` routes, which is what this uses. Tab switching is state inside
- * [Routes.Tabs] rather than separate back stacks, matching Nuvio's `AppTabHost`.
+ * A single flat back stack, matching Nuvio's model: the tab shell is one
+ * destination and detail/player push on top of it, so full-screen routes cover
+ * the nav pill naturally.
+ *
+ * Routes identify content by `sourceId` + source-relative `url`, because that is
+ * the only stable pair an extension guarantees. There is no global id in this
+ * ecosystem.
  */
 object Routes {
 
-    /** The tab shell. Holds Home / Search / Library / Settings. */
     @Serializable
     data object Tabs
 
     /** Title detail page. */
     @Serializable
-    data class Detail(val detailPath: String, val title: String = "")
+    data class Detail(
+        val sourceId: Long,
+        val animeUrl: String,
+        val title: String = "",
+    )
 
     /** Full-screen player. */
     @Serializable
     data class Player(
-        val detailPath: String,
-        val season: Int = 1,
-        val episode: Int = 1,
+        val sourceId: Long,
+        val animeUrl: String,
+        val episodeUrl: String,
         val resumeMs: Long = 0L,
     )
 
-    /** A "view all" grid for one home row. */
+    /** Popular/latest grid for one source. */
     @Serializable
-    data class Browse(val title: String, val rowId: String)
+    data class SourceBrowse(val sourceId: Long, val sourceName: String)
+
+    /** Extension repository manager. */
+    @Serializable
+    data object Extensions
 }
 
-/** The four bottom-nav destinations, in order (`App.kt:368-373`). */
+/**
+ * The five bottom-nav destinations, in order.
+ *
+ * Browse sits between Search and Library because it is where sources and
+ * extensions are reached, which is the most-used screen before a library exists.
+ */
 enum class AppTab(
     @StringRes val labelRes: Int,
     val icon: ImageVector,
 ) {
     HOME(R.string.nav_home, Icons.Filled.Home),
     SEARCH(R.string.nav_search, Icons.Rounded.Search),
+    BROWSE(R.string.nav_browse, Icons.Rounded.Explore),
     LIBRARY(R.string.nav_library, Icons.Rounded.VideoLibrary),
     SETTINGS(R.string.nav_settings, Icons.Outlined.Person),
 }

@@ -28,7 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.R
 import space.nicart.watchbox.data.local.WatchHistoryEntry
-import space.nicart.watchbox.domain.MediaCard
+import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.WbChip
 import space.nicart.watchbox.ui.components.WbEmptyState
@@ -50,7 +50,7 @@ private enum class LibraryTab(val label: String) {
 @Composable
 fun LibraryScreen(
     viewModel: LibraryViewModel,
-    onOpenTitle: (detailPath: String, title: String) -> Unit,
+    onOpenAnime: (AnimeCard) -> Unit,
     onResume: (WatchHistoryEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -89,7 +89,7 @@ fun LibraryScreen(
                 Spacer(Modifier.height(14.dp))
             }
 
-            val cards: List<Pair<MediaCard, WatchHistoryEntry?>> = when (tab) {
+            val cards: List<Pair<AnimeCard, WatchHistoryEntry?>> = when (tab) {
                 LibraryTab.MY_LIST -> state.myList.map { it.toCard() to null }
                 LibraryTab.CONTINUE -> state.continueWatching.map { it.toCard() to it }
                 LibraryTab.HISTORY -> state.history.map { it.toCard() to it }
@@ -114,23 +114,24 @@ fun LibraryScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        items(items = cards, key = { it.first.detailPath }) { (card, entry) ->
+                        items(items = cards, key = { it.first.key }) { (card, entry) ->
                             WbPosterCard(
                                 card = card,
                                 width = null,
                                 progress = entry?.progress ?: 0f,
                                 watched = entry?.isFinished == true,
+                                subtitle = card.sourceName,
                                 onClick = {
                                     if (entry != null && tab == LibraryTab.CONTINUE) {
                                         onResume(entry)
                                     } else {
-                                        onOpenTitle(card.detailPath, card.title)
+                                        onOpenAnime(card)
                                     }
                                 },
                                 onLongClick = {
                                     when (tab) {
                                         LibraryTab.MY_LIST ->
-                                            viewModel.removeFromWatchlist(card.detailPath)
+                                            viewModel.removeFromWatchlist(card.key)
 
                                         else -> entry?.let { viewModel.removeFromHistory(it.key) }
                                     }

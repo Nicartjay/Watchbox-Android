@@ -3,49 +3,65 @@ package space.nicart.watchbox.ui.detail
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.data.local.WatchHistoryEntry
 import space.nicart.watchbox.data.local.WatchlistEntry
-import space.nicart.watchbox.domain.EpisodeItem
-import space.nicart.watchbox.domain.MediaDetail
-import space.nicart.watchbox.domain.MediaRepository
+import space.nicart.watchbox.domain.AnimeDetail
+import space.nicart.watchbox.domain.AnimeRepository
+import space.nicart.watchbox.domain.EpisodeEntry
 
 data class DetailUiState(
     val isLoading: Boolean = true,
-    val detail: MediaDetail? = null,
-    val selectedSeason: Int = 1,
-    val episodes: List<EpisodeItem> = emptyList(),
-    val episodesLoading: Boolean = false,
+    val detail: AnimeDetail? = null,
     val inWatchlist: Boolean = false,
     val history: WatchHistoryEntry? = null,
     val errorMessage: String? = null,
 ) {
-    /** Where the Play button should resume from. */
-    val resumeTarget: Triple<Int, Int, Long>?
-        get() = history
-            ?.takeIf { !it.isFinished && it.positionMs > 5_000L }
-            ?.let { Triple(it.season, it.episode, it.positionMs) }
+    /** The episode the play button should open, and where to resume from. */
+    val resumeTarget: Pair<EpisodeEntry, Long>?
+        get() {
+            val entry = history?.takeIf { !it.isFinished && it.positionMs > 5_000L }
+                ?: return null
+            val episode = detail?.episodes?.firstOrNull { it.url == entry.episodeUrl }
+                ?: return null
+            return episode to entry.positionMs
+        }
 
-    /** True when the Play button should read "Resume". */
+    /** First unwatched episode, or the first episode when nothing is watched. */
+    val startTarget: EpisodeEntry?
+        get() = resumeTarget?.first
+            ?: detail?.episodes?.firstOrNull()
+
     val isResume: Boolean get() = resumeTarget != null
+
+    /** Episode URLs already finished, for the watched tick. */
+    val watchedEpisodeUrls: Set<String>
+        get() {
+            val entry = history ?: return emptySet()
+            val episodes = detail?.episodes ?: return emptySet()
+            val index = episodes.indexOfFirst { it.url == entry.episodeUrl }
+            if (index < 0) return emptySet()
+            // Everything before the current episode counts as watched, plus the
+            // current one when it was finished.
+            val watched = episodes.take(index).map { it.url }.toMutableSet()
+            if (entry.isFinished) watched += entry.episodeUrl
+            return watched
+        }
 }
 
 class DetailViewModel(
-    private val repository: MediaRepository,
+    private val repository: AnimeRepository,
     private val store: WatchBoxStore,
-    private val detailPath: String,
+    private val sourceId: Long,
+    private val animeUrl: String,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DetailUiState())
     val uiState: StateFlow<DetailUiState> = _uiState.asStateFlow()
-
-    private var episodeJob: Job? = null
 
     init {
         load()
@@ -56,16 +72,13 @@ class DetailViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
 
-            repository.detail(detailPath)
+            repository.detail(sourceId, animeUrl)
                 .onSuccess { detail ->
-                    val initialSeason = detail.seasons.firstOrNull()?.season ?: 1
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         detail = detail,
-                        selectedSeason = initialSeason,
                         errorMessage = null,
                     )
-                    if (detail.isSeries) selectSeason(initialSeason)
                 }
                 .onFailure { error ->
                     _uiState.value = _uiState.value.copy(
@@ -76,12 +89,12 @@ class DetailViewModel(
         }
     }
 
-    /** Keep watchlist + resume state live so the action row always reflects reality. */
+    /** Keeps the action row honest as the user watches or saves elsewhere. */
     private fun observeStoredState() {
+        val key = "$sourceId::$animeUrl"
+
         viewModelScope.launch {
             store.watchlist.collect { list ->
-                val detail = _uiState.value.detail
-                val key = detail?.subjectId?.ifBlank { detailPath } ?: detailPath
                 _uiState.value = _uiState.value.copy(
                     inWatchlist = list.any { it.key == key },
                 )
@@ -89,35 +102,10 @@ class DetailViewModel(
         }
         viewModelScope.launch {
             store.history.collect { entries ->
-                val detail = _uiState.value.detail
-                val key = detail?.subjectId?.ifBlank { detailPath } ?: detailPath
                 _uiState.value = _uiState.value.copy(
                     history = entries.firstOrNull { it.key == key },
                 )
             }
-        }
-    }
-
-    fun selectSeason(season: Int) {
-        val detail = _uiState.value.detail ?: return
-        episodeJob?.cancel()
-
-        _uiState.value = _uiState.value.copy(
-            selectedSeason = season,
-            episodesLoading = true,
-            episodes = emptyList(),
-        )
-
-        episodeJob = viewModelScope.launch {
-            val apiCount = detail.seasons
-                .firstOrNull { it.season == season }
-                ?.episodeCount
-                ?: 1
-            val episodes = repository.episodes(detail.tmdbId, season, apiCount)
-            _uiState.value = _uiState.value.copy(
-                episodes = episodes,
-                episodesLoading = false,
-            )
         }
     }
 
@@ -126,68 +114,58 @@ class DetailViewModel(
         viewModelScope.launch {
             store.toggleWatchlist(
                 WatchlistEntry(
-                    subjectId = detail.subjectId,
-                    detailPath = detail.detailPath,
+                    sourceId = detail.sourceId,
+                    animeUrl = detail.url,
                     title = detail.title,
-                    coverUrl = detail.posterUrl,
-                    subjectType = detail.subjectType,
-                    genre = detail.genres.joinToString(","),
-                    imdbRating = detail.imdbRating.orEmpty(),
+                    posterUrl = detail.posterUrl,
+                    sourceName = detail.sourceName,
                     addedAt = System.currentTimeMillis(),
                 ),
             )
         }
     }
 
-    /** Mark the whole title watched (or clear it). */
+    /** Marks the whole title watched, or clears its history entirely. */
     fun toggleWatched() {
         val detail = _uiState.value.detail ?: return
+        val existing = _uiState.value.history
+
         viewModelScope.launch {
-            val existing = _uiState.value.history
             if (existing != null && existing.isFinished) {
                 store.removeHistory(existing.key)
-            } else {
-                val lastEpisode = _uiState.value.episodes.maxOfOrNull { it.episode } ?: 1
-                store.saveHistory(
-                    WatchHistoryEntry(
-                        subjectId = detail.subjectId,
-                        detailPath = detail.detailPath,
-                        title = detail.title,
-                        coverUrl = detail.posterUrl,
-                        subjectType = detail.subjectType,
-                        season = _uiState.value.selectedSeason,
-                        episode = lastEpisode,
-                        maxEpisode = lastEpisode,
-                        positionMs = 0L,
-                        durationMs = 0L,
-                        progress = 1f,
-                        updatedAt = System.currentTimeMillis(),
-                    ),
-                )
+                return@launch
             }
-        }
-    }
 
-    /** Episodes already watched in the selected season. */
-    suspend fun watchedEpisodes(): Set<Int> {
-        val detail = _uiState.value.detail ?: return emptySet()
-        val key = detail.subjectId.ifBlank { detailPath }
-        val entry = store.history.first().firstOrNull { it.key == key } ?: return emptySet()
-        if (entry.season != _uiState.value.selectedSeason) return emptySet()
-        return (1 until entry.episode).toSet()
+            val last = detail.episodes.lastOrNull() ?: return@launch
+            store.saveHistory(
+                WatchHistoryEntry(
+                    sourceId = detail.sourceId,
+                    animeUrl = detail.url,
+                    title = detail.title,
+                    posterUrl = detail.posterUrl,
+                    sourceName = detail.sourceName,
+                    episodeUrl = last.url,
+                    episodeName = last.displayName,
+                    episodeNumber = last.number,
+                    progress = 1f,
+                    updatedAt = System.currentTimeMillis(),
+                ),
+            )
+        }
     }
 
     fun retry() = load()
 
     companion object {
         fun factory(
-            repository: MediaRepository,
+            repository: AnimeRepository,
             store: WatchBoxStore,
-            detailPath: String,
+            sourceId: Long,
+            animeUrl: String,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                DetailViewModel(repository, store, detailPath) as T
+                DetailViewModel(repository, store, sourceId, animeUrl) as T
         }
     }
 }

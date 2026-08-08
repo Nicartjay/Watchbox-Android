@@ -39,9 +39,12 @@ val releaseKeyPassword = secret("WATCHBOX_RELEASE_KEY_PASSWORD", "watchbox")
 val releaseKeystore = file(releaseStoreFile)
 val hasReleaseSigning = releaseKeystore.exists()
 
-// Backend + API keys. Overridable from CI env or local.properties.
-val apiBaseUrl = secret("WATCHBOX_API_BASE_URL", "https://watchbox.nicart.space")
-val tmdbApiKey = secret("TMDB_API_KEY", "d8cd4489c203c5e8c8efb70aa8e33565")
+// Default extension repository. Overridable from CI env or local.properties,
+// and editable at runtime in Settings.
+val defaultRepoUrl = secret(
+    "WATCHBOX_REPO_URL",
+    "https://raw.githubusercontent.com/yuzono/anime-repo/repo",
+)
 
 // Version. `appVersionName` is the source of truth; CI may override both so a
 // tag push (v1.2.3) produces a matching APK without editing this file.
@@ -73,8 +76,7 @@ android {
         versionCode = appVersionCode
         versionName = appVersionName
 
-        buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
-        buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
+        buildConfigField("String", "DEFAULT_REPO_URL", "\"$defaultRepoUrl\"")
     }
 
     buildTypes {
@@ -161,7 +163,6 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.splashscreen)
     implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.palette)
 
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -182,7 +183,6 @@ dependencies {
     implementation(libs.media3.exoplayer.dash)
     implementation(libs.media3.datasource.okhttp)
     implementation(libs.media3.ui)
-    implementation(libs.media3.session)
     implementation(libs.media3.common)
 
     implementation(libs.coil.compose)
@@ -196,4 +196,17 @@ dependencies {
 
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
+
+    // ---- Aniyomi extension runtime -------------------------------------
+    // Extension APKs are built compileOnly against the source API, so the
+    // host app is the library provider. These versions are part of the ABI
+    // the extensions link against, not free choices.
+    implementation(libs.rxjava)
+    implementation(libs.injekt.core)
+    implementation(libs.jsoup)
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.dnsoverhttps)
+    implementation(libs.okhttp.logging)
+    implementation(libs.okhttp.brotli)
+    implementation(libs.androidx.preference)
 }

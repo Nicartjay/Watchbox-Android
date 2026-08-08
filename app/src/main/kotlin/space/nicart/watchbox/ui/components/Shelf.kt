@@ -48,7 +48,7 @@ import androidx.compose.ui.unit.dp
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.WbTokens
 import space.nicart.watchbox.core.ui.wb
-import space.nicart.watchbox.domain.MediaCard
+import space.nicart.watchbox.domain.AnimeCard
 
 /**
  * Poster rails and cards.
@@ -176,7 +176,7 @@ fun WbShelfHeader(
  */
 @Composable
 fun WbPosterCard(
-    card: MediaCard,
+    card: AnimeCard,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
@@ -185,6 +185,8 @@ fun WbPosterCard(
     watched: Boolean = false,
     progress: Float = 0f,
     showLabels: Boolean = true,
+    /** Secondary line: usually the source name, or resume position. */
+    subtitle: String? = null,
 ) {
     val tokens = MaterialTheme.wb
 
@@ -209,15 +211,6 @@ fun WbPosterCard(
                 contentScale = ContentScale.Crop,
                 fallbackLabel = card.title,
             )
-
-            if (card.isUpcoming) {
-                WbCornerBadge(
-                    text = "SOON",
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(6.dp),
-                )
-            }
 
             WbWatchedBadge(
                 visible = watched,
@@ -244,9 +237,9 @@ fun WbPosterCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            card.detailLine.takeIf { it.isNotBlank() }?.let { detail ->
+            subtitle?.takeIf { it.isNotBlank() }?.let { line ->
                 Text(
-                    text = detail,
+                    text = line,
                     style = MaterialTheme.typography.labelSmall,
                     color = tokens.colors.textMuted,
                     maxLines = 1,

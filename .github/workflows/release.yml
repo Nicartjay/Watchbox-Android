@@ -15,8 +15,7 @@ name: Release APK
 # breaks upgrades for anyone who installed a build signed with the old one.
 #
 # Optional:
-#   WATCHBOX_API_BASE_URL        - overrides the default Worker URL
-#   TMDB_API_KEY                 - overrides the bundled TMDB key
+#   WATCHBOX_REPO_URL            - overrides the default extension repository
 
 on:
   workflow_dispatch:
@@ -54,8 +53,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       KEYSTORE_BASE64: ${{ secrets.WATCHBOX_KEYSTORE_BASE64 }}
-      WATCHBOX_API_BASE_URL: ${{ secrets.WATCHBOX_API_BASE_URL }}
-      TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+      WATCHBOX_REPO_URL: ${{ secrets.WATCHBOX_REPO_URL }}
 
     steps:
       - name: Check out
@@ -130,6 +128,14 @@ jobs:
           # Monotonic across runs, which Android requires for upgrades.
           WATCHBOX_VERSION_CODE: ${{ github.run_number }}
         run: ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Verify extension ABI survived minification
+        # R8 strips the eu.kanade.tachiyomi tree unless the keep rules hold,
+        # and it only shows up in release builds. Fail here, not on a user's
+        # device.
+        run: |
+          apk="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -1)"
+          python3 tools/verify-release-abi.py "${apk}"
 
       - name: Verify signature
         run: |

@@ -21,6 +21,16 @@ compose-compiler-ext = "1.5.15"
 
 coil = "2.7.0"
 ktor = "3.1.3"
+
+# Aniyomi extension runtime. Extension APKs are compiled compileOnly against
+# the source API and link against whatever the host app provides, so these are
+# hard ABI requirements rather than free choices.
+rxjava = "1.3.8"
+injekt = "4135455a2a"
+jsoup = "1.22.1"
+okhttp = "5.3.2"
+quickjs = "0.9.2"
+androidx-preference = "1.2.1"
 kotlinx-serialization = "1.8.1"
 kotlinx-coroutines = "1.10.2"
 
@@ -71,6 +81,16 @@ ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "kto
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
 ktor-serialization-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
 ktor-client-logging = { module = "io.ktor:ktor-client-logging", version.ref = "ktor" }
+
+# Aniyomi source-API runtime deps
+rxjava = { module = "io.reactivex:rxjava", version.ref = "rxjava" }
+injekt-core = { module = "com.github.null2264.injekt:injekt-core", version.ref = "injekt" }
+jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+okhttp-dnsoverhttps = { module = "com.squareup.okhttp3:okhttp-dnsoverhttps", version.ref = "okhttp" }
+okhttp-logging = { module = "com.squareup.okhttp3:logging-interceptor", version.ref = "okhttp" }
+okhttp-brotli = { module = "com.squareup.okhttp3:okhttp-brotli", version.ref = "okhttp" }
+androidx-preference = { module = "androidx.preference:preference-ktx", version.ref = "androidx-preference" }
 
 # Kotlinx
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }

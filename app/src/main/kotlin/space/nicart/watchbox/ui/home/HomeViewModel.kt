@@ -13,16 +13,17 @@ import kotlinx.coroutines.launch
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.data.local.WatchHistoryEntry
 import space.nicart.watchbox.data.local.WatchlistEntry
-import space.nicart.watchbox.domain.HomeContent
-import space.nicart.watchbox.domain.MediaCard
-import space.nicart.watchbox.domain.MediaRepository
+import space.nicart.watchbox.domain.AnimeRepository
+import space.nicart.watchbox.domain.HomeFeed
+import space.nicart.watchbox.extension.ExtensionManager
 
-/** Home screen state. */
 data class HomeUiState(
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
-    val content: HomeContent? = null,
+    val feed: HomeFeed? = null,
     val errorMessage: String? = null,
+    /** True when nothing is installed yet, which needs an onboarding prompt. */
+    val hasNoSources: Boolean = false,
 )
 
 /** Continue Watching + My List, derived from persisted state. */
@@ -32,7 +33,8 @@ data class HomePersonalState(
 )
 
 class HomeViewModel(
-    private val repository: MediaRepository,
+    private val repository: AnimeRepository,
+    private val extensions: ExtensionManager,
     private val store: WatchBoxStore,
 ) : ViewModel() {
 
@@ -40,8 +42,8 @@ class HomeViewModel(
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
     /**
-     * Finished titles are dropped from Continue Watching, which the web app does
-     * not do — there, a completed episode lingers at 100%.
+     * Finished titles are dropped from Continue Watching — a completed episode
+     * sitting at 100% is noise, not a resume candidate.
      */
     val personal: StateFlow<HomePersonalState> = combine(
         store.history,
@@ -61,31 +63,44 @@ class HomeViewModel(
     )
 
     init {
-        load()
+        // The feed depends on which extensions are loaded, so rebuild whenever
+        // that set changes rather than only on first composition.
+        viewModelScope.launch {
+            extensions.installed.collect { load() }
+        }
     }
 
     fun load(refresh: Boolean = false) {
         viewModelScope.launch {
+            if (!repository.hasSources()) {
+                _uiState.value = HomeUiState(
+                    isLoading = false,
+                    hasNoSources = true,
+                    feed = null,
+                )
+                return@launch
+            }
+
             _uiState.value = _uiState.value.copy(
-                isLoading = !refresh && _uiState.value.content == null,
+                isLoading = !refresh && _uiState.value.feed == null,
                 isRefreshing = refresh,
                 errorMessage = null,
+                hasNoSources = false,
             )
 
-            repository.home()
-                .onSuccess { content ->
+            repository.homeFeed()
+                .onSuccess { feed ->
                     _uiState.value = HomeUiState(
                         isLoading = false,
                         isRefreshing = false,
-                        content = content,
-                        errorMessage = null,
+                        feed = feed,
                     )
                 }
                 .onFailure { error ->
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         isRefreshing = false,
-                        errorMessage = error.message ?: "Could not load home feed.",
+                        errorMessage = error.message ?: "Could not load the feed.",
                     )
                 }
         }
@@ -99,18 +114,15 @@ class HomeViewModel(
         viewModelScope.launch { store.toggleWatchlist(entry) }
     }
 
-    /** Cards for a row, used by the "view all" grid. */
-    fun rowItems(rowId: String): List<MediaCard> =
-        _uiState.value.content?.rows?.firstOrNull { it.id == rowId }?.items.orEmpty()
-
     companion object {
         fun factory(
-            repository: MediaRepository,
+            repository: AnimeRepository,
+            extensions: ExtensionManager,
             store: WatchBoxStore,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                HomeViewModel(repository, store) as T
+                HomeViewModel(repository, extensions, store) as T
         }
     }
 }

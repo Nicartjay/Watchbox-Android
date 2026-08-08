@@ -26,7 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -39,7 +39,8 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import space.nicart.watchbox.R
-import space.nicart.watchbox.domain.PlayableStream
+import space.nicart.watchbox.domain.EpisodeEntry
+import space.nicart.watchbox.domain.StreamOption
 import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
 
@@ -90,7 +91,10 @@ fun PlayerScreen(
         }
     }
 
-    val exoPlayer = remember { PlayerFactory.create(context) }
+    // Rebuilt when the header set changes: OkHttpDataSource takes its default
+    // request properties at construction, and a source's Referer is per-stream.
+    val streamHeaders = state.selectedStream?.headers.orEmpty()
+    val exoPlayer = remember(streamHeaders) { PlayerFactory.create(context, streamHeaders) }
 
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(true) }
@@ -147,14 +151,14 @@ fun PlayerScreen(
     }
 
     // --- load / swap media whenever the selected stream changes
-    LaunchedEffect(state.selectedStream?.url, state.source?.subtitles) {
+    LaunchedEffect(state.selectedStream?.url) {
         val stream = state.selectedStream ?: return@LaunchedEffect
         val resumeFrom = if (positionMs > 0) positionMs else state.resumeMs
 
         exoPlayer.setMediaItem(
             PlayerFactory.buildMediaItem(
                 stream = stream,
-                subtitles = state.source?.subtitles.orEmpty(),
+                subtitles = state.subtitles,
                 title = state.title,
             ),
         )
@@ -167,8 +171,8 @@ fun PlayerScreen(
     LaunchedEffect(state.speed) { exoPlayer.setPlaybackSpeed(state.speed) }
 
     // --- subtitle selection
-    LaunchedEffect(state.selectedSubtitleIndex, state.source) {
-        val subtitle = state.source?.subtitles?.getOrNull(state.selectedSubtitleIndex)
+    LaunchedEffect(state.selectedSubtitleIndex, state.selectedStream?.url) {
+        val subtitle = state.subtitles.getOrNull(state.selectedSubtitleIndex)
         exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
             .buildUpon()
             .setTrackTypeDisabled(
@@ -344,20 +348,12 @@ fun PlayerScreen(
             LockedPlayerOverlay(onUnlock = { viewModel.setLocked(false) })
         }
 
-        // --- skip intro / outro
-        SkipSegmentButton(
-            state = state,
-            positionMs = positionMs,
-            onSkip = { targetMs -> exoPlayer.seekTo(targetMs) },
-            modifier = Modifier.align(Alignment.BottomStart),
-        )
-
         // --- side panels
         PlayerPanels(
             panel = openPanel,
             state = state,
             onDismiss = { openPanel = PlayerPanel.NONE },
-            onSelectStream = { stream: PlayableStream ->
+            onSelectStream = { stream: StreamOption ->
                 viewModel.selectStream(stream)
                 openPanel = PlayerPanel.NONE
             },
@@ -365,20 +361,12 @@ fun PlayerScreen(
                 viewModel.selectSubtitle(it)
                 openPanel = PlayerPanel.NONE
             },
-            onSelectAudio = {
-                viewModel.selectAudio(it)
-                openPanel = PlayerPanel.NONE
-            },
-            onSelectHost = {
-                viewModel.selectHost(it)
-                openPanel = PlayerPanel.NONE
-            },
             onSelectSpeed = {
                 viewModel.setSpeed(it)
                 openPanel = PlayerPanel.NONE
             },
-            onSelectEpisode = {
-                viewModel.goToEpisode(it)
+            onSelectEpisode = { episode: EpisodeEntry ->
+                viewModel.goToEpisode(episode)
                 openPanel = PlayerPanel.NONE
             },
         )

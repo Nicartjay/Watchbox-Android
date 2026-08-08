@@ -98,8 +98,13 @@ fun playerMetricsFor(width: Dp): PlayerMetrics = when {
     )
 }
 
-/** Which sheet is open, if any. */
-enum class PlayerPanel { NONE, QUALITY, SUBTITLES, AUDIO, SPEED, HOSTS, EPISODES }
+/**
+ * Which sheet is open, if any.
+ *
+ * No audio-track or alternate-host panels: the lib-14 extension ABI exposes
+ * neither, so offering them would be dead UI.
+ */
+enum class PlayerPanel { NONE, QUALITY, SUBTITLES, SPEED, EPISODES }
 
 @Composable
 fun PlayerControlsOverlay(
@@ -225,7 +230,7 @@ private fun PlayerHeader(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            state.source?.serverName?.let { server ->
+            state.detail?.sourceName?.let { server ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = server,
@@ -426,35 +431,21 @@ private fun ProgressControls(
                         label = "${state.speed.formatSpeed()}x",
                         onClick = { onOpenPanel(PlayerPanel.SPEED) },
                     )
-                    if (state.source?.streams.orEmpty().size > 1) {
+                    if (state.streams.size > 1) {
                         ActionPill(
                             icon = Icons.Rounded.SkipNext,
                             label = state.selectedStream?.label ?: "Auto",
                             onClick = { onOpenPanel(PlayerPanel.QUALITY) },
                         )
                     }
-                    if (state.source?.subtitles.orEmpty().isNotEmpty()) {
+                    if (state.subtitles.isNotEmpty()) {
                         ActionPill(
                             icon = Icons.Rounded.ClosedCaption,
                             label = stringResource(R.string.player_subtitles),
                             onClick = { onOpenPanel(PlayerPanel.SUBTITLES) },
                         )
                     }
-                    if (state.source?.audioTracks.orEmpty().isNotEmpty()) {
-                        ActionPill(
-                            icon = Icons.AutoMirrored.Rounded.VolumeUp,
-                            label = stringResource(R.string.player_audio),
-                            onClick = { onOpenPanel(PlayerPanel.AUDIO) },
-                        )
-                    }
-                    if (state.source?.hosts.orEmpty().isNotEmpty()) {
-                        ActionPill(
-                            icon = Icons.Filled.SwapHoriz,
-                            label = stringResource(R.string.player_servers),
-                            onClick = { onOpenPanel(PlayerPanel.HOSTS) },
-                        )
-                    }
-                    if (state.detail?.isSeries == true) {
+                    if (state.episodes.size > 1) {
                         ActionPill(
                             icon = Icons.Filled.VideoLibrary,
                             label = stringResource(R.string.player_episodes),

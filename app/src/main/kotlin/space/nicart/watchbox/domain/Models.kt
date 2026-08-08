@@ -1,203 +1,186 @@
 package space.nicart.watchbox.domain
 
-import space.nicart.watchbox.data.model.Subject
-import space.nicart.watchbox.data.model.SubjectType
-import space.nicart.watchbox.data.remote.TmdbEpisode
+import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
+import eu.kanade.tachiyomi.animesource.model.SAnime
+import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Video
 
 /**
  * UI-facing models.
  *
- * The screens never touch DTOs directly: ONEROOM covers are portrait-only and
- * TMDB supplies the backdrops/logos, so a single merged model keeps that fan-in
- * out of the composables.
+ * Screens never touch the extension types directly. Those are mutable
+ * `java.io.Serializable` interfaces with snake_case fields, shaped by the
+ * extension ABI rather than by anything Compose wants, and a source may hand
+ * back the same instance twice with different contents. Mapping to immutable
+ * values here keeps recomposition predictable and stops ABI concerns leaking
+ * into the UI.
+ *
+ * The `sourceId` on each model is what makes an entry re-openable: it survives
+ * the extension being uninstalled and reinstalled.
  */
 
-/** A poster-rail / grid item. */
-data class MediaCard(
-    val subjectId: String,
-    val detailPath: String,
+/** A poster-rail or grid entry. */
+data class AnimeCard(
+    val sourceId: Long,
+    /** Source-relative path; unique within a source. */
+    val url: String,
     val title: String,
     val posterUrl: String?,
-    val subjectType: Int,
-    val year: String?,
-    val rating: String?,
-    val genres: List<String>,
-    val isUpcoming: Boolean,
-    val releaseDate: String,
+    val sourceName: String = "",
 ) {
-    val isSeries: Boolean get() = subjectType == SubjectType.TV
-
-    /** Secondary line under the poster: `2024 · Drama`. */
-    val detailLine: String
-        get() = listOfNotNull(year, genres.firstOrNull()).joinToString(" · ")
-
-    companion object {
-        fun from(subject: Subject): MediaCard = MediaCard(
-            subjectId = subject.subjectId,
-            detailPath = subject.detailPath,
-            title = subject.title,
-            posterUrl = subject.coverUrl,
-            subjectType = subject.subjectType,
-            year = subject.year,
-            rating = subject.imdbRatingValue.takeIf { it.isNotBlank() && it != "0" },
-            genres = subject.genres,
-            isUpcoming = subject.isUpcoming,
-            releaseDate = subject.releaseDate,
-        )
-    }
+    /** Stable identity across sources. */
+    val key: String get() = "$sourceId::$url"
 }
 
-/** A hero-pager entry. Prefers a TMDB backdrop, falls back to the API banner. */
-data class HeroItem(
-    val card: MediaCard,
-    val backdropUrl: String?,
-    val logoUrl: String?,
-)
-
-/** A titled horizontal rail on the home screen. */
-data class MediaRow(
-    val id: String,
+/** One horizontal rail on the home screen, backed by a single source. */
+data class AnimeRow(
+    val sourceId: Long,
+    val sourceName: String,
     val title: String,
-    val items: List<MediaCard>,
+    val items: List<AnimeCard>,
+    /** True when this rail came from `getLatestUpdates` rather than popular. */
+    val isLatest: Boolean = false,
 )
 
-/** Everything the home screen renders. */
-data class HomeContent(
-    val hero: List<HeroItem>,
-    val rows: List<MediaRow>,
+/** Home screen payload. */
+data class HomeFeed(
+    val hero: List<AnimeCard>,
+    val rows: List<AnimeRow>,
 )
 
-/** Fully-merged detail payload. */
-data class MediaDetail(
-    val subjectId: String,
-    val detailPath: String,
+/** Fully-resolved detail for one title. */
+data class AnimeDetail(
+    val sourceId: Long,
+    val sourceName: String,
+    val url: String,
     val title: String,
-    val overview: String,
     val posterUrl: String?,
-    val backdropUrl: String?,
-    val logoUrl: String?,
-    val subjectType: Int,
-    val year: String?,
-    val runtimeMinutes: Int?,
+    val description: String,
+    val author: String?,
+    val artist: String?,
     val genres: List<String>,
-    val country: String,
-    val imdbRating: String?,
-    val tmdbRating: Double,
-    val tmdbId: Int?,
-    val isUpcoming: Boolean,
-    val releaseDate: String,
-    val seasons: List<SeasonSummary>,
-    val cast: List<CastMember>,
-    val recommendations: List<MediaCard>,
-    val dominantColorHex: String?,
+    val status: AnimeStatus,
+    val episodes: List<EpisodeEntry>,
 ) {
-    val isSeries: Boolean get() = subjectType == SubjectType.TV
-
-    /** Anime heuristic from the web app: animation genre + Japanese origin. */
-    val isAnime: Boolean
-        get() = genres.any { it.equals("Animation", true) } &&
-            (country.contains("Japan", true) || country.isBlank())
+    val key: String get() = "$sourceId::$url"
 
     val metaLine: String
         get() = listOfNotNull(
-            year,
-            runtimeMinutes?.let { formatRuntime(it) },
-            country.takeIf { it.isNotBlank() },
+            status.label.takeIf { status != AnimeStatus.UNKNOWN },
+            genres.firstOrNull(),
+            "${episodes.size} episodes".takeIf { episodes.isNotEmpty() },
         ).joinToString(" · ")
 }
 
-data class SeasonSummary(
-    val season: Int,
-    val episodeCount: Int,
-    val posterUrl: String?,
-    val label: String,
-)
-
-data class CastMember(
-    val name: String,
-    val character: String,
-    val photoUrl: String?,
-)
-
-/** One episode row/card. */
-data class EpisodeItem(
-    val season: Int,
-    val episode: Int,
-    val title: String,
-    val overview: String,
-    val stillUrl: String?,
-    val airDate: String?,
-    val runtimeMinutes: Int?,
-    val rating: Double,
-    /** True when only TMDB lists it; the API has no resource for it yet. */
-    val tmdbOnly: Boolean = false,
-) {
-    val code: String get() = "S%02dE%02d".format(season, episode)
+enum class AnimeStatus(val label: String) {
+    UNKNOWN("Unknown"),
+    ONGOING("Ongoing"),
+    COMPLETED("Completed"),
+    LICENSED("Licensed"),
+    PUBLISHING_FINISHED("Finished"),
+    CANCELLED("Cancelled"),
+    ON_HIATUS("On hiatus"),
+    ;
 
     companion object {
-        fun from(tmdb: TmdbEpisode, season: Int, tmdbOnly: Boolean): EpisodeItem = EpisodeItem(
-            season = season,
-            episode = tmdb.episodeNumber,
-            title = tmdb.name.ifBlank { "Episode ${tmdb.episodeNumber}" },
-            overview = tmdb.overview,
-            stillUrl = space.nicart.watchbox.data.remote.TmdbImage.still(tmdb.stillPath),
-            airDate = tmdb.airDate,
-            runtimeMinutes = tmdb.runtime,
-            rating = tmdb.voteAverage,
-            tmdbOnly = tmdbOnly,
-        )
+        fun from(raw: Int): AnimeStatus = when (raw) {
+            SAnime.ONGOING -> ONGOING
+            SAnime.COMPLETED -> COMPLETED
+            SAnime.LICENSED -> LICENSED
+            SAnime.PUBLISHING_FINISHED -> PUBLISHING_FINISHED
+            SAnime.CANCELLED -> CANCELLED
+            SAnime.ON_HIATUS -> ON_HIATUS
+            else -> UNKNOWN
+        }
     }
 }
 
-/** A resolved, ready-to-play stream set. */
-data class PlaybackSource(
-    val serverName: String,
-    val serverId: String?,
-    val streams: List<PlayableStream>,
-    val subtitles: List<PlayableSubtitle>,
-    val hosts: List<AlternateHost>,
-    val audioTracks: List<AudioTrack>,
-    val introRange: ClosedRange<Long>?,
-    val outroRange: ClosedRange<Long>?,
+/** One episode. */
+data class EpisodeEntry(
+    val url: String,
+    val name: String,
+    val number: Float,
+    val dateUpload: Long,
+    val scanlator: String?,
 ) {
-    val best: PlayableStream? get() = streams.maxByOrNull { it.height }
+    /**
+     * Display label. Sources are inconsistent about whether `name` already
+     * contains the episode number, so a bare number is only prefixed when the
+     * name does not obviously carry one.
+     */
+    val displayName: String
+        get() = when {
+            name.isBlank() && number >= 0 -> "Episode ${number.tidy()}"
+            name.isBlank() -> "Episode"
+            else -> name
+        }
+
+    val numberLabel: String? get() = number.takeIf { it >= 0 }?.tidy()
 }
 
-data class PlayableStream(
-    val url: String,
-    val label: String,
-    val height: Int,
-    val isHls: Boolean,
-    val streamId: String? = null,
-    val format: String = "MP4",
-)
-
-data class PlayableSubtitle(
-    val url: String,
-    val language: String,
-    val label: String,
-)
-
-data class AlternateHost(val label: String, val url: String, val isHls: Boolean)
-
-data class AudioTrack(
-    val language: String,
+/** A playable stream plus its tracks. */
+data class StreamOption(
     val label: String,
     val url: String,
-    val isHls: Boolean,
-    val subtitles: List<PlayableSubtitle>,
-)
-
-// ------------------------------------------------------------------ helpers
-
-fun formatRuntime(minutes: Int): String = when {
-    minutes <= 0 -> ""
-    minutes < 60 -> "${minutes}m"
-    minutes % 60 == 0 -> "${minutes / 60}h"
-    else -> "${minutes / 60}h ${minutes % 60}m"
+    val headers: Map<String, String>,
+    val subtitles: List<SubtitleOption>,
+    val audioTracks: List<SubtitleOption>,
+    val resolution: Int,
+) {
+    val isHls: Boolean get() = url.contains(".m3u8", ignoreCase = true)
 }
 
-/** `H:MM:SS` past an hour, else `M:SS`. The web CloudStream player gets this wrong. */
+data class SubtitleOption(val label: String, val url: String, val language: String)
+
+// ------------------------------------------------------------------ mapping
+
+internal fun SAnime.toCard(source: AnimeCatalogueSource): AnimeCard = AnimeCard(
+    sourceId = source.id,
+    url = url,
+    title = title.ifBlank { "Untitled" },
+    posterUrl = thumbnail_url?.takeIf { it.isNotBlank() },
+    sourceName = source.name,
+)
+
+internal fun SEpisode.toEntry(): EpisodeEntry = EpisodeEntry(
+    url = url,
+    name = name,
+    number = episode_number,
+    dateUpload = date_upload,
+    scanlator = scanlator?.takeIf { it.isNotBlank() },
+)
+
+internal fun Video.toStreamOption(): StreamOption {
+    val resolved = videoUrl ?: url
+    return StreamOption(
+        label = quality.ifBlank { "Default" },
+        url = resolved,
+        headers = headers?.let { h ->
+            (0 until h.size).associate { h.name(it) to h.value(it) }
+        }.orEmpty(),
+        subtitles = subtitleTracks.map {
+            SubtitleOption(
+                label = it.lang.ifBlank { "Subtitle" },
+                url = it.url,
+                language = it.lang,
+            )
+        },
+        audioTracks = audioTracks.map {
+            SubtitleOption(
+                label = it.lang.ifBlank { "Audio" },
+                url = it.url,
+                language = it.lang,
+            )
+        },
+        resolution = resolutionOrZero,
+    )
+}
+
+/** Drops a trailing `.0` so "Episode 12.0" reads as "Episode 12". */
+private fun Float.tidy(): String =
+    if (this == toLong().toFloat()) toLong().toString() else toString()
+
+/** `H:MM:SS` past an hour, else `M:SS`. */
 fun formatTimecode(millis: Long): String {
     if (millis <= 0L) return "0:00"
     val total = millis / 1000

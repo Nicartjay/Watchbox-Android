@@ -31,8 +31,12 @@ class SettingsViewModel(private val store: WatchBoxStore) : ViewModel() {
         viewModelScope.launch { store.setAutoPlayNext(enabled) }
     }
 
-    fun setWorkerBaseUrl(url: String) {
-        viewModelScope.launch { store.setWorkerBaseUrl(url) }
+    fun setRepoUrl(url: String) {
+        viewModelScope.launch { store.setRepoUrl(url) }
+    }
+
+    fun setNsfwEnabled(enabled: Boolean) {
+        viewModelScope.launch { store.setNsfwSourcesEnabled(enabled) }
     }
 
     fun clearHistory() {

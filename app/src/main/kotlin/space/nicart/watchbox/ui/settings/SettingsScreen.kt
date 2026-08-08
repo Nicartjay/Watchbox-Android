@@ -43,6 +43,7 @@ import space.nicart.watchbox.BuildConfig
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.AppTheme
 import space.nicart.watchbox.core.ui.paletteForPreview
+import space.nicart.watchbox.extension.ExtensionRepoApi
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.WbScreenHeader
@@ -52,8 +53,8 @@ import space.nicart.watchbox.ui.components.sectionHorizontalPadding
  * Settings.
  *
  * Grouped rows on a plain background, matching Nuvio's settings pattern. The
- * server URL is editable here because the app is useless without a reachable
- * backend, and the default (`watchbox.nicart.space`) may not be the user's.
+ * repository URL is editable here because the app has no content of its own until
+ * an extension is installed, and the default repo may not be the one you want.
  */
 @Composable
 fun SettingsScreen(
@@ -63,8 +64,8 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
 
-    var serverDraft by remember(settings.workerBaseUrl) {
-        mutableStateOf(settings.workerBaseUrl)
+    var repoDraft by remember(settings.repoUrl) {
+        mutableStateOf(settings.repoUrl)
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -131,22 +132,30 @@ fun SettingsScreen(
                 )
             }
 
+            item(key = "nsfw") {
+                SettingsToggleRow(
+                    title = stringResource(R.string.settings_nsfw),
+                    checked = settings.nsfwSourcesEnabled,
+                    onCheckedChange = viewModel::setNsfwEnabled,
+                )
+            }
+
             // ------------------------------------------------------ server
             item(key = "server-label") {
-                SettingsGroupLabel(stringResource(R.string.settings_server_url))
+                SettingsGroupLabel(stringResource(R.string.settings_repo_url))
             }
 
             item(key = "server") {
                 SettingsCard {
                     Text(
-                        text = stringResource(R.string.settings_server_url_summary),
+                        text = stringResource(R.string.settings_repo_url_summary),
                         style = MaterialTheme.typography.bodyMedium,
                         color = tokens.colors.textMuted,
                     )
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
-                        value = serverDraft,
-                        onValueChange = { serverDraft = it },
+                        value = repoDraft,
+                        onValueChange = { repoDraft = it },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -164,13 +173,13 @@ fun SettingsScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         SettingsTextAction(
                             label = "Save",
-                            onClick = { viewModel.setWorkerBaseUrl(serverDraft) },
+                            onClick = { viewModel.setRepoUrl(repoDraft) },
                         )
                         SettingsTextAction(
                             label = "Reset",
                             onClick = {
-                                viewModel.setWorkerBaseUrl("")
-                                serverDraft = BuildConfig.API_BASE_URL
+                                viewModel.setRepoUrl("")
+                                repoDraft = ExtensionRepoApi.DEFAULT_REPO
                             },
                         )
                     }
@@ -217,8 +226,8 @@ fun SettingsScreen(
                     Spacer(Modifier.height(8.dp))
                     Text(
                         text = "Interface derived from NuvioMobile (GPL-3.0). " +
-                            "WatchBox is a client for browsing metadata and playing " +
-                            "media from user-configured sources; it hosts no content.",
+                            "Plays media from user-installed extensions; this app " +
+                            "hosts and distributes no content itself.",
                         style = MaterialTheme.typography.bodySmall,
                         color = tokens.colors.textMuted,
                     )

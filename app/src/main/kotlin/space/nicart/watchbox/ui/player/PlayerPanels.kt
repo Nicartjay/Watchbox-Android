@@ -44,7 +44,8 @@ import androidx.compose.ui.unit.dp
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.core.ui.wbType
-import space.nicart.watchbox.domain.PlayableStream
+import space.nicart.watchbox.domain.EpisodeEntry
+import space.nicart.watchbox.domain.StreamOption
 
 /**
  * Player side panels + skip button.
@@ -58,12 +59,10 @@ fun PlayerPanels(
     panel: PlayerPanel,
     state: PlayerUiState,
     onDismiss: () -> Unit,
-    onSelectStream: (PlayableStream) -> Unit,
+    onSelectStream: (StreamOption) -> Unit,
     onSelectSubtitle: (Int) -> Unit,
-    onSelectAudio: (Int) -> Unit,
-    onSelectHost: (Int) -> Unit,
     onSelectSpeed: (Float) -> Unit,
-    onSelectEpisode: (Int) -> Unit,
+    onSelectEpisode: (EpisodeEntry) -> Unit,
 ) {
     val visible = panel != PlayerPanel.NONE
 
@@ -90,36 +89,20 @@ fun PlayerPanels(
                 when (panel) {
                     PlayerPanel.QUALITY -> PanelList(
                         title = stringResource(R.string.player_quality),
-                        entries = state.source?.streams.orEmpty().map { it.label },
-                        selectedIndex = state.source?.streams.orEmpty()
+                        entries = state.streams.map { it.label },
+                        selectedIndex = state.streams
                             .indexOfFirst { it.url == state.selectedStream?.url },
                         onSelect = { index ->
-                            state.source?.streams?.getOrNull(index)?.let(onSelectStream)
+                            state.streams.getOrNull(index)?.let(onSelectStream)
                         },
                     )
 
                     PlayerPanel.SUBTITLES -> PanelList(
                         title = stringResource(R.string.player_subtitles),
                         entries = listOf(stringResource(R.string.player_subtitles_off)) +
-                            state.source?.subtitles.orEmpty()
-                            .map { it.label },
+                            state.subtitles.map { it.label },
                         selectedIndex = state.selectedSubtitleIndex + 1,
                         onSelect = { onSelectSubtitle(it - 1) },
-                    )
-
-                    PlayerPanel.AUDIO -> PanelList(
-                        title = stringResource(R.string.player_audio),
-                        entries = state.source?.audioTracks.orEmpty().map { it.label },
-                        selectedIndex = state.selectedAudioIndex,
-                        onSelect = onSelectAudio,
-                    )
-
-                    PlayerPanel.HOSTS -> PanelList(
-                        title = stringResource(R.string.player_servers),
-                        entries = state.source?.hosts.orEmpty().map { it.label },
-                        selectedIndex = state.source?.hosts.orEmpty()
-                            .indexOfFirst { it.url == state.selectedStream?.url },
-                        onSelect = onSelectHost,
                     )
 
                     PlayerPanel.SPEED -> PanelList(
@@ -221,13 +204,13 @@ private fun PanelList(
 @Composable
 private fun EpisodePanel(
     state: PlayerUiState,
-    onSelect: (Int) -> Unit,
+    onSelect: (EpisodeEntry) -> Unit,
 ) {
     val tokens = MaterialTheme.wb
 
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
-            text = "Season ${state.season}",
+            text = stringResource(R.string.player_episodes),
             style = MaterialTheme.typography.headlineSmall,
             color = tokens.colors.textPrimary,
             fontWeight = FontWeight.SemiBold,
@@ -240,8 +223,8 @@ private fun EpisodePanel(
                 .padding(top = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(items = state.episodes, key = { it.episode }) { episode ->
-                val selected = episode.episode == state.episode
+            items(items = state.episodes, key = { it.url }) { episode ->
+                val selected = episode.url == state.episode?.url
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -249,12 +232,12 @@ private fun EpisodePanel(
                         .background(
                             if (selected) tokens.colors.accent else tokens.colors.surfaceCard,
                         )
-                        .clickable { onSelect(episode.episode) }
+                        .clickable { onSelect(episode) }
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     Text(
-                        text = episode.code,
+                        text = episode.numberLabel?.let { "Episode $it" } ?: "",
                         style = MaterialTheme.typography.labelMedium,
                         color = if (selected) {
                             tokens.colors.onAccent.copy(alpha = 0.8f)
@@ -263,7 +246,7 @@ private fun EpisodePanel(
                         },
                     )
                     Text(
-                        text = episode.title,
+                        text = episode.displayName,
                         style = MaterialTheme.typography.titleMedium,
                         color = if (selected) {
                             tokens.colors.onAccent
@@ -272,67 +255,6 @@ private fun EpisodePanel(
                         },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * Skip intro/outro pill (`skip/SkipIntroButton.kt`): `#1E1E1E` at 85%, 16dp
- * radius, 20dp icon + 14sp label, enters with fade + scale from 0.8.
- */
-@Composable
-fun SkipSegmentButton(
-    state: PlayerUiState,
-    positionMs: Long,
-    onSkip: (Long) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val type = MaterialTheme.wbType
-
-    val intro = state.source?.introRange
-    val outro = state.source?.outroRange
-
-    val active = when {
-        intro != null && positionMs in intro ->
-            stringResource(R.string.player_skip_intro) to intro.endInclusive
-        outro != null && positionMs in outro ->
-            stringResource(R.string.player_skip_outro) to outro.endInclusive
-        else -> null
-    }
-
-    AnimatedVisibility(
-        visible = active != null && !state.locked,
-        enter = fadeIn(tween(300)) + scaleIn(tween(300), initialScale = 0.8f),
-        exit = fadeOut(tween(200)),
-        modifier = modifier.padding(start = 20.dp, bottom = 120.dp),
-    ) {
-        active?.let { (label, target) ->
-            Column(
-                modifier = Modifier
-                    .width(IntrinsicSize.Max)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF1E1E1E).copy(alpha = 0.85f))
-                    .clickable { onSkip(target) },
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.SkipNext,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Text(
-                        text = label,
-                        style = type.bodyMd,
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold,
                     )
                 }
             }

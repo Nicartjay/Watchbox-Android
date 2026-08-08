@@ -11,21 +11,24 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import okhttp3.OkHttpClient
-import space.nicart.watchbox.core.network.HttpClientFactory
-import space.nicart.watchbox.domain.PlayableStream
-import space.nicart.watchbox.domain.PlayableSubtitle
+import space.nicart.watchbox.domain.StreamOption
+import space.nicart.watchbox.domain.SubtitleOption
 import java.util.concurrent.TimeUnit
 
 /**
  * ExoPlayer construction.
  *
- * Streams always arrive already wrapped in the Worker's `/api/stream` proxy, so
- * the CDN `Referer`/`Origin` spoofing happens server-side and nothing sensitive
- * needs to live in the app. A larger-than-default buffer is used because the
- * proxy adds a hop.
+ * Streams come straight from an extension, which means the per-request headers
+ * it supplied (usually a Referer the CDN checks) have to be applied on the media
+ * requests too — without them most sources return 403. Those headers travel with
+ * the [StreamOption] and are attached in [buildMediaItem].
  */
 @UnstableApi
 object PlayerFactory {
+
+    private const val DEFAULT_USER_AGENT =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     private val okHttp: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -36,9 +39,15 @@ object PlayerFactory {
             .build()
     }
 
-    fun create(context: Context): ExoPlayer {
+    fun create(context: Context, headers: Map<String, String> = emptyMap()): ExoPlayer {
         val httpFactory = OkHttpDataSource.Factory { request -> okHttp.newCall(request) }
-            .setUserAgent(HttpClientFactory.USER_AGENT)
+            .setUserAgent(headers["User-Agent"] ?: DEFAULT_USER_AGENT)
+            .apply {
+                // Referer and friends are what most source CDNs gate on.
+                headers.filterKeys { !it.equals("User-Agent", true) }
+                    .takeIf { it.isNotEmpty() }
+                    ?.let(::setDefaultRequestProperties)
+            }
 
         val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
 
@@ -69,19 +78,20 @@ object PlayerFactory {
     }
 
     /**
-     * Build a [MediaItem] with side-loaded subtitles.
+     * Builds a [MediaItem] with side-loaded subtitles.
      *
-     * Subtitle URLs point at `/api/subtitle`, which normalises SRT to WebVTT
-     * server-side, so a single [MimeTypes.TEXT_VTT] declaration is always correct.
+     * The MIME type is inferred from the URL rather than declared: sources hand
+     * back a mix of `.vtt`, `.srt` and `.ass`, and forcing one type makes the
+     * others silently fail to render.
      */
     fun buildMediaItem(
-        stream: PlayableStream,
-        subtitles: List<PlayableSubtitle>,
+        stream: StreamOption,
+        subtitles: List<SubtitleOption>,
         title: String,
     ): MediaItem {
         val subtitleConfigs = subtitles.map { subtitle ->
             MediaItem.SubtitleConfiguration.Builder(android.net.Uri.parse(subtitle.url))
-                .setMimeType(MimeTypes.TEXT_VTT)
+                .setMimeType(subtitleMimeType(subtitle.url))
                 .setLanguage(subtitle.language.takeIf { it.isNotBlank() })
                 .setLabel(subtitle.label)
                 .build()
@@ -99,5 +109,18 @@ object PlayerFactory {
                     .build(),
             )
             .build()
+    }
+}
+
+/** Picks a subtitle MIME type from the file extension. */
+private fun subtitleMimeType(url: String): String {
+    val path = url.substringBefore('?').lowercase()
+    return when {
+        path.endsWith(".vtt") -> MimeTypes.TEXT_VTT
+        path.endsWith(".srt") -> MimeTypes.APPLICATION_SUBRIP
+        path.endsWith(".ass") || path.endsWith(".ssa") -> MimeTypes.TEXT_SSA
+        path.endsWith(".ttml") || path.endsWith(".dfxp") -> MimeTypes.APPLICATION_TTML
+        // Most sources serve WebVTT without an extension.
+        else -> MimeTypes.TEXT_VTT
     }
 }

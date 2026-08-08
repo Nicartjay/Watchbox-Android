@@ -22,6 +22,9 @@ dependencyResolutionManagement {
             }
         }
         mavenCentral()
+        // Injekt is only published on JitPack. It is required because the
+        // Aniyomi source API resolves NetworkHelper through it at runtime.
+        maven(url = "https://www.jitpack.io")
     }
 }
 
