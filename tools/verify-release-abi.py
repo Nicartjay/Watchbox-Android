@@ -69,16 +69,27 @@ REQUIRED_MEMBERS = {
 
 
 def find_dexdump():
+    """Locate dexdump from the newest installed build-tools.
+
+    Versions sort lexically here, which is fine for the numeric directory names
+    build-tools uses, but each candidate is verified because a partial SDK
+    install can leave a version directory without the binary.
+    """
     sdk = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT") \
         or os.path.expanduser("~/Library/Android/sdk")
     build_tools = os.path.join(sdk, "build-tools")
     if not os.path.isdir(build_tools):
-        sys.exit(f"Android SDK build-tools not found under {sdk}")
-    newest = sorted(os.listdir(build_tools))[-1]
-    path = os.path.join(build_tools, newest, "dexdump")
-    if not os.path.exists(path):
-        sys.exit(f"dexdump not found at {path}")
-    return path
+        sys.exit(
+            f"Android SDK build-tools not found under {sdk}. "
+            "Set ANDROID_HOME."
+        )
+
+    for version in sorted(os.listdir(build_tools), reverse=True):
+        candidate = os.path.join(build_tools, version, "dexdump")
+        if os.path.exists(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+
+    sys.exit(f"No dexdump binary found under {build_tools}")
 
 
 def main():
