@@ -1,17 +1,19 @@
 name: Release APK
 
-# Builds a minified release APK and publishes it to a GitHub Release.
+# Builds a minified, signed release APK and publishes it to a GitHub Release.
 #
-# Signing is optional: if the keystore secrets below are present the APK is
-# signed with your upload key, otherwise Gradle falls back to the debug key and
-# the workflow labels the artifact accordingly. That keeps `dry-run` usable on a
-# fresh clone with no secrets configured.
+# Signing uses the committed `release.jks`, so every build — local or CI — is
+# signed with the same key and releases can upgrade in place. See the signing
+# block in app/build.gradle.kts for why that keystore is in the repo.
 #
-# Required secrets for a real signed build:
-#   WATCHBOX_KEYSTORE_BASE64     - base64 of your .jks   (base64 -i key.jks | pbcopy)
-#   WATCHBOX_KEYSTORE_PASSWORD   - keystore password
-#   WATCHBOX_KEY_ALIAS           - key alias
-#   WATCHBOX_KEY_PASSWORD        - key password
+# To move signing into CI secrets instead, set all four of:
+#   WATCHBOX_KEYSTORE_BASE64     - base64 of your .jks  (base64 -i key.jks | pbcopy)
+#   WATCHBOX_KEYSTORE_PASSWORD
+#   WATCHBOX_KEY_ALIAS
+#   WATCHBOX_KEY_PASSWORD
+# When present they override the committed keystore. Note that switching keys
+# breaks upgrades for anyone who installed a build signed with the old one.
+#
 # Optional:
 #   WATCHBOX_API_BASE_URL        - overrides the default Worker URL
 #   TMDB_API_KEY                 - overrides the bundled TMDB key
@@ -52,9 +54,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       KEYSTORE_BASE64: ${{ secrets.WATCHBOX_KEYSTORE_BASE64 }}
-      WATCHBOX_RELEASE_STORE_PASSWORD: ${{ secrets.WATCHBOX_KEYSTORE_PASSWORD }}
-      WATCHBOX_RELEASE_KEY_ALIAS: ${{ secrets.WATCHBOX_KEY_ALIAS }}
-      WATCHBOX_RELEASE_KEY_PASSWORD: ${{ secrets.WATCHBOX_KEY_PASSWORD }}
       WATCHBOX_API_BASE_URL: ${{ secrets.WATCHBOX_API_BASE_URL }}
       TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
 
@@ -94,15 +93,9 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
 
-      - name: Decode keystore
-        id: signing
+      - name: Override keystore from secrets
+        if: env.KEYSTORE_BASE64 != ''
         run: |
-          if [[ -z "${KEYSTORE_BASE64}" ]]; then
-            echo "No keystore secret found — the APK will be debug-signed." >&2
-            echo "signed=false" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
           keystore_path="${RUNNER_TEMP}/watchbox-release.jks"
           printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${keystore_path}"
 
@@ -111,17 +104,25 @@ jobs:
             exit 1
           fi
 
-          # Fail fast when the keystore is present but its companion secrets are not.
-          for name in WATCHBOX_RELEASE_STORE_PASSWORD WATCHBOX_RELEASE_KEY_ALIAS \
-                      WATCHBOX_RELEASE_KEY_PASSWORD; do
+          for name in WATCHBOX_KEYSTORE_PASSWORD WATCHBOX_KEY_ALIAS WATCHBOX_KEY_PASSWORD; do
             if [[ -z "${!name}" ]]; then
-              echo "Keystore supplied but ${name} is missing." >&2
+              echo "WATCHBOX_KEYSTORE_BASE64 is set but ${name} is missing." >&2
               exit 1
             fi
           done
 
-          echo "WATCHBOX_RELEASE_STORE_FILE=${keystore_path}" >> "${GITHUB_ENV}"
-          echo "signed=true" >> "${GITHUB_OUTPUT}"
+          {
+            echo "WATCHBOX_RELEASE_STORE_FILE=${keystore_path}"
+            echo "WATCHBOX_RELEASE_STORE_PASSWORD=${WATCHBOX_KEYSTORE_PASSWORD}"
+            echo "WATCHBOX_RELEASE_KEY_ALIAS=${WATCHBOX_KEY_ALIAS}"
+            echo "WATCHBOX_RELEASE_KEY_PASSWORD=${WATCHBOX_KEY_PASSWORD}"
+          } >> "${GITHUB_ENV}"
+
+          echo "Using the keystore supplied via secrets."
+        env:
+          WATCHBOX_KEYSTORE_PASSWORD: ${{ secrets.WATCHBOX_KEYSTORE_PASSWORD }}
+          WATCHBOX_KEY_ALIAS: ${{ secrets.WATCHBOX_KEY_ALIAS }}
+          WATCHBOX_KEY_PASSWORD: ${{ secrets.WATCHBOX_KEY_PASSWORD }}
 
       - name: Assemble release
         env:
@@ -130,21 +131,38 @@ jobs:
           WATCHBOX_VERSION_CODE: ${{ github.run_number }}
         run: ./gradlew :app:assembleRelease --stacktrace
 
-      - name: Rename APK
-        id: apk
+      - name: Verify signature
         run: |
-          src="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -1)"
-          if [[ -z "${src}" ]]; then
+          apk="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -1)"
+          if [[ -z "${apk}" ]]; then
             echo "No release APK was produced." >&2
             exit 1
           fi
 
-          suffix=""
-          if [[ "${{ steps.signing.outputs.signed }}" != "true" ]]; then
-            suffix="-unsigned-debugkey"
+          build_tools="$(ls -d "${ANDROID_HOME}"/build-tools/* | sort -V | tail -1)"
+          certs="$("${build_tools}/apksigner" verify --print-certs "${apk}")"
+          echo "${certs}"
+
+          # A build signed with a per-runner debug key cannot update any other
+          # build, so fail loudly rather than shipping a dead-end APK.
+          if grep -q 'CN=Android Debug' <<< "${certs}"; then
+            echo "::error::APK was signed with a debug key; release.jks was not used." >&2
+            exit 1
           fi
 
-          dest="watchbox-${{ steps.version.outputs.version }}${suffix}.apk"
+          {
+            echo "### Signing"
+            echo
+            echo '```'
+            grep -E 'DN:|SHA-256 digest' <<< "${certs}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Rename APK
+        id: apk
+        run: |
+          src="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -1)"
+          dest="watchbox-${{ steps.version.outputs.version }}.apk"
           mv "${src}" "${dest}"
           echo "path=${dest}" >> "${GITHUB_OUTPUT}"
           ls -lh "${dest}"
@@ -166,11 +184,6 @@ jobs:
           {
             echo "## WatchBox ${{ steps.version.outputs.version }}"
             echo
-            if [[ "${{ steps.signing.outputs.signed }}" != "true" ]]; then
-              echo "> **Note:** this build is signed with the debug key."
-              echo "> Configure the keystore secrets for a distributable build."
-              echo
-            fi
             echo "### Changes"
             echo
             if [[ -n "${previous}" ]]; then

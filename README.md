@@ -83,29 +83,41 @@ Pushing a `v*` tag (e.g. `v1.1.0`) publishes automatically and takes the version
 from the tag name. `versionCode` is derived from the workflow run number so it
 always increases, which Android requires for in-place upgrades.
 
-### Signing secrets
+### Signing
 
-Signing is optional — without these the APK is debug-signed and clearly labelled
-`-unsigned-debugkey`, which keeps `dry-run` working on a fresh clone. For a
-distributable build, add these repository secrets:
+The release keystore (`release.jks`) is **committed to this repo**, and its
+passwords are below:
 
-| Secret | How to produce it |
+| Field | Value |
 |---|---|
-| `WATCHBOX_KEYSTORE_BASE64` | `base64 -i release.jks \| pbcopy` |
-| `WATCHBOX_KEYSTORE_PASSWORD` | keystore password |
-| `WATCHBOX_KEY_ALIAS` | key alias |
-| `WATCHBOX_KEY_PASSWORD` | key password |
+| Store / key password | `watchbox` |
+| Alias | `watchbox` |
+| Key | RSA 4096, valid until 2056 |
 
-Optionally also `WATCHBOX_API_BASE_URL` and `TMDB_API_KEY`.
+That is deliberate, and the reason is upgrade compatibility rather than secrecy.
+Android refuses to install an update whose signature differs from the installed
+copy, and a debug-key fallback cannot work in CI because every runner is a fresh
+VM that generates its own debug key — two consecutive release builds would be
+signed with different keys and neither could update the other.
 
-To create a keystore:
+The trade-off is that anyone can build an APK that Android treats as an update to
+this one. That is fine for a personal build. If you ever distribute this more
+widely, move the key into CI secrets:
 
 ```bash
-keytool -genkeypair -v -keystore release.jks \
-  -keyalg RSA -keysize 2048 -validity 10000 -alias watchbox
+keytool -genkeypair -v -keystore release.jks -storetype PKCS12 \
+  -keyalg RSA -keysize 4096 -validity 10950 -alias watchbox
+
+base64 -i release.jks | pbcopy   # paste into WATCHBOX_KEYSTORE_BASE64
 ```
 
-Keep `release.jks` out of the repo — `.gitignore` already excludes `*.jks`.
+Then set `WATCHBOX_KEYSTORE_BASE64`, `WATCHBOX_KEYSTORE_PASSWORD`,
+`WATCHBOX_KEY_ALIAS` and `WATCHBOX_KEY_PASSWORD` as repository secrets — when all
+four are present they override the committed keystore, no code change needed.
+Be aware that changing keys breaks in-place upgrades for existing installs.
+
+The workflow fails the build if an APK ends up debug-signed, so a dead-end
+release cannot be published by accident.
 
 ## Architecture
 

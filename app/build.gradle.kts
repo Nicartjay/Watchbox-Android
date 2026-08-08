@@ -17,13 +17,27 @@ fun secret(key: String, default: String = ""): String =
         ?: localProps.getProperty(key)?.trim()?.takeIf { it.isNotBlank() }
         ?: default)
 
-val releaseStoreFile = secret("WATCHBOX_RELEASE_STORE_FILE").takeIf { it.isNotBlank() }
-val releaseStorePassword = secret("WATCHBOX_RELEASE_STORE_PASSWORD").takeIf { it.isNotBlank() }
-val releaseKeyAlias = secret("WATCHBOX_RELEASE_KEY_ALIAS").takeIf { it.isNotBlank() }
-val releaseKeyPassword = secret("WATCHBOX_RELEASE_KEY_PASSWORD").takeIf { it.isNotBlank() }
-val hasReleaseSigning =
-    releaseStoreFile != null && releaseStorePassword != null &&
-        releaseKeyAlias != null && releaseKeyPassword != null
+// ---------------------------------------------------------------- signing
+//
+// This is a personal app, so the release keystore is committed to the repo and
+// its passwords are published below on purpose.
+//
+// The reason is upgrade compatibility, not secrecy: Android refuses to install
+// an update whose signature differs from the installed copy. Falling back to the
+// debug keystore does not work here, because every CI runner is a fresh VM that
+// generates its own debug key — two consecutive release builds would be signed
+// with different keys and neither could update the other.
+//
+// A committed key means anyone can build an APK that Android treats as an update
+// to this one. That is an accepted trade-off for a personal build. Anything
+// distributed more widely should move these into CI secrets instead; the env
+// overrides below already support that without touching this file.
+val releaseStoreFile = secret("WATCHBOX_RELEASE_STORE_FILE", "../release.jks")
+val releaseStorePassword = secret("WATCHBOX_RELEASE_STORE_PASSWORD", "watchbox")
+val releaseKeyAlias = secret("WATCHBOX_RELEASE_KEY_ALIAS", "watchbox")
+val releaseKeyPassword = secret("WATCHBOX_RELEASE_KEY_PASSWORD", "watchbox")
+val releaseKeystore = file(releaseStoreFile)
+val hasReleaseSigning = releaseKeystore.exists()
 
 // Backend + API keys. Overridable from CI env or local.properties.
 val apiBaseUrl = secret("WATCHBOX_API_BASE_URL", "https://watchbox.nicart.space")
@@ -41,10 +55,13 @@ android {
     signingConfigs {
         create("release") {
             if (hasReleaseSigning) {
-                storeFile = file(releaseStoreFile!!)
+                storeFile = releaseKeystore
                 storePassword = releaseStorePassword
                 keyAlias = releaseKeyAlias
                 keyPassword = releaseKeyPassword
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }

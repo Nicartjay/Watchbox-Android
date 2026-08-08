@@ -16,8 +16,11 @@ out/
 release/
 .cxx/
 
-# Signing — never commit keystores or their passwords
+# Signing
+# release.jks is committed deliberately — see the signing block in
+# app/build.gradle.kts for why. Any other keystore stays out of the repo.
 *.jks
+!release.jks
 *.keystore
 keystore.properties
 signing.properties
