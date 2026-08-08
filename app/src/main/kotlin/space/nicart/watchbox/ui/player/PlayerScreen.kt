@@ -56,6 +56,7 @@ import space.nicart.watchbox.ui.components.WbLoading
  * seeks +/-10s, horizontal drag scrubs with duration-scaled sensitivity.
  */
 private const val CONTROLS_AUTO_HIDE_MS = 3_000L
+private const val TAG = "WbPlayer"
 
 @UnstableApi
 @Composable
@@ -96,6 +97,15 @@ fun PlayerScreen(
     val streamHeaders = state.selectedStream?.headers.orEmpty()
     val exoPlayer = remember(streamHeaders) { PlayerFactory.create(context, streamHeaders) }
 
+    // The PlayerView must be re-bound whenever the instance above is replaced.
+    // AndroidView's factory runs only once, so binding there alone left video
+    // attached to the discarded player while audio came from the new one -- the
+    // "sound but black screen" symptom.
+    var playerView by remember { mutableStateOf<PlayerView?>(null) }
+    LaunchedEffect(exoPlayer, playerView) {
+        playerView?.player = exoPlayer
+    }
+
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(true) }
     var positionMs by remember { mutableLongStateOf(0L) }
@@ -125,11 +135,26 @@ fun PlayerScreen(
 
             override fun onPlayerError(error: PlaybackException) {
                 playbackError = error.errorCodeName
+                android.util.Log.e(TAG, "playback error: ${error.errorCodeName}", error)
+            }
+
+            // Video-surface diagnostics. A black screen with working audio means
+            // the renderer never got a surface, so these two are the signals that
+            // actually distinguish "not decoding" from "decoding into nowhere".
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                android.util.Log.i(TAG, "video size ${videoSize.width}x${videoSize.height}")
+            }
+
+            override fun onRenderedFirstFrame() {
+                android.util.Log.i(TAG, "first frame rendered")
             }
         }
         exoPlayer.addListener(listener)
         onDispose {
             exoPlayer.removeListener(listener)
+            // Unbind before releasing: a released player left attached keeps the
+            // surface and renders black.
+            playerView?.player = null
             exoPlayer.release()
         }
     }
@@ -227,11 +252,14 @@ fun PlayerScreen(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     useController = false
-                    player = exoPlayer
                     setShutterBackgroundColor(android.graphics.Color.BLACK)
+                    playerView = this
                 }
             },
             update = { view ->
+                // Re-asserted here too: on configuration change Compose may reuse
+                // the view while the effect above has not re-run yet.
+                if (view.player !== exoPlayer) view.player = exoPlayer
                 view.resizeMode = when (state.aspectMode) {
                     AspectMode.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
                     AspectMode.FILL -> AspectRatioFrameLayout.RESIZE_MODE_FILL

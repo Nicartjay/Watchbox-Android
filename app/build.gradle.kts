@@ -48,7 +48,7 @@ val defaultRepoUrl = secret(
 
 // Version. `appVersionName` is the source of truth; CI may override both so a
 // tag push (v1.2.3) produces a matching APK without editing this file.
-val appVersionName = secret("WATCHBOX_VERSION_NAME", "2.0.3")
+val appVersionName = secret("WATCHBOX_VERSION_NAME", "2.0.4")
 val appVersionCode = secret("WATCHBOX_VERSION_CODE", "1").toIntOrNull() ?: 1
 
 android {
