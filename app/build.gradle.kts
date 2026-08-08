@@ -48,7 +48,7 @@ val defaultRepoUrl = secret(
 
 // Version. `appVersionName` is the source of truth; CI may override both so a
 // tag push (v1.2.3) produces a matching APK without editing this file.
-val appVersionName = secret("WATCHBOX_VERSION_NAME", "2.0.2")
+val appVersionName = secret("WATCHBOX_VERSION_NAME", "2.0.3")
 val appVersionCode = secret("WATCHBOX_VERSION_CODE", "1").toIntOrNull() ?: 1
 
 android {
@@ -195,6 +195,14 @@ dependencies {
     implementation(libs.ktor.client.logging)
 
     implementation(libs.kotlinx.serialization.json)
+    // These four are not our choices: they are the "common" dependency bundle
+    // every extension in the repo is compiled against, so the host has to
+    // provide them or sources fail with NoClassDefFoundError on first use.
+    // Cineby needed json-okio; several sources use protobuf APIs, and a few
+    // evaluate JavaScript through QuickJS.
+    implementation(libs.kotlinx.serialization.protobuf)
+    implementation(libs.kotlinx.serialization.json.okio)
+    implementation(libs.quickjs)
     implementation(libs.kotlinx.coroutines.android)
 
     // ---- Aniyomi extension runtime -------------------------------------
