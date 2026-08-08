@@ -1,4 +1,36 @@
 # ======================================================================
+# Libraries the extensions link BY NAME
+# ======================================================================
+#
+# Keeping only eu.kanade.tachiyomi was not enough. Extension dex files resolve
+# these packages from the host too, so R8 renaming them produces
+# ClassNotFoundException at instantiation time. Verified with dexdump against
+# real extension APKs; the reported failure was:
+#
+#   Didn't find class "kotlin.jvm.internal.MutablePropertyReference1Impl"
+#
+# because R8 had rewritten kotlin/jvm/internal/* to single letters.
+#
+# The extensions reference, in descending order of use: kotlinx.serialization,
+# kotlin.jvm, kotlin.coroutines, kotlin.text, jsoup nodes, androidx.preference
+# and most of okhttp3. Names are the ABI here, so obfuscation is off for all of
+# them. This costs APK size, which is the right trade against sources that
+# cannot load.
+-keep class kotlin.** { *; }
+-keep class kotlinx.coroutines.** { *; }
+-keep class kotlinx.serialization.** { *; }
+-keep class okhttp3.** { *; }
+-keep class okio.** { *; }
+-keep class org.jsoup.** { *; }
+-keep class rx.** { *; }
+-keep class androidx.preference.** { *; }
+-dontwarn kotlin.**
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn org.jsoup.**
+-dontwarn rx.**
+
+# ======================================================================
 # Extension ABI — MUST NOT BE MINIFIED
 # ======================================================================
 #

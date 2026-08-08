@@ -54,6 +54,38 @@ REQUIRED_CLASSES = [
     "util/JsoupExtensionsKt",
 ]
 
+# Classes outside our own tree that extensions still resolve from the host by
+# name. Both shipped regressions were here, not in eu.kanade.tachiyomi:
+#   * Injekt's FullTypeReference needs its generic signature intact, or
+#     Application.onCreate throws and the app dies on launch.
+#   * kotlin.jvm.internal.MutablePropertyReference1Impl and friends are looked up
+#     by name when an extension uses a property reference.
+# Counts from dexdump across real extension APKs: kotlinx.serialization 2823
+# references, kotlin.jvm 942, kotlin.coroutines 842, jsoup 356,
+# androidx.preference 333, okhttp3 ~1500.
+REQUIRED_EXTERNAL = [
+    "kotlin/jvm/internal/Intrinsics",
+    "kotlin/jvm/internal/DefaultConstructorMarker",
+    "kotlin/jvm/internal/PropertyReference1Impl",
+    "kotlin/jvm/internal/MutablePropertyReference1Impl",
+    "kotlin/Pair",
+    "kotlin/Lazy",
+    "kotlinx/serialization/KSerializer",
+    "kotlinx/serialization/json/Json",
+    "okhttp3/OkHttpClient",
+    "okhttp3/Request",
+    "okhttp3/Response",
+    "okhttp3/Headers",
+    "okhttp3/HttpUrl",
+    "okhttp3/CacheControl",
+    "org/jsoup/Jsoup",
+    "org/jsoup/nodes/Document",
+    "org/jsoup/nodes/Element",
+    "rx/Observable",
+    "uy/kohesive/injekt/api/FullTypeReference",
+    "androidx/preference/PreferenceScreen",
+]
+
 # Members extensions call or override, which must not be obfuscated.
 REQUIRED_MEMBERS = {
     "animesource/online/AnimeHttpSource": [
@@ -126,7 +158,13 @@ def main():
 
         for cls in REQUIRED_CLASSES:
             if f"Leu/kanade/tachiyomi/{cls};" not in dump:
-                failures.append(f"STRIPPED OR RENAMED  {cls}")
+                failures.append(f"STRIPPED OR RENAMED  eu.kanade.tachiyomi.{cls}")
+
+        for cls in REQUIRED_EXTERNAL:
+            if f"L{cls};" not in dump:
+                failures.append(
+                    f"STRIPPED OR RENAMED  {cls.replace('/', '.')}"
+                )
 
         for cls, members in REQUIRED_MEMBERS.items():
             block = re.search(
@@ -148,7 +186,8 @@ def main():
             print("Check the extension-ABI keep rules in app/proguard-rules.pro.")
             sys.exit(1)
 
-        print(f"verified {len(REQUIRED_CLASSES)} classes and "
+        print(f"verified {len(REQUIRED_CLASSES)} ABI classes, "
+              f"{len(REQUIRED_EXTERNAL)} host-provided library classes and "
               f"{sum(len(m) for m in REQUIRED_MEMBERS.values())} members")
         print("ABI survived minification")
 
