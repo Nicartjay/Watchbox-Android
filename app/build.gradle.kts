@@ -46,9 +46,13 @@ val defaultRepoUrl = secret(
     "https://raw.githubusercontent.com/yuzono/anime-repo/repo",
 )
 
+// TMDB is used purely for artwork (backdrops, title logos, episode stills);
+// it is never a content source. The default is the widely-published demo key.
+val tmdbApiKey = secret("TMDB_API_KEY", "d8cd4489c203c5e8c8efb70aa8e33565")
+
 // Version. `appVersionName` is the source of truth; CI may override both so a
 // tag push (v1.2.3) produces a matching APK without editing this file.
-val appVersionName = secret("WATCHBOX_VERSION_NAME", "2.0.4")
+val appVersionName = secret("WATCHBOX_VERSION_NAME", "2.1.0")
 val appVersionCode = secret("WATCHBOX_VERSION_CODE", "1").toIntOrNull() ?: 1
 
 android {
@@ -77,6 +81,7 @@ android {
         versionName = appVersionName
 
         buildConfigField("String", "DEFAULT_REPO_URL", "\"$defaultRepoUrl\"")
+        buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
     }
 
     buildTypes {

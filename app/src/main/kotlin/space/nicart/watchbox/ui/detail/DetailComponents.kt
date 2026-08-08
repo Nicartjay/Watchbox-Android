@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -41,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -90,10 +92,14 @@ fun DetailHero(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(heroHeight),
+            .height(heroHeight)
+            // Required: the backdrop is parallaxed with translationY, which draws
+            // outside these bounds unless clipped, bleeding the image through the
+            // action row and metadata below.
+            .clipToBounds(),
     ) {
         WbAsyncImage(
-            url = detail.posterUrl,
+            url = detail.heroImage,
             contentDescription = detail.title,
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -133,21 +139,33 @@ fun DetailHero(
                 .padding(bottom = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // Sources provide no title artwork, so the title is always text.
-            Text(
-                text = detail.title,
-                style = if (isTablet) {
-                    MaterialTheme.typography.displaySmall
-                } else {
-                    MaterialTheme.typography.displayLarge
-                },
-                fontWeight = FontWeight.Bold,
-                color = tokens.colors.textPrimary,
-                textAlign = TextAlign.Center,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = contentMaxWidth),
-            )
+            // TMDB title logo when we have one, else bold display text.
+            if (detail.logoUrl != null) {
+                WbAsyncImage(
+                    url = detail.logoUrl,
+                    contentDescription = detail.title,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth(if (isTablet) 0.56f else 0.6f)
+                        .widthIn(max = contentMaxWidth)
+                        .height(if (isTablet) 72.dp else 80.dp),
+                )
+            } else {
+                Text(
+                    text = detail.title,
+                    style = if (isTablet) {
+                        MaterialTheme.typography.displaySmall
+                    } else {
+                        MaterialTheme.typography.displayLarge
+                    },
+                    fontWeight = FontWeight.Bold,
+                    color = tokens.colors.textPrimary,
+                    textAlign = TextAlign.Center,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = contentMaxWidth),
+                )
+            }
 
             Spacer(Modifier.height(8.dp))
 
@@ -204,18 +222,30 @@ fun DetailFloatingHeader(
     ) {
         WbBackButton(onClick = onBack, size = 40.dp)
 
-        Text(
-            text = detail.title,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            color = tokens.colors.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 12.dp),
-        )
+        if (detail.logoUrl != null) {
+            WbAsyncImage(
+                url = detail.logoUrl,
+                contentDescription = detail.title,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(42.dp)
+                    .padding(horizontal = 12.dp),
+            )
+        } else {
+            Text(
+                text = detail.title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = tokens.colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 12.dp),
+            )
+        }
 
         DetailCircleButton(
             icon = if (inWatchlist) Icons.Filled.Check else Icons.Filled.Add,
@@ -453,7 +483,35 @@ fun DetailMetaInfo(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = tokens.colors.textPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
+            }
+
+            detail.rating.takeIf { it > 0.0 }?.let { rating ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    // Never shrink: squeezing this is what wrapped "8.8" onto
+                    // three lines.
+                    modifier = Modifier.width(IntrinsicSize.Max),
+                ) {
+                    Text(
+                        text = "TMDB",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = TMDB_BLUE,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "%.1f".format(rating),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = tokens.colors.textPrimary,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                }
             }
         }
 
@@ -489,6 +547,8 @@ fun DetailMetaInfo(
         }
     }
 }
+
+private val TMDB_BLUE = Color(0xFF01B4E4)
 
 /** Section title: 20sp SemiBold on phones (`DetailSection.kt`). */
 @Composable

@@ -205,7 +205,7 @@ fun WbPosterCard(
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         ) {
             WbAsyncImage(
-                url = card.posterUrl,
+                url = card.displayPoster,
                 contentDescription = card.title,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,

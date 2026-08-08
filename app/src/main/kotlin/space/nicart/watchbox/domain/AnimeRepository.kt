@@ -6,9 +6,12 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import space.nicart.watchbox.data.remote.TmdbApi
+import space.nicart.watchbox.data.remote.TmdbType
 import space.nicart.watchbox.extension.ExtensionManager
 
 /**
@@ -20,7 +23,10 @@ import space.nicart.watchbox.extension.ExtensionManager
  * uses [withTimeout] — a source blocking on a dead host would otherwise leave
  * Home spinning forever.
  */
-class AnimeRepository(private val extensions: ExtensionManager) {
+class AnimeRepository(
+    private val extensions: ExtensionManager,
+    private val tmdb: TmdbApi,
+) {
 
     // ------------------------------------------------------------------ home
 
@@ -56,9 +62,28 @@ class AnimeRepository(private val extensions: ExtensionManager) {
             error(detail)
         }
 
-        HomeFeed(
-            hero = rows.first().items.take(MAX_HERO),
-            rows = rows,
+        // Only the hero is enriched: it is the one place a wide backdrop and a
+        // title logo are actually shown, and enriching whole rails would mean a
+        // TMDB request per poster.
+        val hero = coroutineScope {
+            rows.first().items.take(MAX_HERO)
+                .map { card -> async { card.enriched() } }
+                .awaitAll()
+        }
+
+        HomeFeed(hero = hero, rows = rows)
+    }
+
+    /** Overlays TMDB artwork on a card, keeping the source fields intact. */
+    private suspend fun AnimeCard.enriched(): AnimeCard {
+        val art = guarded("tmdb($title)") { tmdb.lookup(title) } ?: return this
+        return copy(
+            backdropUrl = art.backdropUrl,
+            logoUrl = art.logoUrl,
+            tmdbPosterUrl = art.posterUrl,
+            tmdbId = art.tmdbId,
+            year = art.year,
+            genres = art.genres,
         )
     }
 
@@ -163,18 +188,53 @@ class AnimeRepository(private val extensions: ExtensionManager) {
             val episodes = runCatching { source.getEpisodeList(stub) }
                 .getOrDefault(emptyList())
 
+            val resolvedTitle = details.title.ifBlank { "Untitled" }
+            val ordered = episodes.sortedEpisodes()
+
+            // One lookup per title, then one per season for stills.
+            val art = guarded("tmdb($resolvedTitle)") {
+                tmdb.lookup(resolvedTitle, preferMovie = ordered.size <= 1)
+            }
+
+            val stills = if (art != null && art.type == TmdbType.TV) {
+                guarded("stills(${art.tmdbId})") {
+                    tmdb.episodeStills(art.tmdbId, season = 1)
+                }.orEmpty()
+            } else {
+                emptyMap()
+            }
+
+            val enrichedEpisodes = if (stills.isEmpty()) {
+                ordered
+            } else {
+                ordered.map { episode ->
+                    // Match on episode number; sources and TMDB agree on that far
+                    // more reliably than on titles or ordering.
+                    episode.withArt(stills[episode.number.toInt()])
+                }
+            }
+
             AnimeDetail(
                 sourceId = source.id,
                 sourceName = source.name,
                 url = url,
-                title = details.title.ifBlank { "Untitled" },
-                posterUrl = details.thumbnail_url?.takeIf { it.isNotBlank() },
-                description = details.description.orEmpty(),
+                title = resolvedTitle,
+                posterUrl = details.thumbnail_url?.takeIf { it.isNotBlank() }
+                    ?: art?.posterUrl,
+                backdropUrl = art?.backdropUrl,
+                logoUrl = art?.logoUrl,
+                tmdbId = art?.tmdbId,
+                year = art?.year,
+                rating = art?.rating ?: 0.0,
+                description = details.description
+                    ?.takeIf { it.isNotBlank() }
+                    ?: art?.overview.orEmpty(),
                 author = details.author?.takeIf { it.isNotBlank() },
                 artist = details.artist?.takeIf { it.isNotBlank() },
-                genres = details.getGenres().orEmpty(),
+                genres = details.getGenres()?.takeIf { it.isNotEmpty() }
+                    ?: art?.genres.orEmpty(),
                 status = AnimeStatus.from(details.status),
-                episodes = episodes.sortedEpisodes(),
+                episodes = enrichedEpisodes,
             )
         }
     }

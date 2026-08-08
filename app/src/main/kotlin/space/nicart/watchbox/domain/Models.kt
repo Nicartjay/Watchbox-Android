@@ -25,11 +25,32 @@ data class AnimeCard(
     /** Source-relative path; unique within a source. */
     val url: String,
     val title: String,
+    /** The extension's own poster. Always present; used as the fallback. */
     val posterUrl: String?,
     val sourceName: String = "",
+    /** Wide TMDB backdrop, for the hero. Null when no match was found. */
+    val backdropUrl: String? = null,
+    /** Transparent TMDB title logo, for the hero. */
+    val logoUrl: String? = null,
+    /** TMDB poster, generally cleaner than the source's own. */
+    val tmdbPosterUrl: String? = null,
+    val tmdbId: Int? = null,
+    val year: String? = null,
+    val genres: List<String> = emptyList(),
 ) {
     /** Stable identity across sources. */
     val key: String get() = "$sourceId::$url"
+
+    /** Poster for rails and grids: prefer TMDB, fall back to the source. */
+    val displayPoster: String? get() = tmdbPosterUrl ?: posterUrl
+
+    /** Hero background: a wide backdrop if we have one, else the poster. */
+    val heroImage: String? get() = backdropUrl ?: tmdbPosterUrl ?: posterUrl
+
+    /** `2024 · Action`, matching Nuvio's hero meta line. */
+    val metaLine: String
+        get() = listOfNotNull(year, genres.firstOrNull(), sourceName.takeIf { it.isNotBlank() })
+            .joinToString(" · ")
 }
 
 /** One horizontal rail on the home screen, backed by a single source. */
@@ -55,6 +76,11 @@ data class AnimeDetail(
     val url: String,
     val title: String,
     val posterUrl: String?,
+    val backdropUrl: String? = null,
+    val logoUrl: String? = null,
+    val tmdbId: Int? = null,
+    val year: String? = null,
+    val rating: Double = 0.0,
     val description: String,
     val author: String?,
     val artist: String?,
@@ -64,8 +90,12 @@ data class AnimeDetail(
 ) {
     val key: String get() = "$sourceId::$url"
 
+    /** Hero background: TMDB backdrop when available, else the source poster. */
+    val heroImage: String? get() = backdropUrl ?: posterUrl
+
     val metaLine: String
         get() = listOfNotNull(
+            year,
             status.label.takeIf { status != AnimeStatus.UNKNOWN },
             genres.firstOrNull(),
             "${episodes.size} episodes".takeIf { episodes.isNotEmpty() },
@@ -102,6 +132,14 @@ data class EpisodeEntry(
     val number: Float,
     val dateUpload: Long,
     val scanlator: String?,
+    /** TMDB still, so episode cards can be thumbnails rather than text rows. */
+    val stillUrl: String? = null,
+    /** TMDB episode title, used when the source only supplies "Episode 12". */
+    val tmdbName: String? = null,
+    val overview: String = "",
+    val rating: Double = 0.0,
+    val runtimeMinutes: Int? = null,
+    val airDate: String? = null,
 ) {
     /**
      * Display label. Sources are inconsistent about whether `name` already
@@ -110,12 +148,26 @@ data class EpisodeEntry(
      */
     val displayName: String
         get() = when {
-            name.isBlank() && number >= 0 -> "Episode ${number.tidy()}"
-            name.isBlank() -> "Episode"
-            else -> name
+            // A source name like "Episode 12" carries no information TMDB does
+            // not already have, so prefer the real title when we have one.
+            !tmdbName.isNullOrBlank() && looksGeneric -> tmdbName
+            name.isNotBlank() -> name
+            !tmdbName.isNullOrBlank() -> tmdbName
+            number >= 0 -> "Episode ${number.tidy()}"
+            else -> "Episode"
         }
 
+    /** True when the source's own name is just an episode number. */
+    private val looksGeneric: Boolean
+        get() = name.isBlank() || GENERIC_NAME.matches(name.trim())
+
+    val code: String get() = number.takeIf { it >= 0 }?.let { "E${it.tidy()}" } ?: ""
+
     val numberLabel: String? get() = number.takeIf { it >= 0 }?.tidy()
+
+    private companion object {
+        val GENERIC_NAME = Regex("""(?i)^(episode|ep\.?|cap[íi]tulo)?\s*\d+(\.\d+)?$""")
+    }
 }
 
 /** A playable stream plus its tracks. */
@@ -150,6 +202,21 @@ internal fun SEpisode.toEntry(): EpisodeEntry = EpisodeEntry(
     scanlator = scanlator?.takeIf { it.isNotBlank() },
 )
 
+/** Overlays TMDB artwork onto an episode, leaving source fields authoritative. */
+internal fun EpisodeEntry.withArt(
+    art: space.nicart.watchbox.data.remote.TmdbEpisodeArt?,
+): EpisodeEntry {
+    if (art == null) return this
+    return copy(
+        stillUrl = art.stillUrl,
+        tmdbName = art.name.takeIf { it.isNotBlank() },
+        overview = art.overview,
+        rating = art.rating,
+        runtimeMinutes = art.runtimeMinutes,
+        airDate = art.airDate,
+    )
+}
+
 internal fun Video.toStreamOption(): StreamOption {
     val resolved = videoUrl ?: url
     return StreamOption(
@@ -179,6 +246,14 @@ internal fun Video.toStreamOption(): StreamOption {
 /** Drops a trailing `.0` so "Episode 12.0" reads as "Episode 12". */
 private fun Float.tidy(): String =
     if (this == toLong().toFloat()) toLong().toString() else toString()
+
+/** `1h 24m` / `24m`. Used for episode runtimes from TMDB. */
+fun formatRuntime(minutes: Int): String = when {
+    minutes <= 0 -> ""
+    minutes < 60 -> "${minutes}m"
+    minutes % 60 == 0 -> "${minutes / 60}h"
+    else -> "${minutes / 60}h ${minutes % 60}m"
+}
 
 /** `H:MM:SS` past an hour, else `M:SS`. */
 fun formatTimecode(millis: Long): String {

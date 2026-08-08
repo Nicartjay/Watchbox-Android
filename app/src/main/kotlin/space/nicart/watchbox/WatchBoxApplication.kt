@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.network.NetworkHelper
 import io.ktor.client.HttpClient
 import space.nicart.watchbox.core.network.HttpClientFactory
 import space.nicart.watchbox.data.local.WatchBoxStore
+import space.nicart.watchbox.data.remote.TmdbApi
 import space.nicart.watchbox.extension.ExtensionInstaller
 import space.nicart.watchbox.extension.ExtensionManager
 import space.nicart.watchbox.extension.ExtensionRepoApi
@@ -80,6 +81,12 @@ class AppContainer(
 
     private val repoApi = ExtensionRepoApi(plainClient)
 
+    /**
+     * Artwork enrichment only. Extensions expose a portrait poster and nothing
+     * else, so backdrops, title logos and episode stills come from here.
+     */
+    private val tmdbApi = TmdbApi(plainClient, BuildConfig.TMDB_API_KEY)
+
     private val installer = ExtensionInstaller(application, plainClient)
 
     val extensionManager = ExtensionManager(
@@ -88,5 +95,5 @@ class AppContainer(
         installer = installer,
     )
 
-    val repository = AnimeRepository(extensionManager)
+    val repository = AnimeRepository(extensionManager, tmdbApi)
 }

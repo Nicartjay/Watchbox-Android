@@ -179,10 +179,10 @@ private fun HeroPage(
     val fade = (1f - pageOffset.absoluteValue).coerceIn(0f, 1f)
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Sources only provide a portrait poster, so it is used as the backdrop
-        // and cropped. Over-scaled so parallax never exposes an edge.
+        // A wide TMDB backdrop when we have one, else the source's portrait
+        // poster cropped. Over-scaled so parallax never exposes an edge.
         WbAsyncImage(
-            url = item.posterUrl,
+            url = item.heroImage,
             contentDescription = item.title,
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -238,21 +238,32 @@ private fun HeroPage(
                 },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // No title logos exist in this ecosystem, so the title is always
-            // rendered as text.
-            Text(
-                text = item.title,
-                style = MaterialTheme.typography.displaySmall,
-                fontWeight = FontWeight.Black,
-                color = tokens.colors.textPrimary,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // Nuvio shows a transparent title logo at 62% width / 2.6 aspect and
+            // falls back to bold display text when none exists.
+            if (item.logoUrl != null) {
+                WbAsyncImage(
+                    url = item.logoUrl,
+                    contentDescription = item.title,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth(layout.logoWidthFraction)
+                        .aspectRatio(2.6f),
+                )
+            } else {
+                Text(
+                    text = item.title,
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Black,
+                    color = tokens.colors.textPrimary,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
 
             Spacer(Modifier.height(12.dp))
 
-            HeroMetaRow(sourceName = item.sourceName)
+            HeroMetaRow(card = item)
 
             Spacer(Modifier.height(14.dp))
 
@@ -275,18 +286,43 @@ private fun HeroPage(
     }
 }
 
-/** Shows which extension provided the entry. */
+/**
+ * `2024 • Action • Cineby`, separated by 4dp dots.
+ *
+ * Year and genre come from TMDB; the source name is always present so it is
+ * clear which extension a title came from.
+ */
 @Composable
-private fun HeroMetaRow(sourceName: String) {
+private fun HeroMetaRow(card: AnimeCard) {
     val tokens = MaterialTheme.wb
-    if (sourceName.isBlank()) return
+    val parts = buildList {
+        card.year?.let(::add)
+        card.genres.firstOrNull()?.let(::add)
+        card.sourceName.takeIf { it.isNotBlank() }?.let(::add)
+    }
+    if (parts.isEmpty()) return
 
-    Text(
-        text = sourceName,
-        style = MaterialTheme.typography.labelLarge,
-        color = tokens.colors.textPrimary.copy(alpha = 0.9f),
-        maxLines = 1,
-    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        parts.forEachIndexed { index, part ->
+            if (index > 0) {
+                Box(
+                    modifier = Modifier
+                        .size(4.dp)
+                        .clip(CircleShape)
+                        .background(tokens.colors.textPrimary.copy(alpha = 0.7f)),
+                )
+            }
+            Text(
+                text = part,
+                style = MaterialTheme.typography.labelLarge,
+                color = tokens.colors.textPrimary.copy(alpha = 0.9f),
+                maxLines = 1,
+            )
+        }
+    }
 }
 
 /** Dots that stretch 8dp -> 32dp for the active page. */
