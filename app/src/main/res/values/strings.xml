@@ -88,4 +88,18 @@
     <string name="settings_clear_history">Clear watch history</string>
     <string name="settings_clear_list">Clear My List</string>
     <string name="settings_about">About</string>
+
+    <!-- Updates -->
+    <string name="settings_updates">Updates</string>
+    <string name="settings_auto_check_updates">Check for updates automatically</string>
+    <string name="settings_check_now">Check for updates</string>
+    <string name="update_checking">Checking…</string>
+    <string name="update_up_to_date">You\'re on the latest version</string>
+    <string name="update_available">Version %1$s available</string>
+    <string name="update_download">Update</string>
+    <string name="update_skip">Skip</string>
+    <string name="update_downloading">Downloading %1$d%%</string>
+    <string name="update_launching">Opening installer…</string>
+    <string name="update_failed">Update failed: %1$s</string>
+    <string name="update_notes">What\'s new</string>
 </resources>

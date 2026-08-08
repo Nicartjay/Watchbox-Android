@@ -286,7 +286,12 @@ private fun TabShell(
                 AppTab.SETTINGS -> {
                     val viewModel: SettingsViewModel = viewModel(
                         key = "settings",
-                        factory = SettingsViewModel.factory(container.store),
+                        factory = SettingsViewModel.factory(
+                            store = container.store,
+                            updateChecker = container.updateChecker,
+                            updateInstaller = container.updateInstaller,
+                            currentVersion = space.nicart.watchbox.BuildConfig.VERSION_NAME,
+                        ),
                     )
                     SettingsScreen(viewModel = viewModel)
                 }

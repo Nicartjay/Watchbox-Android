@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -46,6 +47,9 @@ class WatchBoxStore(context: Context) {
                 autoPlayNext = prefs[Keys.AUTO_NEXT] ?: true,
                 preferredQuality = prefs[Keys.QUALITY] ?: "1080",
                 nsfwSourcesEnabled = prefs[Keys.NSFW] ?: false,
+                autoCheckUpdates = prefs[Keys.AUTO_UPDATE_CHECK] ?: true,
+                lastUpdateCheck = prefs[Keys.LAST_UPDATE_CHECK] ?: 0L,
+                skippedUpdateVersion = prefs[Keys.SKIPPED_UPDATE],
                 subtitleScale = prefs[Keys.SUB_SCALE] ?: 1f,
                 subtitleLanguage = prefs[Keys.SUB_LANG] ?: "en",
                 lastServerId = prefs[Keys.LAST_SERVER],
@@ -65,6 +69,20 @@ class WatchBoxStore(context: Context) {
     suspend fun setAutoPlayNext(enabled: Boolean) = store.edit { it[Keys.AUTO_NEXT] = enabled }
     suspend fun setPreferredQuality(quality: String) = store.edit { it[Keys.QUALITY] = quality }
     suspend fun setNsfwSourcesEnabled(enabled: Boolean) = store.edit { it[Keys.NSFW] = enabled }
+
+    suspend fun setAutoCheckUpdates(enabled: Boolean) = store.edit {
+        it[Keys.AUTO_UPDATE_CHECK] = enabled
+    }
+
+    /** Throttles the automatic check; see [AppSettings.shouldAutoCheck]. */
+    suspend fun markUpdateChecked() = store.edit {
+        it[Keys.LAST_UPDATE_CHECK] = System.currentTimeMillis()
+    }
+
+    /** Suppresses the prompt for one specific version the user dismissed. */
+    suspend fun skipUpdateVersion(version: String) = store.edit {
+        it[Keys.SKIPPED_UPDATE] = version
+    }
     suspend fun setSubtitleScale(scale: Float) = store.edit { it[Keys.SUB_SCALE] = scale }
     suspend fun setSubtitleLanguage(lang: String) = store.edit { it[Keys.SUB_LANG] = lang }
     suspend fun setLastServerId(id: String?) = store.edit { prefs ->
@@ -169,6 +187,9 @@ class WatchBoxStore(context: Context) {
         val AUTO_NEXT = booleanPreferencesKey("auto_play_next")
         val QUALITY = stringPreferencesKey("preferred_quality")
         val NSFW = booleanPreferencesKey("nsfw_sources")
+        val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_check_updates")
+        val LAST_UPDATE_CHECK = longPreferencesKey("last_update_check")
+        val SKIPPED_UPDATE = stringPreferencesKey("skipped_update_version")
         val SUB_SCALE = floatPreferencesKey("subtitle_scale")
         val SUB_LANG = stringPreferencesKey("subtitle_language")
         val LAST_SERVER = stringPreferencesKey("last_server_id")
@@ -185,7 +206,27 @@ data class AppSettings(
     val autoPlayNext: Boolean = true,
     val preferredQuality: String = "1080",
     val nsfwSourcesEnabled: Boolean = false,
+    val autoCheckUpdates: Boolean = true,
+    val lastUpdateCheck: Long = 0L,
+    /** Version the user chose to skip, so it is not offered again. */
+    val skippedUpdateVersion: String? = null,
     val subtitleScale: Float = 1f,
     val subtitleLanguage: String = "en",
     val lastServerId: String? = null,
-)
+) {
+
+    /**
+     * True when an automatic check is due.
+     *
+     * Throttled to once a day: GitHub's unauthenticated API allows 60 requests
+     * per hour per IP, and checking on every launch would be wasteful without
+     * making updates arrive meaningfully sooner.
+     */
+    val shouldAutoCheck: Boolean
+        get() = autoCheckUpdates &&
+            System.currentTimeMillis() - lastUpdateCheck > CHECK_INTERVAL_MS
+
+    private companion object {
+        const val CHECK_INTERVAL_MS = 24L * 60 * 60 * 1000
+    }
+}

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -36,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -43,6 +45,7 @@ import space.nicart.watchbox.BuildConfig
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.AppTheme
 import space.nicart.watchbox.core.ui.paletteForPreview
+import space.nicart.watchbox.data.remote.AppUpdate
 import space.nicart.watchbox.extension.ExtensionRepoApi
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.ui.components.NavOverlayPadding
@@ -62,6 +65,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
 
     var repoDraft by remember(settings.repoUrl) {
@@ -206,6 +210,30 @@ fun SettingsScreen(
             }
 
             // ------------------------------------------------------- about
+            // ------------------------------------------------------ updates
+            item(key = "updates-label") {
+                SettingsGroupLabel(stringResource(R.string.settings_updates))
+            }
+
+            item(key = "auto-update") {
+                SettingsToggleRow(
+                    title = stringResource(R.string.settings_auto_check_updates),
+                    checked = settings.autoCheckUpdates,
+                    onCheckedChange = viewModel::setAutoCheckUpdates,
+                )
+            }
+
+            item(key = "update-row") {
+                UpdateCard(
+                    state = updateState,
+                    currentVersion = viewModel.currentVersion,
+                    onCheck = viewModel::checkForUpdates,
+                    onDownload = viewModel::downloadUpdate,
+                    onSkip = viewModel::skipUpdate,
+                    onDismiss = viewModel::dismissUpdateState,
+                )
+            }
+
             item(key = "about-label") {
                 SettingsGroupLabel(stringResource(R.string.settings_about))
             }
@@ -361,3 +389,110 @@ private fun ThemeSwatch(
             ),
     )
 }
+
+/**
+ * Update row.
+ *
+ * Collapses to a single tappable row most of the time and only expands when
+ * there is something to act on. Release notes are shown before downloading so a
+ * user is never asked to install something unexplained.
+ */
+@Composable
+private fun UpdateCard(
+    state: UpdateUiState,
+    currentVersion: String,
+    onCheck: () -> Unit,
+    onDownload: (AppUpdate) -> Unit,
+    onSkip: (AppUpdate) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+
+    when (state) {
+        is UpdateUiState.Available -> SettingsCard {
+            Text(
+                text = stringResource(R.string.update_available, state.update.versionName),
+                style = MaterialTheme.typography.titleMedium,
+                color = tokens.colors.accent,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "Installed: $currentVersion · ${state.update.apkSizeBytes.asMegabytes()}",
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.colors.textMuted,
+            )
+
+            state.update.releaseNotes.takeIf { it.isNotBlank() }?.let { notes ->
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = stringResource(R.string.update_notes),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = tokens.colors.textSecondary,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = notes,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.colors.textMuted,
+                    maxLines = 8,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SettingsTextAction(
+                    label = stringResource(R.string.update_download),
+                    onClick = { onDownload(state.update) },
+                )
+                SettingsTextAction(
+                    label = stringResource(R.string.update_skip),
+                    onClick = { onSkip(state.update) },
+                )
+            }
+        }
+
+        is UpdateUiState.Downloading -> SettingsCard {
+            Text(
+                text = stringResource(R.string.update_downloading, state.percent),
+                style = MaterialTheme.typography.titleMedium,
+                color = tokens.colors.textPrimary,
+            )
+            Spacer(Modifier.height(10.dp))
+            LinearProgressIndicator(
+                progress = { state.percent / 100f },
+                color = tokens.colors.accent,
+                trackColor = tokens.colors.surface,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        UpdateUiState.Launching -> SettingsActionRow(
+            title = stringResource(R.string.update_launching),
+            onClick = {},
+        )
+
+        UpdateUiState.Checking -> SettingsActionRow(
+            title = stringResource(R.string.update_checking),
+            onClick = {},
+        )
+
+        UpdateUiState.UpToDate -> SettingsActionRow(
+            title = stringResource(R.string.update_up_to_date),
+            onClick = onDismiss,
+        )
+
+        is UpdateUiState.Failed -> SettingsActionRow(
+            title = stringResource(R.string.update_failed, state.message),
+            onClick = onCheck,
+        )
+
+        UpdateUiState.Idle -> SettingsActionRow(
+            title = stringResource(R.string.settings_check_now),
+            onClick = onCheck,
+        )
+    }
+}
+
+private fun Long.asMegabytes(): String = "%.1f MB".format(this / 1024.0 / 1024.0)

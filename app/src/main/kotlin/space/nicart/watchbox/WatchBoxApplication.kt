@@ -11,6 +11,8 @@ import io.ktor.client.HttpClient
 import space.nicart.watchbox.core.network.HttpClientFactory
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.data.remote.TmdbApi
+import space.nicart.watchbox.data.remote.UpdateChecker
+import space.nicart.watchbox.data.remote.UpdateInstaller
 import space.nicart.watchbox.extension.ExtensionInstaller
 import space.nicart.watchbox.extension.ExtensionManager
 import space.nicart.watchbox.extension.ExtensionRepoApi
@@ -96,4 +98,15 @@ class AppContainer(
     )
 
     val repository = AnimeRepository(extensionManager, tmdbApi)
+
+    /**
+     * In-app updates from GitHub Releases.
+     *
+     * Compares release tags against BuildConfig.VERSION_NAME rather than
+     * versionCode: CI derives the code from the run number, and the GitHub API
+     * does not expose an asset's versionCode without downloading the APK.
+     */
+    val updateChecker = UpdateChecker(plainClient, BuildConfig.VERSION_NAME)
+
+    val updateInstaller = UpdateInstaller(application, plainClient)
 }

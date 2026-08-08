@@ -7,12 +7,16 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!--
-      Deliberately absent: REQUEST_INSTALL_PACKAGES and QUERY_ALL_PACKAGES.
+      Needed only to install our own update APK. Extensions do NOT use this: they
+      are loaded from private storage via a classloader, which needs no install
+      permission at all. Android still shows its own confirmation prompt for
+      every install, so this cannot install anything silently.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
-      Extensions are downloaded into this app's private storage and loaded
-      straight from there, so no system installer and no package enumeration is
-      needed. That keeps the permission set minimal at the cost of extensions
-      being private to this app rather than shared with other Aniyomi clients.
+    <!--
+      Deliberately absent: QUERY_ALL_PACKAGES. Extensions live in this app's
+      private storage, so package enumeration is never required.
     -->
 
     <application
@@ -42,5 +46,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          Grants the package installer read access to the downloaded update APK.
+          A raw file:// URI would throw FileUriExposedException on API 24+.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>
