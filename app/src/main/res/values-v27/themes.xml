@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Display-cutout handling only exists from API 27. Kept in a versioned
+      resource so lint does not have to be told to ignore it on API 24-26.
+    -->
+    <style name="Theme.WatchBox" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/wb_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

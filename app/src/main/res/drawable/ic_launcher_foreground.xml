@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Play glyph on the adaptive-icon 108x108 canvas.
+  Source geometry (36x36 favicon): M13 11 L26 18 L13 25 Z
+  Scaled x3 and centred inside the 72x72 safe zone.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M41,35L80,54L41,73Z" />
+</vector>
