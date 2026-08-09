@@ -7,6 +7,8 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -48,6 +50,8 @@ import space.nicart.watchbox.ui.library.LibraryScreen
 import space.nicart.watchbox.ui.library.LibraryViewModel
 import space.nicart.watchbox.ui.navigation.AppTab
 import space.nicart.watchbox.ui.navigation.Routes
+import space.nicart.watchbox.core.ui.LocalLayoutMetrics
+import space.nicart.watchbox.ui.navigation.WbNavigationRail
 import space.nicart.watchbox.ui.navigation.WbNavigationBar
 import space.nicart.watchbox.ui.navigation.rememberWbNavBarScrollState
 import space.nicart.watchbox.ui.player.PlayerScreen
@@ -275,6 +279,7 @@ private fun TabShell(
     var selectedTab by remember { mutableStateOf(AppTab.HOME) }
     val stateHolder = rememberSaveableStateHolder()
     val navScrollState = rememberWbNavBarScrollState()
+    val metrics = LocalLayoutMetrics.current
 
     val openSaved: (WatchlistEntry) -> Unit = { entry ->
         onOpenAnime(
@@ -289,6 +294,12 @@ private fun TabShell(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        // Padded rather than overlaid: on a tablet the rail is permanently expanded, so
+        // an overlay would cover a fixed strip of every screen. The TV rail can overlay
+        // because it is collapsed except while focused.
+        val contentInset = if (metrics.usesNavRail) TABLET_RAIL_WIDTH else 0.dp
+
+        Box(modifier = Modifier.fillMaxSize().padding(start = contentInset)) {
         stateHolder.SaveableStateProvider(selectedTab.name) {
             when (selectedTab) {
                 AppTab.HOME -> {
@@ -365,15 +376,37 @@ private fun TabShell(
                 }
             }
         }
+        }
 
-        WbNavigationBar(
-            selected = selectedTab,
-            onSelect = { tab ->
-                selectedTab = tab
-                navScrollState.reveal()
-            },
-            scrollState = navScrollState,
-            modifier = Modifier.align(Alignment.BottomCenter),
-        )
+        // A rail on wide tablets, the floating pill otherwise. In landscape on a held
+        // tablet the bottom edge is the hardest place to reach two-handed, and a
+        // full-width bar there wastes the height that matters for content.
+        if (metrics.usesNavRail) {
+            WbNavigationRail(
+                selected = selectedTab,
+                onSelect = { selectedTab = it },
+                // Always labelled here: unlike a TV there is no focus to expand on,
+                // and a tablet has the width to spare.
+                expanded = true,
+                modifier = Modifier.align(Alignment.CenterStart),
+            )
+        } else {
+            WbNavigationBar(
+                selected = selectedTab,
+                onSelect = { tab ->
+                    selectedTab = tab
+                    navScrollState.reveal()
+                },
+                scrollState = navScrollState,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
     }
 }
+
+/**
+ * Width reserved for the tablet navigation rail.
+ *
+ * Matches the rail's expanded width, since on a tablet it is always labelled.
+ */
+private val TABLET_RAIL_WIDTH = 220.dp

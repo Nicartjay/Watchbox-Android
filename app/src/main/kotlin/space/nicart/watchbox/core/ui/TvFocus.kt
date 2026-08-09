@@ -93,3 +93,32 @@ fun Modifier.tvFocusOutline(
         shape = shape,
     )
 }
+
+/**
+ * Focus affordance that costs nothing on a touchscreen.
+ *
+ * Shared components are used by both form factors, so they cannot simply always draw a
+ * focus border - on a phone, focus exists but is meaningless, and a stray outline after
+ * a tap looks like a rendering fault. This applies the indicator only where focus is
+ * the navigation method.
+ *
+ * Returns the interaction source so the caller passes the same instance to `clickable`.
+ * That matters for ordering: adding a separate `focusable()` before `clickable` inserts
+ * a focus target that swallows the D-pad centre key, so the item highlights but cannot
+ * be activated.
+ */
+@Composable
+fun Modifier.adaptiveFocus(
+    interactionSource: MutableInteractionSource,
+    shape: RoundedCornerShape = RoundedCornerShape(12.dp),
+    scale: Boolean = true,
+): Modifier {
+    val metrics = LocalLayoutMetrics.current
+    if (!metrics.isFocusDriven) return this
+
+    return if (scale) {
+        tvFocusable(interactionSource, shape)
+    } else {
+        tvFocusOutline(interactionSource, shape)
+    }
+}

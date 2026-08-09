@@ -10,6 +10,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import space.nicart.watchbox.core.ui.adaptiveFocus
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,6 +37,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -188,6 +192,9 @@ fun WbPosterCard(
     /** Secondary line: usually the source name, or resume position. */
     subtitle: String? = null,
 ) {
+    // Shared with adaptiveFocus so the focus state and the indicator cannot disagree.
+    val interaction = remember { MutableInteractionSource() }
+
     val tokens = MaterialTheme.wb
 
     Column(
@@ -202,7 +209,13 @@ fun WbPosterCard(
                 .aspectRatio(aspectRatio)
                 .clip(RoundedCornerShape(PosterMetrics.CornerRadius))
                 .background(tokens.colors.surface)
-                .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+                .adaptiveFocus(interaction, RoundedCornerShape(PosterMetrics.CornerRadius))
+                .combinedClickable(
+                    interactionSource = interaction,
+                    indication = LocalIndication.current,
+                    onClick = onClick,
+                    onLongClick = onLongClick,
+                ),
         ) {
             WbAsyncImage(
                 url = card.displayPoster,

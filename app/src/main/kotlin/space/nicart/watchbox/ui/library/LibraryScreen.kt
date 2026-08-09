@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import space.nicart.watchbox.core.ui.LocalLayoutMetrics
 import space.nicart.watchbox.R
 import space.nicart.watchbox.data.local.WatchHistoryEntry
 import space.nicart.watchbox.domain.AnimeCard
@@ -59,13 +60,9 @@ fun LibraryScreen(
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val padding = sectionHorizontalPadding(maxWidth)
-        val columns = when {
-            maxWidth >= 1400.dp -> 7
-            maxWidth >= 1200.dp -> 6
-            maxWidth >= 1000.dp -> 5
-            maxWidth >= 840.dp -> 4
-            else -> 3
-        }
+        // One definition of the column ladder, in LayoutMetrics. Four copies of this
+        // `when` had already drifted - Search computed it and never used it.
+        val columns = LocalLayoutMetrics.current.gridColumns
 
         Column(modifier = Modifier.fillMaxSize()) {
             Column(

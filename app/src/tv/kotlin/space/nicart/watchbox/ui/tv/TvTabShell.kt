@@ -93,7 +93,12 @@ fun TvTabShell(
 
         repeat(REFOCUS_ATTEMPTS) {
             withFrameNanos { }
-            if (runCatching { railFocusRequester.requestFocus() }.isSuccess) return@LaunchedEffect
+            runCatching { railFocusRequester.requestFocus() }
+
+            // Checked against observed focus, not the call's return value:
+            // requestFocus reports success even when the target has no node yet, so
+            // trusting it stops the retry loop while focus is still nowhere.
+            if (shellHasFocus) return@LaunchedEffect
             delay(REFOCUS_RETRY_MS)
         }
     }

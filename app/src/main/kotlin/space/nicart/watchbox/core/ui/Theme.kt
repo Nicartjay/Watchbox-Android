@@ -10,6 +10,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -137,9 +139,19 @@ fun WatchBoxTheme(
         Density(density = density.density, fontScale = 1f)
     }
 
+    // Provided at the theme root so every screen and shared component reads the same
+    // metrics. Resolved from the configuration rather than passed in, so a fold or a
+    // window resize is picked up without threading it through every call site.
+    val context = LocalContext.current
+    val widthDp = LocalConfiguration.current.screenWidthDp
+    val layoutMetrics = remember(widthDp) {
+        layoutMetricsFor(detectFormFactor(context, widthDp), widthDp)
+    }
+
     CompositionLocalProvider(
         LocalWbTokens provides tokens,
         LocalWbTypeScale provides typeScale,
+        LocalLayoutMetrics provides layoutMetrics,
         LocalDensity provides fixedDensity,
         LocalRippleConfiguration provides RippleConfiguration(color = Color.Black),
     ) {
