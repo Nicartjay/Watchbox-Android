@@ -98,9 +98,10 @@ class ExtensionRepoTest {
     // -------------------------------------------------------------- defaults
 
     @Test
-    fun `the default list has exactly one enabled repository`() {
-        assertEquals(1, ExtensionRepo.DEFAULT.size)
-        assertTrue(ExtensionRepo.DEFAULT.single().enabled)
+    fun `a fresh install ships no repositories`() {
+        // Deliberate: bundling one would choose a third-party index on the user's
+        // behalf and make the app depend on a repo this project does not control.
+        assertTrue(ExtensionRepo.DEFAULT.isEmpty())
     }
 
     @Test

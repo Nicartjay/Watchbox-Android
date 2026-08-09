@@ -15,12 +15,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
@@ -39,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -48,6 +48,7 @@ import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.WbBackButton
+import space.nicart.watchbox.ui.extensions.ExtensionIconSlot
 import space.nicart.watchbox.ui.components.WbChip
 import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
@@ -75,22 +76,28 @@ fun SourceListScreen(
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val padding = sectionHorizontalPadding(maxWidth)
 
-        LazyColumn(
+        // A grid rather than a list: sources are identified by their extension's
+        // icon far faster than by name, and an icon-led row wastes most of its
+        // width. Adaptive columns keep the tile size constant across screen sizes
+        // instead of stretching a fixed count.
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = 104.dp),
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 start = padding,
                 end = padding,
                 bottom = 18.dp + NavOverlayPadding,
             ),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item(key = "header") {
+            item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
                 Box(modifier = Modifier.statusBarsPadding().padding(top = 10.dp)) {
                     WbScreenHeader(title = stringResource(R.string.title_browse))
                 }
             }
 
-            item(key = "extensions-entry") {
+            item(key = "extensions-entry", span = { GridItemSpan(maxLineSpan) }) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -140,7 +147,7 @@ fun SourceListScreen(
             }
 
             if (sources.isEmpty()) {
-                item(key = "empty") {
+                item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
                     WbEmptyState(
                         title = stringResource(R.string.empty_no_sources_title),
                         body = stringResource(R.string.empty_no_sources_body),
@@ -149,7 +156,7 @@ fun SourceListScreen(
                     )
                 }
             } else {
-                item(key = "sources-label") {
+                item(key = "sources-label", span = { GridItemSpan(maxLineSpan) }) {
                     Text(
                         text = stringResource(R.string.title_sources).uppercase(),
                         style = MaterialTheme.typography.labelMedium,
@@ -159,40 +166,62 @@ fun SourceListScreen(
                 }
 
                 items(items = sources, key = { it.id }) { source ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(tokens.colors.surfaceCard)
-                            .clickable { onOpenSource(source) }
-                            .padding(horizontal = 14.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = source.name,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = tokens.colors.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (source.lang.isNotBlank()) {
-                                Text(
-                                    text = source.lang.uppercase(),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = tokens.colors.textMuted,
-                                )
-                            }
-                        }
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                            contentDescription = null,
-                            tint = tokens.colors.textMuted,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
+                    SourceTile(source = source, onClick = { onOpenSource(source) })
                 }
             }
+        }
+    }
+}
+
+/**
+ * One source in the browse grid.
+ *
+ * The extension icon leads, because that is what identifies a source at a glance.
+ * Names get two lines and are centred: source names are short but not uniformly so,
+ * and truncating to one line loses the distinguishing half of names sharing a prefix.
+ */
+@Composable
+private fun SourceTile(
+    source: SourceEntry,
+    onClick: () -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(tokens.colors.surfaceCard)
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp, horizontal = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        ExtensionIconSlot(
+            drawable = source.icon,
+            // Installed extensions carry no icon URL; the drawable is the only source.
+            iconUrl = null,
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(tokens.colors.surface),
+        )
+
+        Text(
+            text = source.name,
+            style = MaterialTheme.typography.labelLarge,
+            color = tokens.colors.textPrimary,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+
+        if (source.lang.isNotBlank()) {
+            Text(
+                text = source.lang.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.colors.textMuted,
+            )
         }
     }
 }

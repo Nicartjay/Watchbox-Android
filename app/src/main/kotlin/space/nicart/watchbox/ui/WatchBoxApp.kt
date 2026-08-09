@@ -30,6 +30,7 @@ import space.nicart.watchbox.AppContainer
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.data.local.WatchHistoryEntry
 import space.nicart.watchbox.data.local.WatchlistEntry
+import space.nicart.watchbox.data.local.AppSettings
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.ui.browse.BrowseScreen
 import space.nicart.watchbox.ui.browse.BrowseViewModel
@@ -48,6 +49,7 @@ import space.nicart.watchbox.ui.navigation.Routes
 import space.nicart.watchbox.ui.navigation.WbNavigationBar
 import space.nicart.watchbox.ui.navigation.rememberWbNavBarScrollState
 import space.nicart.watchbox.ui.player.PlayerScreen
+import space.nicart.watchbox.ui.player.subtitleStyle
 import space.nicart.watchbox.ui.player.PlayerViewModel
 import space.nicart.watchbox.ui.search.SearchScreen
 import space.nicart.watchbox.ui.source.SourcePreferenceGroup
@@ -147,10 +149,14 @@ fun WatchBoxApp(
                         resumeMs = route.resumeMs,
                     ),
                 )
+                val playerSettings by container.store.settings
+                    .collectAsStateWithLifecycle(initialValue = AppSettings())
+
                 PlayerScreen(
                     viewModel = viewModel,
                     castManager = container.castManager,
                     onBack = navController::popBackStack,
+                    subtitleStyle = playerSettings.subtitleStyle(),
                 )
             }
 

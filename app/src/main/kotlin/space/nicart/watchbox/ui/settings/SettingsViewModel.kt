@@ -14,6 +14,8 @@ import kotlinx.coroutines.launch
 import space.nicart.watchbox.core.ui.AppTheme
 import space.nicart.watchbox.data.local.AppSettings
 import space.nicart.watchbox.data.local.WatchBoxStore
+import space.nicart.watchbox.ui.player.SubtitleBackground
+import space.nicart.watchbox.ui.player.SubtitleSize
 import space.nicart.watchbox.data.remote.AppUpdate
 import space.nicart.watchbox.data.remote.UpdateChecker
 import space.nicart.watchbox.data.remote.UpdateDownload
@@ -122,6 +124,28 @@ class SettingsViewModel(
 
     fun setAutoPlayNext(enabled: Boolean) {
         viewModelScope.launch { store.setAutoPlayNext(enabled) }
+    }
+
+    // ------------------------------------------------------------ subtitles
+
+    fun setSubtitleSize(size: SubtitleSize) {
+        viewModelScope.launch { store.setSubtitleSize(size) }
+    }
+
+    fun setSubtitleBackground(background: SubtitleBackground) {
+        viewModelScope.launch { store.setSubtitleBackground(background) }
+    }
+
+    fun setSubtitleTextColor(color: Int) {
+        viewModelScope.launch { store.setSubtitleTextColor(color) }
+    }
+
+    fun setSubtitleBackgroundOpacity(opacity: Float) {
+        viewModelScope.launch { store.setSubtitleBackgroundOpacity(opacity) }
+    }
+
+    fun setSubtitleBold(bold: Boolean) {
+        viewModelScope.launch { store.setSubtitleBold(bold) }
     }
 
     fun addRepo(url: String) {

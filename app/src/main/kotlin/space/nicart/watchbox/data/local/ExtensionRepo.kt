@@ -1,7 +1,6 @@
 package space.nicart.watchbox.data.local
 
 import kotlinx.serialization.Serializable
-import space.nicart.watchbox.extension.ExtensionRepoApi
 
 /**
  * One extension repository the user has configured.
@@ -60,8 +59,13 @@ data class ExtensionRepo(
             .removeSuffix("/index.json")
             .removeSuffix("/")
 
-        /** The repository list a fresh install starts with. */
-        val DEFAULT: List<ExtensionRepo> =
-            listOf(ExtensionRepo(url = ExtensionRepoApi.DEFAULT_REPO))
+        /**
+         * A fresh install has no repositories.
+         *
+         * Shipping one would decide for the user which third-party index the app
+         * fetches from, and bake a dependency on a repository this project does not
+         * control. Repositories are added deliberately, by link or by pasting a URL.
+         */
+        val DEFAULT: List<ExtensionRepo> = emptyList()
     }
 }

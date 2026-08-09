@@ -54,6 +54,26 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!--
+              Extension repository links. Repositories advertise themselves as
+              `aniyomi://add-repo?url=...`, and the app ships with none, so this is
+              the practical way to add one - the alternative is typing a long raw
+              URL by hand.
+
+              BROWSABLE is required for links opened from a web page; without it
+              only other apps could send them. The activity is singleTask, so a
+              link arriving while the app runs is delivered to onNewIntent rather
+              than starting a second copy.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aniyomi" android:host="add-repo" />
+                <data android:scheme="tachiyomi" android:host="add-repo" />
+                <data android:scheme="watchbox" android:host="add-repo" />
+            </intent-filter>
         </activity>
 
         <!--

@@ -50,6 +50,8 @@ import space.nicart.watchbox.core.ui.AppTheme
 import space.nicart.watchbox.core.ui.paletteForPreview
 import space.nicart.watchbox.data.remote.AppUpdate
 import space.nicart.watchbox.data.local.ExtensionRepo
+import space.nicart.watchbox.ui.player.SubtitleBackground
+import space.nicart.watchbox.ui.player.subtitleStyle
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.WbScreenHeader
@@ -165,18 +167,23 @@ fun SettingsScreen(
 
                     Spacer(Modifier.height(12.dp))
 
+                    if (settings.repos.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.settings_repos_empty),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = tokens.colors.textMuted,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+
                     settings.repos.forEach { repo ->
                         RepoRow(
                             repo = repo,
                             onToggle = { viewModel.setRepoEnabled(repo.url, it) },
-                            // The last repository cannot be removed: an empty list
-                            // leaves nothing to browse and no way back except a
-                            // reset, which is not discoverable from an empty screen.
-                            onRemove = if (settings.repos.size > 1) {
-                                { viewModel.removeRepo(repo.url) }
-                            } else {
-                                null
-                            },
+                            // Every repository can be removed, including the last:
+                            // an empty list is the initial state now that none ships
+                            // by default, and the extension screen explains it.
+                            onRemove = { viewModel.removeRepo(repo.url) },
                         )
                         Spacer(Modifier.height(8.dp))
                     }
@@ -246,7 +253,7 @@ fun SettingsScreen(
                             },
                         )
                         SettingsTextAction(
-                            label = stringResource(R.string.settings_repos_reset),
+                            label = stringResource(R.string.settings_repos_clear),
                             onClick = {
                                 viewModel.resetRepos()
                                 repoDraft = ""
@@ -255,6 +262,78 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
+
+            // --------------------------------------------------- subtitles
+            item(key = "subtitles-label") {
+                SettingsGroupLabel(stringResource(R.string.settings_subtitles))
+            }
+
+            item(key = "subtitles") {
+                SettingsCard {
+                    val style = settings.subtitleStyle()
+
+                    SubtitlePreview(style = style)
+
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        text = stringResource(R.string.settings_subtitle_size),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = tokens.colors.textMuted,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    SubtitleSizeRow(
+                        selected = style.size,
+                        onSelect = viewModel::setSubtitleSize,
+                    )
+
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        text = stringResource(R.string.settings_subtitle_background),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = tokens.colors.textMuted,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    SubtitleBackgroundColumn(
+                        selected = style.background,
+                        onSelect = viewModel::setSubtitleBackground,
+                    )
+
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        text = stringResource(R.string.settings_subtitle_color),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = tokens.colors.textMuted,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    SubtitleColorRow(
+                        selected = style.textColor,
+                        onSelect = viewModel::setSubtitleTextColor,
+                    )
+
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        text = stringResource(R.string.settings_subtitle_opacity),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = tokens.colors.textMuted,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    SubtitleOpacityRow(
+                        selected = style.backgroundOpacity,
+                        onSelect = viewModel::setSubtitleBackgroundOpacity,
+                        // Opacity has no effect without something to be opaque.
+                        enabled = style.background == SubtitleBackground.BACKGROUND ||
+                            style.background == SubtitleBackground.FULL_BACKGROUND,
+                    )
+                }
+            }
+
+            item(key = "subtitle-bold") {
+                SettingsToggleRow(
+                    title = stringResource(R.string.settings_subtitle_bold),
+                    checked = settings.subtitleBold,
+                    onCheckedChange = viewModel::setSubtitleBold,
+                )
             }
 
             // -------------------------------------------------------- data
@@ -574,7 +653,7 @@ private fun Long.asMegabytes(): String = "%.1f MB".format(this / 1024.0 / 1024.0
 private fun RepoRow(
     repo: ExtensionRepo,
     onToggle: (Boolean) -> Unit,
-    onRemove: (() -> Unit)?,
+    onRemove: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
 
@@ -620,16 +699,14 @@ private fun RepoRow(
             ),
         )
 
-        onRemove?.let {
-            Icon(
-                imageVector = Icons.Rounded.Delete,
-                contentDescription = stringResource(R.string.settings_repos_remove),
-                tint = tokens.colors.textMuted,
-                modifier = Modifier
-                    .size(20.dp)
-                    .clickable(onClick = it),
-            )
-        }
+        Icon(
+            imageVector = Icons.Rounded.Delete,
+            contentDescription = stringResource(R.string.settings_repos_remove),
+            tint = tokens.colors.textMuted,
+            modifier = Modifier
+                .size(20.dp)
+                .clickable(onClick = onRemove),
+        )
     }
 }
 

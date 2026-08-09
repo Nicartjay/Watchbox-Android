@@ -1,8 +1,10 @@
 package space.nicart.watchbox.ui.browse
 
+import android.graphics.drawable.Drawable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -23,6 +25,14 @@ data class SourceEntry(
     val name: String,
     val lang: String,
     val supportsLatest: Boolean,
+    /**
+     * The owning extension's icon.
+     *
+     * Carried on the entry because a source has no icon of its own - it belongs to
+     * the extension that created it, and that association is only available while
+     * walking the installed list.
+     */
+    val icon: Drawable? = null,
 )
 
 /**
@@ -53,16 +63,29 @@ data class BrowseUiState(
 /** Backs the source list on the Browse tab. */
 class SourceListViewModel(extensions: ExtensionManager) : ViewModel() {
 
+    /**
+     * Built by walking the installed extensions rather than [ExtensionManager.catalogueSources],
+     * which flattens them and loses the source-to-extension link - and with it the
+     * only place an icon can come from.
+     */
     val sources: StateFlow<List<SourceEntry>> = extensions.installed
-        .map { _ ->
-            extensions.catalogueSources().map { source ->
-                SourceEntry(
-                    id = source.id,
-                    name = source.name,
-                    lang = source.lang,
-                    supportsLatest = runCatching { source.supportsLatest }.getOrDefault(false),
-                )
-            }
+        .map { installed ->
+            installed
+                .flatMap { extension ->
+                    extension.sources
+                        .filterIsInstance<AnimeCatalogueSource>()
+                        .map { source ->
+                            SourceEntry(
+                                id = source.id,
+                                name = source.name,
+                                lang = source.lang,
+                                supportsLatest = runCatching { source.supportsLatest }
+                                    .getOrDefault(false),
+                                icon = extension.icon,
+                            )
+                        }
+                }
+                .sortedBy { it.name.lowercase() }
         }
         .stateIn(
             scope = viewModelScope,

@@ -73,6 +73,19 @@ fun PlayerScreen(
     castManager: CastManager,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Subtitle appearance, observed live.
+     *
+     * Passed in rather than read once in the ViewModel so a change in Settings takes
+     * effect on a player that is already open.
+     */
+    subtitleStyle: SubtitleStyle = SubtitleStyle(
+        size = SubtitleSize.MEDIUM,
+        background = SubtitleBackground.OUTLINE,
+        textColor = 0xFFFFFFFF.toInt(),
+        backgroundOpacity = 0.6f,
+        bold = false,
+    ),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -122,6 +135,28 @@ fun PlayerScreen(
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
     LaunchedEffect(exoPlayer, playerView) {
         playerView?.player = exoPlayer
+    }
+
+    // Subtitle appearance. Applied imperatively because Media3 renders cues in its
+    // own SubtitleView; keyed on the whole style so an unrelated settings change
+    // does not re-apply it.
+    LaunchedEffect(playerView, subtitleStyle) {
+        playerView?.subtitleView?.apply {
+            // Embedded styles are the ones baked into the subtitle track. They are
+            // disabled so the user's choice actually wins - otherwise a track that
+            // specifies its own colours silently overrides these settings.
+            setApplyEmbeddedStyles(false)
+            setApplyEmbeddedFontSizes(false)
+
+            setStyle(
+                subtitleCaptionStyle(
+                    background = subtitleStyle.background,
+                    textColor = subtitleStyle.textColor,
+                    opacity = subtitleStyle.backgroundOpacity,
+                ),
+            )
+            setFractionalTextSize(subtitleStyle.size.fraction)
+        }
     }
 
     var isPlaying by remember { mutableStateOf(false) }

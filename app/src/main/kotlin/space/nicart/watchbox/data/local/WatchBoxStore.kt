@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -15,7 +16,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 import space.nicart.watchbox.core.ui.AppTheme
-import space.nicart.watchbox.extension.ExtensionRepoApi
+import space.nicart.watchbox.ui.player.SubtitleBackground
+import space.nicart.watchbox.ui.player.SubtitleSize
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "watchbox")
 
@@ -49,7 +51,14 @@ class WatchBoxStore(context: Context) {
                 autoCheckUpdates = prefs[Keys.AUTO_UPDATE_CHECK] ?: true,
                 lastUpdateCheck = prefs[Keys.LAST_UPDATE_CHECK] ?: 0L,
                 skippedUpdateVersion = prefs[Keys.SKIPPED_UPDATE],
-                subtitleScale = prefs[Keys.SUB_SCALE] ?: 1f,
+                subtitleSize = enumOrDefault(prefs[Keys.SUB_SIZE], SubtitleSize.MEDIUM),
+                subtitleBackground = enumOrDefault(
+                    prefs[Keys.SUB_BACKGROUND],
+                    SubtitleBackground.OUTLINE,
+                ),
+                subtitleTextColor = prefs[Keys.SUB_COLOR] ?: SUBTITLE_DEFAULT_COLOR,
+                subtitleBackgroundOpacity = prefs[Keys.SUB_BG_OPACITY] ?: 0.6f,
+                subtitleBold = prefs[Keys.SUB_BOLD] ?: false,
                 subtitleLanguage = prefs[Keys.SUB_LANG] ?: "en",
                 lastServerId = prefs[Keys.LAST_SERVER],
             )
@@ -67,8 +76,10 @@ class WatchBoxStore(context: Context) {
      * repository configured keeps it instead of silently reverting to the default.
      */
     private fun readRepos(prefs: Preferences): List<ExtensionRepo> {
-        val stored = decodeList<ExtensionRepo>(prefs[Keys.REPOS])
-        if (stored.isNotEmpty()) return stored
+        // Key presence, not emptiness: an empty list is a legitimate state now that
+        // no repository ships by default, and treating it as "unset" would resurrect
+        // the migrated legacy repository every time the user removed the last one.
+        prefs[Keys.REPOS]?.let { return decodeList<ExtensionRepo>(it) }
 
         val legacy = prefs[Keys.REPO_URL]?.takeIf { it.isNotBlank() }
         return when {
@@ -110,7 +121,7 @@ class WatchBoxStore(context: Context) {
         prefs[Keys.REPOS] = json.encodeToString(next)
     }
 
-    /** Restores the shipped default list. */
+    /** Removes every repository. */
     suspend fun resetRepos() = store.edit { prefs ->
         // The legacy key is cleared too, or the read-side migration would resurrect
         // the old custom URL on the next read.
@@ -137,7 +148,23 @@ class WatchBoxStore(context: Context) {
     suspend fun skipUpdateVersion(version: String) = store.edit {
         it[Keys.SKIPPED_UPDATE] = version
     }
-    suspend fun setSubtitleScale(scale: Float) = store.edit { it[Keys.SUB_SCALE] = scale }
+    // ------------------------------------------------------------ subtitles
+
+    suspend fun setSubtitleSize(size: SubtitleSize) = store.edit {
+        it[Keys.SUB_SIZE] = size.name
+    }
+
+    suspend fun setSubtitleBackground(background: SubtitleBackground) = store.edit {
+        it[Keys.SUB_BACKGROUND] = background.name
+    }
+
+    suspend fun setSubtitleTextColor(color: Int) = store.edit { it[Keys.SUB_COLOR] = color }
+
+    suspend fun setSubtitleBackgroundOpacity(opacity: Float) = store.edit {
+        it[Keys.SUB_BG_OPACITY] = opacity.coerceIn(0f, 1f)
+    }
+
+    suspend fun setSubtitleBold(bold: Boolean) = store.edit { it[Keys.SUB_BOLD] = bold }
     suspend fun setSubtitleLanguage(lang: String) = store.edit { it[Keys.SUB_LANG] = lang }
     suspend fun setLastServerId(id: String?) = store.edit { prefs ->
         if (id == null) prefs.remove(Keys.LAST_SERVER) else prefs[Keys.LAST_SERVER] = id
@@ -229,6 +256,15 @@ class WatchBoxStore(context: Context) {
 
     // -------------------------------------------------------------- helpers
 
+    /**
+     * Resolves a stored enum name, falling back when it no longer exists.
+     *
+     * Enum constants are persisted by name, so a renamed or removed constant would
+     * otherwise throw on read and take the whole settings flow down with it.
+     */
+    private inline fun <reified T : Enum<T>> enumOrDefault(raw: String?, default: T): T =
+        raw?.let { name -> enumValues<T>().firstOrNull { it.name == name } } ?: default
+
     private inline fun <reified T> decodeList(raw: String?): List<T> {
         if (raw.isNullOrBlank()) return emptyList()
         return runCatching { json.decodeFromString<List<T>>(raw) }.getOrDefault(emptyList())
@@ -246,7 +282,11 @@ class WatchBoxStore(context: Context) {
         val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_check_updates")
         val LAST_UPDATE_CHECK = longPreferencesKey("last_update_check")
         val SKIPPED_UPDATE = stringPreferencesKey("skipped_update_version")
-        val SUB_SCALE = floatPreferencesKey("subtitle_scale")
+        val SUB_SIZE = stringPreferencesKey("subtitle_size")
+        val SUB_BACKGROUND = stringPreferencesKey("subtitle_background")
+        val SUB_COLOR = intPreferencesKey("subtitle_text_color")
+        val SUB_BG_OPACITY = floatPreferencesKey("subtitle_bg_opacity")
+        val SUB_BOLD = booleanPreferencesKey("subtitle_bold")
         val SUB_LANG = stringPreferencesKey("subtitle_language")
         val LAST_SERVER = stringPreferencesKey("last_server_id")
         val HISTORY = stringPreferencesKey("watch_history")
@@ -266,7 +306,12 @@ data class AppSettings(
     val lastUpdateCheck: Long = 0L,
     /** Version the user chose to skip, so it is not offered again. */
     val skippedUpdateVersion: String? = null,
-    val subtitleScale: Float = 1f,
+    val subtitleSize: SubtitleSize = SubtitleSize.MEDIUM,
+    /** Outline by default: it is the style that survives the widest range of video. */
+    val subtitleBackground: SubtitleBackground = SubtitleBackground.OUTLINE,
+    val subtitleTextColor: Int = SUBTITLE_DEFAULT_COLOR,
+    val subtitleBackgroundOpacity: Float = 0.6f,
+    val subtitleBold: Boolean = false,
     val subtitleLanguage: String = "en",
     val lastServerId: String? = null,
 ) {
@@ -290,3 +335,6 @@ data class AppSettings(
         const val CHECK_INTERVAL_MS = 24L * 60 * 60 * 1000
     }
 }
+
+/** Default subtitle colour: opaque white. */
+internal const val SUBTITLE_DEFAULT_COLOR: Int = 0xFFFFFFFF.toInt()

@@ -44,6 +44,7 @@ import space.nicart.watchbox.extension.model.Extension
 import space.nicart.watchbox.extension.model.InstallStep
 import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.WbBackButton
+import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbScreenHeader
 import space.nicart.watchbox.ui.components.WbSearchField
 import space.nicart.watchbox.ui.components.sectionHorizontalPadding
@@ -211,6 +212,20 @@ fun ExtensionsScreen(
                             ?.let { { onOpenSettings(it) } },
                     )
                 }
+            }
+
+            // Distinct from "no extensions found": with no repository configured
+            // there is nothing to search, and telling the user to add one is the
+            // only useful thing this screen can say.
+            if (state.repos.isEmpty()) {
+                item(key = "no-repos") {
+                    WbEmptyState(
+                        title = stringResource(R.string.extensions_no_repos_title),
+                        body = stringResource(R.string.extensions_no_repos_body),
+                        modifier = Modifier.padding(top = 24.dp),
+                    )
+                }
+                return@LazyColumn
             }
 
             item(key = "available-label") {
