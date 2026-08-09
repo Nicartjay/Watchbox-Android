@@ -1,6 +1,10 @@
 package space.nicart.watchbox.ui.extensions
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.remember
+import space.nicart.watchbox.core.ui.adaptiveFocus
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -67,6 +71,8 @@ fun ExtensionsScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
+    val filterInteraction = remember { MutableInteractionSource() }
+    val refreshInteraction = remember { MutableInteractionSource() }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val padding = sectionHorizontalPadding(maxWidth)
@@ -105,7 +111,11 @@ fun ExtensionsScreen(
                                     tokens.colors.surface
                                 },
                             )
-                            .clickable { viewModel.setFilterPanelOpen(true) },
+                            .adaptiveFocus(filterInteraction, RoundedCornerShape(16.dp), scale = false)
+                            .clickable(
+                                interactionSource = filterInteraction,
+                                indication = LocalIndication.current,
+                            ) { viewModel.setFilterPanelOpen(true) },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -125,7 +135,12 @@ fun ExtensionsScreen(
                             .size(40.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(tokens.colors.surface)
-                            .clickable(onClick = viewModel::refresh),
+                            .adaptiveFocus(refreshInteraction, RoundedCornerShape(16.dp), scale = false)
+                            .clickable(
+                                interactionSource = refreshInteraction,
+                                indication = LocalIndication.current,
+                                onClick = viewModel::refresh,
+                            ),
                         contentAlignment = Alignment.Center,
                     ) {
                         if (state.isRefreshing) {
@@ -453,12 +468,18 @@ private fun ActionButton(
     onClick: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
+    val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
             .size(36.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(tokens.colors.surface)
-            .clickable(onClick = onClick),
+            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
