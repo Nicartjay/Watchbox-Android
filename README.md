@@ -38,9 +38,11 @@ chrome.
 - **Settings** — seven accent themes, AMOLED black, auto-play-next, repository
   management, subtitle appearance, and an 18+ toggle
 
-### Android TV
+### Android TV and tablets
 
-A separate build with its own UI, not the phone layout stretched:
+A separate build with its own UI, not the phone layout stretched. It is the
+recommended build on a tablet as well as a television — both have the screen area it
+is designed around:
 
 - **Leanback launcher entry** with a banner, so it appears on the TV home screen
 - **Left navigation rail** that expands on focus, replacing the bottom pill — which
@@ -52,27 +54,59 @@ A separate build with its own UI, not the phone layout stretched:
   that hides the controls before leaving
 - **Voice search**, because typing a title with a remote is nobody's preference
 
-### Tablet
+Landscape-only, and its highlight follows focus rather than touch — see
+[Install](#install) for what that means on a tablet.
 
-- A **navigation rail** above 1000dp instead of the bottom bar, since the bottom
-  edge is the hardest place to reach two-handed in landscape
-- Column counts and padding scale with width from one shared definition
+### Phones
+
+The phone build carries the touch layout: bottom pill navigation, portrait posters,
+and a single-pane detail screen. It also adapts upward if you run it on a tablet
+anyway — a navigation rail and two-pane detail above 1000dp, with column counts and
+padding scaling with width from one shared definition — so nothing is broken there,
+it is simply the smaller-screen design given more room.
 
 ## Install
 
-Two APKs per release, one per form factor:
+Two APKs per release. Pick by screen, not by whether the device is "mobile":
 
-| File | For |
-|---|---|
-| `watchbox-<version>.apk` | Phones and tablets |
-| `watchbox-<version>-tv.apk` | Android TV, Google TV, TV boxes |
+| File | For | Why |
+|---|---|---|
+| `watchbox-<version>.apk` | Phones | Portrait-first, thumb-reachable, touch affordances |
+| `watchbox-<version>-tv.apk` | **Tablets**, Android TV, Google TV, TV boxes | Big-screen layout: landscape, larger artwork, fewer targets per row |
+
+**On a tablet, install the TV APK.** A tablet has the screen area the TV UI is drawn
+for, and it is the better experience on one: landscape 16:9 cards, a focus-following
+backdrop, larger posters and a left navigation rail instead of a bottom bar. The
+phone APK on a tablet is the phone layout given more room.
+
+Two things to know before you do, because neither is a bug report:
+
+- **The TV build is landscape-only.** It is locked to `sensorLandscape`, so it will
+  not rotate to portrait on a tablet. If you hold your tablet in portrait, use the
+  phone APK.
+- **Affordance is focus-based, not touch-based.** Taps work — every control is
+  genuinely clickable — but the highlight and scale follow *focus*, and ripples are
+  switched off because they are invisible at three metres. A tap therefore acts
+  without lighting up. With a Bluetooth keyboard, remote or D-pad attached, the UI
+  behaves exactly as it does on a television.
 
 Grab them from [Releases](../../releases/latest), or download the debug artifacts
 from any [CI run](../../actions/workflows/ci.yml).
 
-The two use different package names, so both can be installed on one device - useful
-for testing the TV UI on a tablet. The in-app updater picks the matching APK by
-filename, so renaming release assets will send devices the wrong build.
+The two use different package names, so both can be installed side by side — worth
+doing on a tablet to compare the two before settling on one.
+
+### Updates after switching
+
+The in-app updater picks its APK from the build's own form factor, decided at compile
+time, and matches release assets by filename. A tablet running the TV build therefore
+keeps getting TV builds, which is what you want. It also means:
+
+- Switching between the two is a manual uninstall and reinstall, since the differing
+  package names make them separate apps rather than an upgrade path. Library and
+  settings do not carry across.
+- Renaming release assets by hand sends devices the wrong build. The `-tv` suffix is
+  load-bearing.
 
 `minSdk` is 24 (Android 7.0); `targetSdk` is 36.
 
@@ -99,7 +133,7 @@ cd Watchbox-Android
 # Point Gradle at your SDK
 echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties
 
-# Phone/tablet, or :app:assembleTvDebug for Android TV
+# Phone build, or :app:assembleTvDebug for TV and tablets
 ./gradlew :app:assembleMobileDebug
 ```
 
@@ -278,7 +312,7 @@ hand-rolled service locator (`AppContainer`) instead of Hilt or Koin.
 ```
 app/src/
 ├── main/kotlin/                  Shared by both builds
-├── mobile/kotlin/                Phone/tablet entry point
+├── mobile/kotlin/                Phone entry point
 └── tv/kotlin/                    TV screens + leanback manifest and banner
 
 app/src/main/kotlin/
@@ -319,7 +353,13 @@ app/src/main/kotlin/
   no width, so an outline-width setting is impossible without rendering the cues.
 - **Two flavors rather than one combined APK.** A single build carrying both
   `LAUNCHER` and `LEANBACK_LAUNCHER` works, but it ships the TV UI to every phone and
-  makes the two impossible to install side by side for testing.
+  makes the two impossible to install side by side. Separate builds also let a big
+  screen choose the big-screen UI: a tablet installs the TV APK deliberately, rather
+  than having the layout picked for it by a width check.
+- **The TV APK stays installable on touch devices.** `android.software.leanback` is
+  declared `required="false"` and `LAUNCHER` is kept alongside `LEANBACK_LAUNCHER`, so
+  the TV build installs and opens on a tablet. Requiring leanback would make it
+  uninstallable there, which is why it is not required.
 - **Form factor is tracked separately from width.** A 1080p television and a 1080p
   tablet report near-identical dp widths yet need opposite treatments: the TV is read
   at three metres with a D-pad and needs *fewer, larger* targets. Sizing off width
