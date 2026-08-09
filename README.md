@@ -38,10 +38,41 @@ chrome.
 - **Settings** — seven accent themes, AMOLED black, auto-play-next, repository
   management, subtitle appearance, and an 18+ toggle
 
+### Android TV
+
+A separate build with its own UI, not the phone layout stretched:
+
+- **Leanback launcher entry** with a banner, so it appears on the TV home screen
+- **Left navigation rail** that expands on focus, replacing the bottom pill — which
+  sat inside the overscan region a television can physically crop
+- **Backdrop that follows focus**, using TMDB backdrops and title logos; landscape
+  16:9 cards rather than portrait posters
+- **Full D-pad navigation**, with visible focus at three-metre viewing distance
+- **Remote playback control** — directional seek, media transport keys, and Back
+  that hides the controls before leaving
+- **Voice search**, because typing a title with a remote is nobody's preference
+
+### Tablet
+
+- A **navigation rail** above 1000dp instead of the bottom bar, since the bottom
+  edge is the hardest place to reach two-handed in landscape
+- Column counts and padding scale with width from one shared definition
+
 ## Install
 
-Grab the APK from [Releases](../../releases/latest), or download the debug build
-artifact from any [CI run](../../actions/workflows/ci.yml).
+Two APKs per release, one per form factor:
+
+| File | For |
+|---|---|
+| `watchbox-<version>.apk` | Phones and tablets |
+| `watchbox-<version>-tv.apk` | Android TV, Google TV, TV boxes |
+
+Grab them from [Releases](../../releases/latest), or download the debug artifacts
+from any [CI run](../../actions/workflows/ci.yml).
+
+The two use different package names, so both can be installed on one device - useful
+for testing the TV UI on a tablet. The in-app updater picks the matching APK by
+filename, so renaming release assets will send devices the wrong build.
 
 `minSdk` is 24 (Android 7.0); `targetSdk` is 36.
 
@@ -68,10 +99,12 @@ cd Watchbox-Android
 # Point Gradle at your SDK
 echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties
 
-./gradlew :app:assembleDebug
+# Phone/tablet, or :app:assembleTvDebug for Android TV
+./gradlew :app:assembleMobileDebug
 ```
 
-The APK lands in `app/build/outputs/apk/debug/`.
+The APKs land in `app/build/outputs/apk/mobile/debug/` and
+`app/build/outputs/apk/tv/debug/`.
 
 ### Configuration
 
@@ -243,6 +276,11 @@ Single-module Android app, no Kotlin Multiplatform. Plain layering with a
 hand-rolled service locator (`AppContainer`) instead of Hilt or Koin.
 
 ```
+app/src/
+├── main/kotlin/                  Shared by both builds
+├── mobile/kotlin/                Phone/tablet entry point
+└── tv/kotlin/                    TV screens + leanback manifest and banner
+
 app/src/main/kotlin/
 ├── eu/kanade/tachiyomi/          THE EXTENSION ABI — see above, do not rename
 │   ├── animesource/              AnimeSource, AnimeHttpSource, models
@@ -279,6 +317,16 @@ app/src/main/kotlin/
 - **Subtitles are drawn in Compose, not by Media3's `SubtitleView`.**
   `SubtitlePainter` hardcodes the outline to 2dp and `CaptionStyleCompat` exposes
   no width, so an outline-width setting is impossible without rendering the cues.
+- **Two flavors rather than one combined APK.** A single build carrying both
+  `LAUNCHER` and `LEANBACK_LAUNCHER` works, but it ships the TV UI to every phone and
+  makes the two impossible to install side by side for testing.
+- **Form factor is tracked separately from width.** A 1080p television and a 1080p
+  tablet report near-identical dp widths yet need opposite treatments: the TV is read
+  at three metres with a D-pad and needs *fewer, larger* targets. Sizing off width
+  alone gets the TV wrong every time.
+- **Focus affordance lives in the shared components,** gated on form factor. On a
+  touchscreen the finger is the cursor, so an outline left after a tap reads as a
+  rendering fault; on a TV, invisible focus is unusable.
 
 ### Testing
 
@@ -289,8 +337,12 @@ in ways that look like missing data rather than errors. Anything better checked 
 looking at the screen is not unit-tested.
 
 ```bash
-./gradlew :app:testDebugUnitTest
+./gradlew :app:testMobileDebugUnitTest
 ```
+
+Flavor-aware task names. `assembleRelease` no longer exists; use
+`assembleMobileRelease` and `assembleTvRelease`, or `assembleMobileDebug` /
+`assembleTvDebug`.
 
 ## Tech stack
 
