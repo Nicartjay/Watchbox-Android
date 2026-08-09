@@ -69,10 +69,14 @@ class DlnaDescriptionParser(private val client: OkHttpClient) {
 
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return null
-            // Capped: a hostile or broken device could otherwise stream forever.
-            response.body.source().use { source ->
-                source.readString(MAX_DESCRIPTION_BYTES, Charsets.UTF_8)
-            }
+
+            // peekBody caps the read. The obvious-looking
+            // `source().readString(MAX, UTF_8)` is NOT a cap: okio treats the
+            // byte count as an exact length and throws EOFException when the body
+            // is shorter, and a description is only a few KB - so that form
+            // discarded every device it ever fetched, silently, because the
+            // failure was swallowed as a fetch error.
+            response.peekBody(MAX_DESCRIPTION_BYTES).string()
         }
     }.onFailure {
         Log.d(TAG, "description fetch failed for $location: ${it.javaClass.simpleName}")

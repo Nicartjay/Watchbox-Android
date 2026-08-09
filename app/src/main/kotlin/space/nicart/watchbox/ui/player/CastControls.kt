@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import space.nicart.watchbox.R
 import space.nicart.watchbox.cast.CastDevice
+import space.nicart.watchbox.cast.CastProtocol
 import space.nicart.watchbox.cast.CastState
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.core.ui.wbType
@@ -89,6 +90,7 @@ fun CastPanel(
     visible: Boolean,
     onSelectDevice: (CastDevice) -> Unit,
     onCastToChromecast: () -> Unit,
+    onSendToExternal: () -> Unit,
     onStopCasting: () -> Unit,
     onRescan: () -> Unit,
     onDismiss: () -> Unit,
@@ -208,39 +210,78 @@ fun CastPanel(
                     Spacer(Modifier.height(8.dp))
                 }
 
-                when {
-                    state.devices.isNotEmpty() -> LazyColumn(
-                        modifier = Modifier.fillMaxWidth().weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(items = state.devices, key = { it.id }) { device ->
-                            CastRow(
-                                label = device.name,
-                                selected = false,
-                                onClick = { onSelectDevice(device) },
-                            )
+                // Grouped by protocol so a long list stays readable, and so it is
+                // obvious which devices are Chromecasts - they behave differently,
+                // notably being the only ones that reliably play HLS.
+                Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    if (state.devices.isNotEmpty()) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            val chromecasts = state.devices
+                                .filter { it.protocol == CastProtocol.CHROMECAST }
+                            val renderers = state.devices
+                                .filter { it.protocol == CastProtocol.DLNA }
+
+                            if (chromecasts.isNotEmpty()) {
+                                item(key = "cc-label") {
+                                    GroupLabel(stringResource(R.string.cast_group_chromecast))
+                                }
+                                items(items = chromecasts, key = { it.id }) { device ->
+                                    CastRow(
+                                        label = device.name,
+                                        selected = false,
+                                        onClick = { onSelectDevice(device) },
+                                    )
+                                }
+                            }
+
+                            if (renderers.isNotEmpty()) {
+                                item(key = "dlna-label") {
+                                    GroupLabel(stringResource(R.string.cast_group_dlna))
+                                }
+                                items(items = renderers, key = { it.id }) { device ->
+                                    CastRow(
+                                        label = device.name,
+                                        selected = false,
+                                        onClick = { onSelectDevice(device) },
+                                    )
+                                }
+                            }
                         }
-                    }
-
-                    state.isDiscovering -> Text(
-                        text = stringResource(R.string.cast_searching),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = tokens.colors.textMuted,
-                    )
-
-                    else -> Column {
+                    } else if (state.isDiscovering) {
+                        Text(
+                            text = stringResource(R.string.cast_searching),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = tokens.colors.textMuted,
+                        )
+                    } else {
                         Text(
                             text = stringResource(R.string.cast_none_found),
                             style = MaterialTheme.typography.bodyMedium,
                             color = tokens.colors.textMuted,
                         )
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(6.dp))
                         Text(
-                            text = stringResource(R.string.cast_chromecast_hint),
+                            text = stringResource(R.string.cast_none_found_hint),
                             style = MaterialTheme.typography.labelSmall,
                             color = tokens.colors.textMuted,
                         )
                     }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    // Always offered, found devices or not: other apps support
+                    // receivers this one does not, and that is most valuable exactly
+                    // when nothing was found here.
+                    GroupLabel(stringResource(R.string.cast_group_other))
+                    Spacer(Modifier.height(6.dp))
+                    CastRow(
+                        label = stringResource(R.string.cast_send_external),
+                        selected = false,
+                        onClick = onSendToExternal,
+                    )
                 }
             }
         }
@@ -289,3 +330,13 @@ private fun CastRow(
  */
 private val CastState.canCastToChromecast: Boolean
     get() = !isCasting && deviceName != null
+
+@Composable
+private fun GroupLabel(text: String) {
+    Text(
+        text = text.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.wb.colors.textMuted,
+        modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
+    )
+}

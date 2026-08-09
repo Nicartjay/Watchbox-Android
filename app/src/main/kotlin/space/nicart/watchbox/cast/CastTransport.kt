@@ -82,7 +82,15 @@ data class CastSubtitle(
 data class CastDevice(
     val id: String,
     val name: String,
-    val host: String,
+    /**
+     * The device's address, when known.
+     *
+     * Null for a Chromecast that has not been connected yet: the route's extras do
+     * not always carry an address, and the SDK only reports one once a session
+     * exists. It is needed solely to choose the interface the proxy binds to, which
+     * happens after connecting, so a null here is not a problem to solve earlier.
+     */
+    val host: String?,
     val protocol: CastProtocol,
 )
 

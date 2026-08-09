@@ -61,6 +61,7 @@
     <string name="settings_subtitle_background">Background style</string>
     <string name="settings_subtitle_color">Text colour</string>
     <string name="settings_subtitle_opacity">Background opacity</string>
+    <string name="settings_subtitle_edge_width">Outline / shadow width</string>
     <string name="settings_subtitle_bold">Bold subtitle text</string>
     <string name="source_popular">Popular</string>
     <string name="source_latest">Latest</string>
@@ -110,6 +111,7 @@
     <string name="player_episodes">Episodes</string>
     <string name="player_skip_intro">Skip Intro</string>
     <string name="player_skip_outro">Skip Outro</string>
+    <string name="player_subtitle_appearance">Subtitle appearance</string>
     <string name="player_subtitles_off">Off</string>
 
     <!-- Settings -->
@@ -131,6 +133,11 @@
     <string name="cast_playing_on">Playing on %1$s</string>
     <string name="cast_stop">Stop casting</string>
     <string name="cast_button">Cast</string>
+    <string name="cast_group_chromecast">Chromecast</string>
+    <string name="cast_group_dlna">Smart TV (DLNA)</string>
+    <string name="cast_group_other">Other apps</string>
+    <string name="cast_send_external">Send to Web Video Caster</string>
+    <string name="cast_none_found_hint">Make sure your TV is on the same Wi-Fi network, then rescan.</string>
     <string name="cast_chromecast_hint">Use the Cast button in your notification shade or Google Home to connect a Chromecast, then reopen this menu.</string>
     <string name="cast_load_to_connected">Cast to connected Chromecast</string>
 

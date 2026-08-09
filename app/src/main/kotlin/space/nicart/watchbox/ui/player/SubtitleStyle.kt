@@ -46,6 +46,34 @@ enum class SubtitleSize(val label: String, val fraction: Float) {
 }
 
 /**
+ * How heavy the outline or drop shadow is.
+ *
+ * Media3's own renderer offers no control here - `SubtitlePainter` hardcodes the
+ * outline to 2dp and `CaptionStyleCompat` exposes no width - which is why subtitles
+ * are drawn by [ComposeSubtitleView] instead.
+ *
+ * Width matters more than it sounds: a thin outline vanishes against detailed video
+ * at a distance, and a heavy one closes up the counters of small text. The right
+ * value depends on text size and viewing distance, so it has to be a choice.
+ */
+enum class SubtitleEdgeWidth(
+    val label: String,
+    /** Outline stroke half-width in dp. */
+    val outlineDp: Float,
+    /** Drop-shadow offset in dp. */
+    val shadowDp: Float,
+    /** Drop-shadow blur in dp. */
+    val shadowBlurDp: Float,
+) {
+    THIN("Thin", outlineDp = 0.75f, shadowDp = 1f, shadowBlurDp = 1.5f),
+
+    /** Approximates Media3's fixed 2dp outline. */
+    MEDIUM("Medium", outlineDp = 1.5f, shadowDp = 2f, shadowBlurDp = 3f),
+    THICK("Thick", outlineDp = 2.5f, shadowDp = 3f, shadowBlurDp = 4f),
+    HEAVY("Heavy", outlineDp = 4f, shadowDp = 4f, shadowBlurDp = 6f),
+}
+
+/**
  * Builds the Media3 caption style for the current settings.
  *
  * `windowColor` is what distinguishes a box behind the text from a band across the
@@ -135,7 +163,13 @@ data class SubtitleStyle(
     val textColor: Int,
     val backgroundOpacity: Float,
     val bold: Boolean,
-)
+    val edgeWidth: SubtitleEdgeWidth = SubtitleEdgeWidth.MEDIUM,
+) {
+    /** True when [edgeWidth] affects anything. */
+    val usesEdge: Boolean
+        get() = background == SubtitleBackground.OUTLINE ||
+            background == SubtitleBackground.DROP_SHADOW
+}
 
 /** Reads the subtitle appearance out of persisted settings. */
 fun AppSettings.subtitleStyle(): SubtitleStyle = SubtitleStyle(
@@ -144,6 +178,7 @@ fun AppSettings.subtitleStyle(): SubtitleStyle = SubtitleStyle(
     textColor = subtitleTextColor,
     backgroundOpacity = subtitleBackgroundOpacity,
     bold = subtitleBold,
+    edgeWidth = subtitleEdgeWidth,
 )
 
 /** Preset text colours. White is first because it is what nearly everyone wants. */

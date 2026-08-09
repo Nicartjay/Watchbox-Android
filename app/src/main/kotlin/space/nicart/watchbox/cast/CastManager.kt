@@ -5,6 +5,8 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,10 +21,13 @@ import space.nicart.watchbox.cast.dlna.SsdpDiscovery
 data class CastState(
     val isCasting: Boolean = false,
     val deviceName: String? = null,
+    /** Chromecast and DLNA devices in one list, Chromecast first. */
     val devices: List<CastDevice> = emptyList(),
     val isDiscovering: Boolean = false,
     val errorMessage: String? = null,
-)
+) {
+    val hasDevices: Boolean get() = devices.isNotEmpty()
+}
 
 /**
  * Single entry point for casting, over either protocol.
@@ -49,9 +54,20 @@ class CastManager(
 
     private val ssdp = SsdpDiscovery(context)
     private val descriptions = DlnaDescriptionParser(client)
+    private val routes = ChromecastDiscovery(context)
 
     /** Renderers by device id, so a picker selection can be resolved back. */
     private val renderers = mutableMapOf<String, DlnaRenderer>()
+
+    /**
+     * The two protocols' results, kept apart internally.
+     *
+     * Chromecast arrives asynchronously via router callbacks while DLNA completes as
+     * one batch, so merging on write would let a late Chromecast callback overwrite
+     * the DLNA results or vice versa.
+     */
+    private var chromecastDevices = emptyList<CastDevice>()
+    private var dlnaDevices = emptyList<CastDevice>()
 
     private val _state = MutableStateFlow(CastState())
     val state: StateFlow<CastState> = _state.asStateFlow()
@@ -62,6 +78,14 @@ class CastManager(
     val isCasting: Boolean get() = active?.isConnected == true
 
     fun initialise() {
+        // Started once and left running: the router only discovers while a callback
+        // is registered, and a device that appears between scans should show up
+        // without the user pressing rescan.
+        routes.start { discovered ->
+            chromecastDevices = discovered
+            publishDevices()
+        }
+
         chromecast.initialise { connected ->
             // A Chromecast session can also start from the system UI, so state is
             // driven by the SDK rather than only by our own picker.
@@ -80,6 +104,7 @@ class CastManager(
     }
 
     fun release() {
+        routes.stop()
         chromecast.release()
         proxy.stop()
         scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
@@ -88,34 +113,60 @@ class CastManager(
     // ------------------------------------------------------------- discovery
 
     /**
-     * Scans for DLNA renderers.
+     * Scans for DLNA renderers and refreshes the Chromecast scan.
      *
-     * Chromecasts are not listed here: the Cast SDK owns their discovery and
-     * presents its own picker, and duplicating it would mean two lists that can
-     * disagree.
+     * Both protocols end up in one list. They were previously separate - Chromecast
+     * was not listed at all, on the assumption that the SDK's own picker would be
+     * shown, which the app never did - so the panel was empty unless a session had
+     * already been started from the notification shade.
+     *
+     * A hard timeout bounds the whole scan: description fetches fan out per device
+     * with the shared client's generous timeouts, and one unresponsive device could
+     * otherwise leave the spinner running for minutes.
      */
     fun discover() {
         scope.launch {
             _state.value = _state.value.copy(isDiscovering = true, errorMessage = null)
 
-            val locations = ssdp.discoverLocations()
-            val found = descriptions.resolveAll(locations)
+            // Restarted so a device that appeared since the last scan is picked up
+            // even if the router sent no callback.
+            routes.start { discovered ->
+                chromecastDevices = discovered
+                publishDevices()
+            }
+
+            val found = withTimeoutOrNull(DISCOVERY_TIMEOUT_MS) {
+                val locations = ssdp.discoverLocations()
+                descriptions.resolveAll(locations)
+            }.orEmpty()
 
             renderers.clear()
             found.forEach { renderers[it.avTransportControlUrl] = it }
 
-            _state.value = _state.value.copy(
-                isDiscovering = false,
-                devices = found.map {
-                    CastDevice(
-                        id = it.avTransportControlUrl,
-                        name = it.friendlyName,
-                        host = it.host,
-                        protocol = CastProtocol.DLNA,
-                    )
-                },
-            )
+            dlnaDevices = found.map {
+                CastDevice(
+                    id = it.avTransportControlUrl,
+                    name = it.friendlyName,
+                    host = it.host,
+                    protocol = CastProtocol.DLNA,
+                )
+            }
+
+            Log.i(TAG, "discovery: ${chromecastDevices.size} cast, ${dlnaDevices.size} dlna")
+
+            _state.value = _state.value.copy(isDiscovering = false)
+            publishDevices()
         }
+    }
+
+    /**
+     * Merges both protocols into the published list.
+     *
+     * Chromecast first: it is the more capable receiver, handles HLS, and is what
+     * most users have.
+     */
+    private fun publishDevices() {
+        _state.value = _state.value.copy(devices = chromecastDevices + dlnaDevices)
     }
 
     // --------------------------------------------------------------- session
@@ -127,6 +178,65 @@ class CastManager(
      * the phone left off rather than restarting.
      */
     fun castTo(device: CastDevice, media: CastMedia, positionMs: Long) {
+        when (device.protocol) {
+            CastProtocol.CHROMECAST -> castToChromecastDevice(device, media, positionMs)
+            CastProtocol.DLNA -> castToDlna(device, media, positionMs)
+        }
+    }
+
+    /**
+     * Selects a Chromecast route and loads once the session is up.
+     *
+     * Selecting a route is asynchronous - the SDK connects, launches the receiver
+     * app and only then has a media client - so the load is deferred until the
+     * session reports connected rather than attempted immediately.
+     */
+    private fun castToChromecastDevice(device: CastDevice, media: CastMedia, positionMs: Long) {
+        if (!routes.select(device.id)) {
+            fail("That device is no longer available.")
+            return
+        }
+
+        scope.launch {
+            val connected = awaitChromecastSession()
+            if (!connected) {
+                fail("Could not connect to ${device.name}.")
+                return@launch
+            }
+
+            active = chromecast
+            val prepared = prepare(media, chromecast.connectedDeviceHost() ?: device.host)
+            if (prepared == null) {
+                fail("Could not reach this device from your network.")
+                active = null
+                return@launch
+            }
+
+            if (chromecast.load(prepared, positionMs)) {
+                _state.value = _state.value.copy(
+                    isCasting = true,
+                    deviceName = chromecast.deviceName ?: device.name,
+                    errorMessage = null,
+                )
+            } else {
+                proxy.stop()
+                active = null
+                fail("${device.name} refused the stream.")
+            }
+        }
+    }
+
+    /** Polls for the session rather than adding a second listener. */
+    private suspend fun awaitChromecastSession(): Boolean {
+        val deadline = System.currentTimeMillis() + SESSION_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            if (chromecast.isConnected) return true
+            delay(SESSION_POLL_MS)
+        }
+        return false
+    }
+
+    private fun castToDlna(device: CastDevice, media: CastMedia, positionMs: Long) {
         scope.launch {
             val renderer = renderers[device.id]
             if (renderer == null) {
@@ -192,7 +302,11 @@ class CastManager(
     private fun prepare(media: CastMedia, deviceHost: String?): CastMedia? {
         if (media.headers.isEmpty()) return media
 
-        val host = deviceHost ?: return null
+        // Falls back to the general outbound address when the receiver's own
+        // address is unknown. A Chromecast route does not always expose one, and
+        // failing outright here would block casting any header-requiring stream
+        // to it - whereas the LAN address is almost always the right interface.
+        val host = deviceHost ?: CastNetwork.outboundAddress() ?: return null
         if (!proxy.isRunning && proxy.start(host) == null) return null
 
         val proxied = proxy.publish(
@@ -242,5 +356,12 @@ class CastManager(
 
     private companion object {
         const val TAG = "CastManager"
+
+        /** Bounds the whole scan; per-device fetches have generous own timeouts. */
+        const val DISCOVERY_TIMEOUT_MS = 12_000L
+
+        /** How long to wait for a selected route to become a live session. */
+        const val SESSION_TIMEOUT_MS = 15_000L
+        const val SESSION_POLL_MS = 250L
     }
 }

@@ -299,6 +299,21 @@ fun SettingsScreen(
                         onSelect = viewModel::setSubtitleBackground,
                     )
 
+                    // Only shown when an edge is actually drawn.
+                    if (style.usesEdge) {
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            text = stringResource(R.string.settings_subtitle_edge_width),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = tokens.colors.textMuted,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        SubtitleEdgeWidthRow(
+                            selected = style.edgeWidth,
+                            onSelect = viewModel::setSubtitleEdgeWidth,
+                        )
+                    }
+
                     Spacer(Modifier.height(14.dp))
                     Text(
                         text = stringResource(R.string.settings_subtitle_color),

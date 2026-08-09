@@ -34,6 +34,7 @@ import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.ui.components.WbChip
 import space.nicart.watchbox.ui.player.SUBTITLE_TEXT_COLORS
 import space.nicart.watchbox.ui.player.SubtitleBackground
+import space.nicart.watchbox.ui.player.SubtitleEdgeWidth
 import space.nicart.watchbox.ui.player.SubtitleSize
 import space.nicart.watchbox.ui.player.SubtitleStyle
 
@@ -107,11 +108,17 @@ fun SubtitlePreview(
                     shadow = when (style.background) {
                         // Compose has no true outline, so a tight opaque shadow
                         // stands in for one. It reads the same at this size.
-                        SubtitleBackground.OUTLINE ->
-                            Shadow(Color.Black, Offset(0f, 0f), blurRadius = 6f)
+                        SubtitleBackground.OUTLINE -> Shadow(
+                            Color.Black,
+                            Offset(0f, 0f),
+                            blurRadius = style.edgeWidth.outlineDp * 3f,
+                        )
 
-                        SubtitleBackground.DROP_SHADOW ->
-                            Shadow(Color.Black.copy(alpha = 0.85f), Offset(3f, 3f), 4f)
+                        SubtitleBackground.DROP_SHADOW -> Shadow(
+                            Color.Black.copy(alpha = 0.85f),
+                            Offset(style.edgeWidth.shadowDp, style.edgeWidth.shadowDp),
+                            style.edgeWidth.shadowBlurDp,
+                        )
 
                         else -> null
                     },
@@ -252,3 +259,21 @@ fun SubtitleOpacityRow(
 }
 
 private val OPACITY_STEPS = listOf(0.3f, 0.6f, 0.8f, 1f)
+
+/** Outline / shadow weight chips. Only meaningful when an edge is drawn. */
+@Composable
+fun SubtitleEdgeWidthRow(
+    selected: SubtitleEdgeWidth,
+    onSelect: (SubtitleEdgeWidth) -> Unit,
+) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(SubtitleEdgeWidth.entries.size) { index ->
+            val width = SubtitleEdgeWidth.entries[index]
+            WbChip(
+                label = width.label,
+                selected = width == selected,
+                onClick = { onSelect(width) },
+            )
+        }
+    }
+}

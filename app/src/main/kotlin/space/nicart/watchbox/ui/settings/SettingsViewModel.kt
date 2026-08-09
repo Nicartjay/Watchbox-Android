@@ -15,6 +15,7 @@ import space.nicart.watchbox.core.ui.AppTheme
 import space.nicart.watchbox.data.local.AppSettings
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.ui.player.SubtitleBackground
+import space.nicart.watchbox.ui.player.SubtitleEdgeWidth
 import space.nicart.watchbox.ui.player.SubtitleSize
 import space.nicart.watchbox.data.remote.AppUpdate
 import space.nicart.watchbox.data.remote.UpdateChecker
@@ -142,6 +143,10 @@ class SettingsViewModel(
 
     fun setSubtitleBackgroundOpacity(opacity: Float) {
         viewModelScope.launch { store.setSubtitleBackgroundOpacity(opacity) }
+    }
+
+    fun setSubtitleEdgeWidth(width: SubtitleEdgeWidth) {
+        viewModelScope.launch { store.setSubtitleEdgeWidth(width) }
     }
 
     fun setSubtitleBold(bold: Boolean) {

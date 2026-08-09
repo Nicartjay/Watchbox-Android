@@ -24,6 +24,19 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <!--
+      Required for Cast discovery on Android 13+. The Cast SDK scans the local
+      network for receivers, which counts as deriving nearby-device location, so
+      without this the router returns no routes on a modern device.
+
+      neverForLocation tells the system we do not use it to locate the user, which
+      avoids the runtime location permission the scan would otherwise imply.
+    -->
+    <uses-permission
+        android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="33" />
+
+    <!--
       Deliberately absent: QUERY_ALL_PACKAGES. Extensions live in this app's
       private storage, so package enumeration is never required.
     -->

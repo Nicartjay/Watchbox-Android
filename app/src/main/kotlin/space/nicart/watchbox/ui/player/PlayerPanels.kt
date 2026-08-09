@@ -30,6 +30,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material3.Icon
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -63,6 +67,12 @@ fun PlayerPanels(
     onSelectSubtitle: (Int) -> Unit,
     onSelectSpeed: (Float) -> Unit,
     onSelectEpisode: (EpisodeEntry) -> Unit,
+    onOpenSubtitleSettings: () -> Unit,
+    subtitleStyle: SubtitleStyle,
+    onSetSubtitleSize: (SubtitleSize) -> Unit,
+    onSetSubtitleBackground: (SubtitleBackground) -> Unit,
+    onSetSubtitleEdgeWidth: (SubtitleEdgeWidth) -> Unit,
+    onSetSubtitleColor: (Int) -> Unit,
 ) {
     val visible = panel != PlayerPanel.NONE
 
@@ -97,13 +107,27 @@ fun PlayerPanels(
                         },
                     )
 
-                    PlayerPanel.SUBTITLES -> PanelList(
-                        title = stringResource(R.string.player_subtitles),
-                        entries = listOf(stringResource(R.string.player_subtitles_off)) +
-                            state.subtitles.map { it.label },
-                        selectedIndex = state.selectedSubtitleIndex + 1,
-                        onSelect = { onSelectSubtitle(it - 1) },
-                    )
+                    // Track choice and appearance in one panel: both are "the
+                    // subtitle settings" as far as the user is concerned, and
+                    // appearance is most often adjusted while watching something
+                    // whose subtitles are hard to read.
+                    PlayerPanel.SUBTITLES -> Column {
+                        PanelList(
+                            title = stringResource(R.string.player_subtitles),
+                            entries = listOf(stringResource(R.string.player_subtitles_off)) +
+                                state.subtitles.map { it.label },
+                            selectedIndex = state.selectedSubtitleIndex + 1,
+                            onSelect = { onSelectSubtitle(it - 1) },
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+
+                        PanelActionRow(
+                            label = stringResource(R.string.player_subtitle_appearance),
+                            onClick = onOpenSubtitleSettings,
+                        )
+                    }
 
                     PlayerPanel.SPEED -> PanelList(
                         title = stringResource(R.string.player_speed),
@@ -115,6 +139,14 @@ fun PlayerPanels(
                     PlayerPanel.EPISODES -> EpisodePanel(
                         state = state,
                         onSelect = onSelectEpisode,
+                    )
+
+                    PlayerPanel.SUBTITLE_STYLE -> SubtitleStylePanel(
+                        style = subtitleStyle,
+                        onSetSize = onSetSubtitleSize,
+                        onSetBackground = onSetSubtitleBackground,
+                        onSetEdgeWidth = onSetSubtitleEdgeWidth,
+                        onSetColor = onSetSubtitleColor,
                     )
 
                     PlayerPanel.NONE -> Unit
@@ -145,6 +177,7 @@ private fun PanelList(
     entries: List<String>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.wb
 
@@ -263,3 +296,145 @@ private fun EpisodePanel(
 }
 
 private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
+
+/**
+ * A plain action row for the panel footer.
+ *
+ * Styled unlike the selectable rows above it: it navigates rather than selecting,
+ * and making it look selectable would suggest it is another subtitle track.
+ */
+@Composable
+private fun PanelActionRow(label: String, onClick: () -> Unit) {
+    val tokens = MaterialTheme.wb
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(tokens.colors.surfaceCard)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Tune,
+            contentDescription = null,
+            tint = tokens.colors.accent,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = tokens.colors.textPrimary,
+        )
+    }
+}
+
+/**
+ * Subtitle appearance, adjusted without leaving the player.
+ *
+ * Only the options worth changing mid-episode are here: size, background style,
+ * edge weight and colour. Opacity and bold live in Settings, where there is room for
+ * them and where they are rarely the thing that needs fixing right now.
+ */
+@Composable
+private fun SubtitleStylePanel(
+    style: SubtitleStyle,
+    onSetSize: (SubtitleSize) -> Unit,
+    onSetBackground: (SubtitleBackground) -> Unit,
+    onSetEdgeWidth: (SubtitleEdgeWidth) -> Unit,
+    onSetColor: (Int) -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+
+    Column(
+        modifier = Modifier.verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.player_subtitle_appearance),
+            style = MaterialTheme.typography.titleLarge,
+            color = tokens.colors.textPrimary,
+        )
+
+        PanelSectionLabel(stringResource(R.string.settings_subtitle_size))
+        SubtitleSize.entries.forEach { option ->
+            PanelChoiceRow(
+                label = option.label,
+                selected = style.size == option,
+                onClick = { onSetSize(option) },
+            )
+        }
+
+        PanelSectionLabel(stringResource(R.string.settings_subtitle_background))
+        SubtitleBackground.entries.forEach { option ->
+            PanelChoiceRow(
+                label = option.label,
+                selected = style.background == option,
+                onClick = { onSetBackground(option) },
+            )
+        }
+
+        // Hidden unless it applies: an edge width means nothing with no edge drawn.
+        if (style.usesEdge) {
+            PanelSectionLabel(stringResource(R.string.settings_subtitle_edge_width))
+            SubtitleEdgeWidth.entries.forEach { option ->
+                PanelChoiceRow(
+                    label = option.label,
+                    selected = style.edgeWidth == option,
+                    onClick = { onSetEdgeWidth(option) },
+                )
+            }
+        }
+
+        PanelSectionLabel(stringResource(R.string.settings_subtitle_color))
+        SUBTITLE_TEXT_COLORS.forEach { (name, color) ->
+            PanelChoiceRow(
+                label = name,
+                selected = style.textColor == color,
+                onClick = { onSetColor(color) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun PanelSectionLabel(text: String) {
+    Text(
+        text = text.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.wb.colors.textMuted,
+        modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
+    )
+}
+
+@Composable
+private fun PanelChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    val tokens = MaterialTheme.wb
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) tokens.colors.accent else tokens.colors.surface)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (selected) tokens.colors.onAccent else tokens.colors.textSecondary,
+            modifier = Modifier.weight(1f),
+        )
+        if (selected) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = null,
+                tint = tokens.colors.onAccent,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}

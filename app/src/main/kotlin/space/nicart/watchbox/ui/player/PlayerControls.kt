@@ -104,7 +104,22 @@ fun playerMetricsFor(width: Dp): PlayerMetrics = when {
  * No audio-track or alternate-host panels: the lib-14 extension ABI exposes
  * neither, so offering them would be dead UI.
  */
-enum class PlayerPanel { NONE, QUALITY, SUBTITLES, SPEED, EPISODES }
+enum class PlayerPanel {
+    NONE,
+    QUALITY,
+    SUBTITLES,
+
+    /**
+     * Subtitle appearance, opened from the subtitle panel.
+     *
+     * A panel rather than navigation to Settings: leaving the player tears down the
+     * surface and loses the position, and appearance is exactly the setting you want
+     * to adjust against the video you are watching.
+     */
+    SUBTITLE_STYLE,
+    SPEED,
+    EPISODES,
+}
 
 @Composable
 fun PlayerControlsOverlay(

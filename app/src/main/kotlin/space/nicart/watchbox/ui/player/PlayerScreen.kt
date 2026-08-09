@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -38,6 +40,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.cast.CastManager
+import space.nicart.watchbox.cast.CastPermissions
+import space.nicart.watchbox.cast.ExternalCast
 import space.nicart.watchbox.cast.CastMedia
 import space.nicart.watchbox.cast.CastSubtitle
 import androidx.media3.common.PlaybackException
@@ -86,6 +90,10 @@ fun PlayerScreen(
         backgroundOpacity = 0.6f,
         bold = false,
     ),
+    onSetSubtitleSize: (SubtitleSize) -> Unit = {},
+    onSetSubtitleBackground: (SubtitleBackground) -> Unit = {},
+    onSetSubtitleEdgeWidth: (SubtitleEdgeWidth) -> Unit = {},
+    onSetSubtitleColor: (Int) -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -122,6 +130,14 @@ fun PlayerScreen(
 
     val castState by castManager.state.collectAsStateWithLifecycle()
 
+    // Discovery is retried on grant, so the list fills in without the user having
+    // to close and reopen the panel.
+    val nearbyPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) castManager.discover()
+    }
+
     // Local playback must stop while casting or audio plays from both the phone
     // and the TV; it resumes when the session ends.
     LaunchedEffect(castState.isCasting) {
@@ -137,26 +153,12 @@ fun PlayerScreen(
         playerView?.player = exoPlayer
     }
 
-    // Subtitle appearance. Applied imperatively because Media3 renders cues in its
-    // own SubtitleView; keyed on the whole style so an unrelated settings change
-    // does not re-apply it.
-    LaunchedEffect(playerView, subtitleStyle) {
-        playerView?.subtitleView?.apply {
-            // Embedded styles are the ones baked into the subtitle track. They are
-            // disabled so the user's choice actually wins - otherwise a track that
-            // specifies its own colours silently overrides these settings.
-            setApplyEmbeddedStyles(false)
-            setApplyEmbeddedFontSizes(false)
-
-            setStyle(
-                subtitleCaptionStyle(
-                    background = subtitleStyle.background,
-                    textColor = subtitleStyle.textColor,
-                    opacity = subtitleStyle.backgroundOpacity,
-                ),
-            )
-            setFractionalTextSize(subtitleStyle.size.fraction)
-        }
+    // Media3's own subtitle view is hidden and cues are drawn by
+    // ComposeSubtitleView instead. SubtitlePainter hardcodes the outline width to
+    // 2dp with no API to change it, so honouring an outline-width setting is only
+    // possible by rendering the cues ourselves.
+    LaunchedEffect(playerView) {
+        playerView?.subtitleView?.visibility = android.view.View.GONE
     }
 
     var isPlaying by remember { mutableStateOf(false) }
@@ -455,6 +457,14 @@ fun PlayerScreen(
                 }
         )
 
+        // Above the video, below the controls: cues must not be covered by the
+        // scrubber, but must not sit above a dialog either.
+        ComposeSubtitleView(
+            player = exoPlayer,
+            style = subtitleStyle,
+            modifier = Modifier.fillMaxSize(),
+        )
+
         // --- states
         when {
             state.isResolving -> WbLoading()
@@ -508,6 +518,13 @@ fun PlayerScreen(
                 isCasting = castState.isCasting,
                 onOpenCast = {
                     castPanelOpen = true
+                    // Requested here rather than at startup: it is only needed for
+                    // discovery, and asking before the user shows any interest in
+                    // casting is the kind of prompt people reflexively deny.
+                    CastPermissions.required
+                        ?.takeIf { !CastPermissions.isGranted(context) }
+                        ?.let(nearbyPermission::launch)
+
                     // Rescan on open: renderers come and go, so a list cached
                     // from a previous session is usually stale.
                     castManager.discover()
@@ -534,6 +551,16 @@ fun PlayerScreen(
                     positionMs = exoPlayer.currentPosition,
                 )
                 exoPlayer.pause()
+                castPanelOpen = false
+            },
+            onSendToExternal = {
+                val media = state.toCastMedia()
+                ExternalCast.sendToWebVideoCaster(
+                    context = context,
+                    url = media.url,
+                    headers = media.headers,
+                    title = media.title,
+                )
                 castPanelOpen = false
             },
             onCastToChromecast = {
@@ -572,6 +599,14 @@ fun PlayerScreen(
                 viewModel.goToEpisode(episode)
                 openPanel = PlayerPanel.NONE
             },
+            onOpenSubtitleSettings = { openPanel = PlayerPanel.SUBTITLE_STYLE },
+            subtitleStyle = subtitleStyle,
+            // The panel stays open after each change so the effect can be seen on
+            // the video behind it and adjusted again without reopening.
+            onSetSubtitleSize = onSetSubtitleSize,
+            onSetSubtitleBackground = onSetSubtitleBackground,
+            onSetSubtitleEdgeWidth = onSetSubtitleEdgeWidth,
+            onSetSubtitleColor = onSetSubtitleColor,
         )
     }
 }

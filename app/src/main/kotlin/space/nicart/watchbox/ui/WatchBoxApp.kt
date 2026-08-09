@@ -13,6 +13,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -73,6 +75,7 @@ fun WatchBoxApp(
     modifier: Modifier = Modifier,
 ) {
     val navController = rememberNavController()
+    val scope = rememberCoroutineScope()
 
     Box(
         modifier = modifier
@@ -157,6 +160,18 @@ fun WatchBoxApp(
                     castManager = container.castManager,
                     onBack = navController::popBackStack,
                     subtitleStyle = playerSettings.subtitleStyle(),
+                    onSetSubtitleSize = { size ->
+                        scope.launch { container.store.setSubtitleSize(size) }
+                    },
+                    onSetSubtitleBackground = { background ->
+                        scope.launch { container.store.setSubtitleBackground(background) }
+                    },
+                    onSetSubtitleEdgeWidth = { width ->
+                        scope.launch { container.store.setSubtitleEdgeWidth(width) }
+                    },
+                    onSetSubtitleColor = { color ->
+                        scope.launch { container.store.setSubtitleTextColor(color) }
+                    },
                 )
             }
 

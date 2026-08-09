@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 import space.nicart.watchbox.core.ui.AppTheme
 import space.nicart.watchbox.ui.player.SubtitleBackground
+import space.nicart.watchbox.ui.player.SubtitleEdgeWidth
 import space.nicart.watchbox.ui.player.SubtitleSize
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "watchbox")
@@ -59,6 +60,10 @@ class WatchBoxStore(context: Context) {
                 subtitleTextColor = prefs[Keys.SUB_COLOR] ?: SUBTITLE_DEFAULT_COLOR,
                 subtitleBackgroundOpacity = prefs[Keys.SUB_BG_OPACITY] ?: 0.6f,
                 subtitleBold = prefs[Keys.SUB_BOLD] ?: false,
+                subtitleEdgeWidth = enumOrDefault(
+                    prefs[Keys.SUB_EDGE_WIDTH],
+                    SubtitleEdgeWidth.MEDIUM,
+                ),
                 subtitleLanguage = prefs[Keys.SUB_LANG] ?: "en",
                 lastServerId = prefs[Keys.LAST_SERVER],
             )
@@ -165,6 +170,10 @@ class WatchBoxStore(context: Context) {
     }
 
     suspend fun setSubtitleBold(bold: Boolean) = store.edit { it[Keys.SUB_BOLD] = bold }
+
+    suspend fun setSubtitleEdgeWidth(width: SubtitleEdgeWidth) = store.edit {
+        it[Keys.SUB_EDGE_WIDTH] = width.name
+    }
     suspend fun setSubtitleLanguage(lang: String) = store.edit { it[Keys.SUB_LANG] = lang }
     suspend fun setLastServerId(id: String?) = store.edit { prefs ->
         if (id == null) prefs.remove(Keys.LAST_SERVER) else prefs[Keys.LAST_SERVER] = id
@@ -287,6 +296,7 @@ class WatchBoxStore(context: Context) {
         val SUB_COLOR = intPreferencesKey("subtitle_text_color")
         val SUB_BG_OPACITY = floatPreferencesKey("subtitle_bg_opacity")
         val SUB_BOLD = booleanPreferencesKey("subtitle_bold")
+        val SUB_EDGE_WIDTH = stringPreferencesKey("subtitle_edge_width")
         val SUB_LANG = stringPreferencesKey("subtitle_language")
         val LAST_SERVER = stringPreferencesKey("last_server_id")
         val HISTORY = stringPreferencesKey("watch_history")
@@ -312,6 +322,7 @@ data class AppSettings(
     val subtitleTextColor: Int = SUBTITLE_DEFAULT_COLOR,
     val subtitleBackgroundOpacity: Float = 0.6f,
     val subtitleBold: Boolean = false,
+    val subtitleEdgeWidth: SubtitleEdgeWidth = SubtitleEdgeWidth.MEDIUM,
     val subtitleLanguage: String = "en",
     val lastServerId: String? = null,
 ) {
