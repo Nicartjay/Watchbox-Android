@@ -30,6 +30,8 @@ data class AnimeCard(
     val sourceName: String = "",
     /** Wide TMDB backdrop, for the hero. Null when no match was found. */
     val backdropUrl: String? = null,
+    /** The same backdrop at card size, for landscape cards on TV. */
+    val cardBackdropUrl: String? = null,
     /** Transparent TMDB title logo, for the hero. */
     val logoUrl: String? = null,
     /** TMDB poster, generally cleaner than the source's own. */

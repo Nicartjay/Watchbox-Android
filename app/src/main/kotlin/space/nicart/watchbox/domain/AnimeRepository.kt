@@ -76,11 +76,24 @@ class AnimeRepository(
         HomeFeed(hero = hero, rows = rows)
     }
 
+    /**
+     * Enriches one card on demand.
+     *
+     * Exposed for the TV home, where the backdrop and title logo follow D-pad focus:
+     * any card can become the focused one, but enriching whole rails up front would
+     * be hundreds of TMDB requests for artwork that is mostly never seen. Fetching as
+     * focus arrives keeps the request count proportional to what the user looks at.
+     *
+     * Returns the card unchanged when nothing matches, so callers need no fallback.
+     */
+    suspend fun artworkFor(card: AnimeCard): AnimeCard = card.enriched()
+
     /** Overlays TMDB artwork on a card, keeping the source fields intact. */
     private suspend fun AnimeCard.enriched(): AnimeCard {
         val art = guarded("tmdb($title)") { tmdb.lookup(title) } ?: return this
         return copy(
             backdropUrl = art.backdropUrl,
+            cardBackdropUrl = art.cardBackdropUrl,
             logoUrl = art.logoUrl,
             tmdbPosterUrl = art.posterUrl,
             tmdbId = art.tmdbId,

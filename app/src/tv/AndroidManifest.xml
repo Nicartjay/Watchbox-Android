@@ -16,6 +16,22 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+      Android 11+ hides other packages by default, and SpeechRecognizer resolves
+      through one. Without this declaration voice search silently reports that no
+      recogniser exists, on every device.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
+    <!-- A TV remote has a mic; a TV box may not. Not required either way. -->
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
+
     <uses-feature
         android:name="android.software.leanback"
         android:required="false" />

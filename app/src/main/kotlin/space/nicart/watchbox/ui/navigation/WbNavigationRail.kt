@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -66,7 +68,20 @@ fun WbNavigationRail(
         modifier = modifier
             .width(width)
             .fillMaxHeight()
-            .background(tokens.colors.surface.copy(alpha = 0.96f))
+            // Transparent so the artwork behind it reads through, with a short
+            // left-edge gradient instead of a panel. A flat fill cuts a hard vertical
+            // seam across the backdrop; a gradient keeps the icons legible over bright
+            // artwork without announcing itself as a bar.
+            //
+            // Not fully transparent: the rail sits over arbitrary imagery, and on a
+            // pale frame white icons on nothing are unreadable.
+            .background(
+                Brush.horizontalGradient(
+                    0f to tokens.colors.background.copy(alpha = 0.85f),
+                    0.6f to tokens.colors.background.copy(alpha = 0.45f),
+                    1f to Color.Transparent,
+                ),
+            )
             .padding(vertical = 24.dp, horizontal = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -107,6 +122,10 @@ private fun RailItem(
             .clip(RoundedCornerShape(12.dp))
             .background(background)
             .tvFocusOutline(interaction, RoundedCornerShape(12.dp))
+            // focusable() is explicit: clickable alone does make a node focusable,
+            // but ordering matters here - the focus outline modifier above must see
+            // the same interaction source that focus is reported through.
+            .focusable(interactionSource = interaction)
             .clickable(
                 interactionSource = interaction,
                 indication = null,

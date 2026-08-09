@@ -104,6 +104,9 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
             type = type,
             title = dto.displayTitle,
             backdropUrl = image(dto.backdropPath, BACKDROP_SIZE),
+            // Same image, smaller transform: used by landscape cards, where the
+            // hero-sized asset would be wasted bandwidth.
+            cardBackdropUrl = image(dto.backdropPath, CARD_BACKDROP_SIZE),
             posterUrl = image(dto.posterPath, POSTER_SIZE),
             logoUrl = image(dto.bestLogoPath, LOGO_SIZE),
             overview = dto.overview.orEmpty(),
@@ -217,6 +220,15 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
         private const val IMAGE_BASE = "https://image.tmdb.org/t/p"
 
         private const val BACKDROP_SIZE = "w1280"
+
+        /**
+         * Backdrop size for landscape cards.
+         *
+         * The full-bleed hero backdrop is w1280, but a card is a fraction of the
+         * screen: serving w1280 per card would download roughly ten times the pixels
+         * actually drawn, for a whole row at once.
+         */
+        private const val CARD_BACKDROP_SIZE = "w780"
         private const val POSTER_SIZE = "w500"
         private const val LOGO_SIZE = "w500"
         private const val STILL_SIZE = "w300"
@@ -259,6 +271,8 @@ data class TmdbArtwork(
     val type: TmdbType,
     val title: String,
     val backdropUrl: String?,
+    /** The same backdrop at card size. */
+    val cardBackdropUrl: String?,
     val posterUrl: String?,
     val logoUrl: String?,
     val overview: String,

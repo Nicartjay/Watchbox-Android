@@ -30,7 +30,6 @@ import space.nicart.watchbox.ui.navigation.Routes
 import space.nicart.watchbox.ui.player.PlayerScreen
 import space.nicart.watchbox.ui.player.PlayerViewModel
 import space.nicart.watchbox.ui.player.subtitleStyle
-import space.nicart.watchbox.ui.search.SearchScreen
 import space.nicart.watchbox.ui.search.SearchViewModel
 import space.nicart.watchbox.ui.settings.SettingsScreen
 import space.nicart.watchbox.ui.settings.SettingsViewModel
@@ -140,9 +139,14 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
                 key = "browse-${route.sourceId}",
                 factory = BrowseViewModel.factory(container.repository, route.sourceId),
             )
+            val artwork: TvArtworkViewModel = viewModel(
+                key = "tv-artwork-browse-${route.sourceId}",
+                factory = TvArtworkViewModel.factory(container.repository),
+            )
             TvSourceBrowseScreen(
                 sourceName = route.sourceName,
                 viewModel = viewModel,
+                artworkViewModel = artwork,
                 onBack = navController::popBackStack,
                 onOpenAnime = { navController.openAnime(it) },
             )
@@ -184,7 +188,15 @@ private fun TvTabContent(
                     container.store,
                 ),
             )
-            TvHomeScreen(viewModel = viewModel, onOpenAnime = openAnime)
+            val artwork: TvArtworkViewModel = viewModel(
+                key = "tv-artwork",
+                factory = TvArtworkViewModel.factory(container.repository),
+            )
+            TvHomeScreen(
+                viewModel = viewModel,
+                artworkViewModel = artwork,
+                onOpenAnime = openAnime,
+            )
         }
 
         AppTab.SEARCH -> {
@@ -196,7 +208,7 @@ private fun TvTabContent(
                     container.extensionManager,
                 ),
             )
-            SearchScreen(viewModel = viewModel, onOpenAnime = openAnime)
+            TvSearchScreen(viewModel = viewModel, onOpenAnime = openAnime)
         }
 
         AppTab.BROWSE -> {

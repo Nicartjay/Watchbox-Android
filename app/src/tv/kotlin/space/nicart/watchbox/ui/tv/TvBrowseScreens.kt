@@ -2,6 +2,7 @@ package space.nicart.watchbox.ui.tv
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -74,7 +75,7 @@ fun TvSourceListScreen(
     LazyVerticalGrid(
         columns = GridCells.Fixed(TILE_COLUMNS),
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 40.dp, bottom = 48.dp),
+        contentPadding = PaddingValues(start = TV_CONTENT_START, end = 48.dp, top = 40.dp, bottom = 48.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -120,6 +121,7 @@ private fun TvExtensionsEntry(updateCount: Int, onClick: () -> Unit) {
             .clip(RoundedCornerShape(16.dp))
             .background(tokens.colors.surfaceCard)
             .tvFocusable(interaction, RoundedCornerShape(16.dp), focusedScale = 1.02f)
+            .focusable(interactionSource = interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 24.dp, vertical = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -166,6 +168,7 @@ private fun TvSourceTile(source: SourceEntry, onClick: () -> Unit) {
             .clip(RoundedCornerShape(16.dp))
             .background(tokens.colors.surfaceCard)
             .tvFocusable(interaction, RoundedCornerShape(16.dp))
+            .focusable(interactionSource = interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(vertical = 20.dp, horizontal = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -208,11 +211,19 @@ private fun TvSourceTile(source: SourceEntry, onClick: () -> Unit) {
 fun TvSourceBrowseScreen(
     sourceName: String,
     viewModel: BrowseViewModel,
+    artworkViewModel: TvArtworkViewModel,
     onBack: () -> Unit,
     onOpenAnime: (AnimeCard) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val artwork by artworkViewModel.artwork.collectAsStateWithLifecycle()
+
+    // Re-requested as the page grows: each key covers one page, so appending a page
+    // enriches only the new cards rather than re-walking the whole grid.
+    LaunchedEffect(state.items.size) {
+        artworkViewModel.onRowVisible("browse-$sourceName-${state.page}", state.items)
+    }
     val gridState = rememberLazyGridState()
     val tokens = MaterialTheme.wb
 
@@ -242,7 +253,7 @@ fun TvSourceBrowseScreen(
                 state = gridState,
                 columns = GridCells.Fixed(POSTER_COLUMNS),
                 contentPadding = PaddingValues(
-                    start = 48.dp,
+                    start = TV_CONTENT_START,
                     end = 48.dp,
                     top = 40.dp,
                     bottom = 48.dp,
@@ -273,7 +284,10 @@ fun TvSourceBrowseScreen(
                 }
 
                 items(items = state.items, key = { it.key }) { card ->
-                    TvGridPoster(card = card, onClick = { onOpenAnime(card) })
+                    TvGridPoster(
+                        card = artwork[card.key] ?: card,
+                        onClick = { onOpenAnime(card) },
+                    )
                 }
             }
         }
@@ -289,14 +303,18 @@ private fun TvGridPoster(card: AnimeCard, onClick: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(POSTER_ASPECT)
+                .aspectRatio(CARD_ASPECT)
                 .clip(RoundedCornerShape(12.dp))
                 .background(tokens.colors.surfaceCard)
                 .tvFocusable(interaction, RoundedCornerShape(12.dp))
-                .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+                .focusable(interactionSource = interaction)
+                .focusable(interactionSource = interaction)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
         ) {
             WbAsyncImage(
-                url = card.posterUrl,
+                // Backdrop when TMDB matched, poster otherwise: a wrong crop still
+                // reads better than an empty tile.
+                url = card.cardBackdropUrl ?: card.posterUrl,
                 contentDescription = card.title,
                 contentScale = ContentScale.Crop,
                 fallbackLabel = card.title,
@@ -315,5 +333,8 @@ private fun TvGridPoster(card: AnimeCard, onClick: () -> Unit) {
 
 /** Fewer columns than the phone grid: each D-pad press crosses one tile. */
 private const val TILE_COLUMNS = 5
-private const val POSTER_COLUMNS = 6
-private const val POSTER_ASPECT = 0.675f
+/** Fewer than the portrait grid: a 16:9 tile is far wider at the same height. */
+private const val POSTER_COLUMNS = 4
+
+/** 16:9, matching the backdrop it displays. */
+private const val CARD_ASPECT = 1.777f
