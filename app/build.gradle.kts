@@ -86,6 +86,42 @@ android {
         // ".debug" suffix, so comparing a download against the *running* package
         // name would reject every legitimate update.
         buildConfigField("String", "RELEASE_APPLICATION_ID", "\"space.nicart.watchbox\"")
+        // Lets the app pick its own APK out of a release that carries both, and
+        // lets the UI branch without probing the device at runtime.
+        buildConfigField("String", "FORM_FACTOR", "\"mobile\"")
+    }
+
+    /**
+     * Two form factors, two APKs.
+     *
+     * A single combined APK is possible - one activity carrying both LAUNCHER and
+     * LEANBACK_LAUNCHER - but it forces every phone install to carry the TV UI and
+     * the leanback manifest entries, and it makes the TV build impossible to
+     * install alongside the phone build for testing. Separate flavors keep each
+     * download to what that device actually runs.
+     *
+     * The two share every line of non-UI code; only the manifest, the launcher
+     * category and the UI entry point differ.
+     */
+    flavorDimensions += "formFactor"
+
+    productFlavors {
+        create("mobile") {
+            dimension = "formFactor"
+            // No suffix: this is the established package name, and changing it
+            // would orphan every existing install.
+            isDefault = true
+        }
+
+        create("tv") {
+            dimension = "formFactor"
+            buildConfigField("String", "FORM_FACTOR", "\"tv\"")
+            buildConfigField("String", "RELEASE_APPLICATION_ID", "\"space.nicart.watchbox.tv\"")
+            // A distinct package so both can be installed at once, and so the
+            // Play-style "already installed" check cannot confuse the two.
+            applicationIdSuffix = ".tv"
+            versionNameSuffix = "-tv"
+        }
     }
 
     buildTypes {

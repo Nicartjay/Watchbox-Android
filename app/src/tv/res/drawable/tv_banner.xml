@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android TV launcher banner.
+
+  A banner is mandatory for a leanback app: without one the TV launcher shows a
+  blank tile. The required aspect is 320x180 (16:9), and it must carry the app name
+  itself because TV launchers do not draw a label under the tile the way a phone
+  launcher does.
+
+  Drawn as a vector rather than shipped as a PNG so it stays sharp on 4K panels and
+  costs nothing in APK size.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/wb_background" />
+        </shape>
+    </item>
+
+    <!-- Accent bar, echoing the app's default accent. -->
+    <item
+        android:gravity="left"
+        android:width="8dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFE5E5E5" />
+        </shape>
+    </item>
+
+    <item
+        android:drawable="@drawable/tv_banner_wordmark"
+        android:gravity="center" />
+</layer-list>

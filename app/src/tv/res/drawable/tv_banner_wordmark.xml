@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  "WatchBox" wordmark for the TV banner.
+
+  Paths rather than text, because a drawable cannot render a string and the banner
+  has to be self-contained. Drawn on a 320x180 canvas so it maps 1:1 onto the
+  banner's required dimensions.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+
+    <!-- Play triangle in a rounded square: reads as "video" at tile size. -->
+    <path
+        android:fillColor="#FFE5E5E5"
+        android:pathData="M40,62 h44 a10,10 0 0 1 10,10 v36 a10,10 0 0 1 -10,10 h-44 a10,10 0 0 1 -10,-10 v-36 a10,10 0 0 1 10,-10 z" />
+    <path
+        android:fillColor="#FF0D0D0D"
+        android:pathData="M54,78 l22,12 -22,12 z" />
+
+    <!-- WATCHBOX, set as geometric block letters. -->
+    <group android:translateX="112" android:translateY="80">
+        <!-- W -->
+        <path android:fillColor="#FFE5E5E5"
+            android:pathData="M0,0 l4,22 l5,-15 l5,15 l4,-22 h-5 l-2,11 l-4,-11 h-1 l-4,11 l-2,-11 z" />
+        <!-- A -->
+        <path android:fillColor="#FFE5E5E5"
+            android:pathData="M26,22 l6,-22 h4 l6,22 h-5 l-1,-5 h-4 l-1,5 z M33,13 h2 l-1,-6 z" />
+        <!-- T -->
+        <path android:fillColor="#FFE5E5E5"
+            android:pathData="M44,0 h14 v4 h-4.5 v18 h-5 v-18 h-4.5 z" />
+        <!-- C -->
+        <path android:fillColor="#FFE5E5E5"
+            android:pathData="M74,6 a7,8 0 0 0 -12,5 a7,8 0 0 0 12,5 v5 a11,11 0 0 1 -17,-10 a11,11 0 0 1 17,-10 z" />
+        <!-- H -->
+        <path android:fillColor="#FFE5E5E5"
+            android:pathData="M78,0 h5 v8 h5 v-8 h5 v22 h-5 v-9 h-5 v9 h-5 z" />
+        <!-- B -->
+        <path android:fillColor="#FFE5E5E5"
+            android:pathData="M100,0 h8 a6,6 0 0 1 2,11 a6,6 0 0 1 -2,11 h-8 z M105,4 v5 h3 a2.5,2.5 0 0 0 0,-5 z M105,13 v5 h3 a2.5,2.5 0 0 0 0,-5 z" />
+        <!-- O -->
+        <path android:fillColor="#FFE5E5E5"
+            android:pathData="M124,0 a11,11 0 0 1 0,22 a11,11 0 0 1 0,-22 z M124,5 a6,6 0 0 0 0,12 a6,6 0 0 0 0,-12 z" />
+        <!-- X -->
+        <path android:fillColor="#FFE5E5E5"
+            android:pathData="M138,0 h5 l3,6 l3,-6 h5 l-5,11 l5,11 h-5 l-3,-6 l-3,6 h-5 l5,-11 z" />
+    </group>
+</vector>
