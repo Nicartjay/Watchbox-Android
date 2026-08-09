@@ -2,7 +2,7 @@
 
 A native Android anime client built with Kotlin and Jetpack Compose. Content comes
 entirely from **user-installed Aniyomi-compatible extensions** — the app ships no
-sources and hosts no media of its own.
+sources, no extension repository, and hosts no media of its own.
 
 The interface is a deliberate port of
 [NuvioMobile](https://github.com/NuvioMedia/NuvioMobile)'s design system — same
@@ -15,18 +15,28 @@ chrome.
 
 - **Home** — hero pager with auto-advance and parallax, Continue Watching, My
   List, and one rail per installed source
-- **Browse** — installed sources, each with paged Popular/Latest grids
-- **Extensions** — install and remove extensions from a repository index, with
-  load failures surfaced rather than hidden
+- **Browse** — a grid of installed sources led by their extension icons, each
+  opening paged Popular/Latest grids with per-source search and the source's own
+  filters
+- **Extensions** — multiple repositories, each independently switchable; search
+  and filter by language, adult content and repository; per-extension settings for
+  extensions that expose them; load failures surfaced rather than hidden
 - **Detail** — parallax hero with a multi-stop scrim, collapsing floating header,
   expanding action row, and the episode list
 - **Player** — Media3/ExoPlayer with HLS + MP4, quality/subtitle/speed pickers,
-  episode switcher, aspect-ratio cycling, tap and drag gestures, and a lock mode
+  episode switcher, aspect-ratio cycling, tap and drag gestures, brightness and
+  volume swipes, and a lock mode
+- **Casting** — Chromecast and DLNA in one device list, with a local
+  header-injecting proxy for streams whose CDN requires a `Referer`, plus a
+  hand-off to Web Video Caster for receivers this app does not speak
+- **Subtitles** — size, background style (none, outline, drop shadow, box,
+  full-width band), outline/shadow width, colour and opacity, adjustable from
+  Settings or from inside the player
 - **Search** — debounced search across every installed source at once, grouped
-  per source
+  per source, or narrowed to a single source
 - **Library** — My List, in-progress, and full history
 - **Settings** — seven accent themes, AMOLED black, auto-play-next, repository
-  URL, and an 18+ toggle
+  management, subtitle appearance, and an 18+ toggle
 
 ## Install
 
@@ -34,6 +44,18 @@ Grab the APK from [Releases](../../releases/latest), or download the debug build
 artifact from any [CI run](../../actions/workflows/ci.yml).
 
 `minSdk` is 24 (Android 7.0); `targetSdk` is 36.
+
+### First run
+
+**The app ships with no extension repository.** Bundling one would decide on your
+behalf which third-party index the app fetches from, so you add your own:
+
+- Open an `aniyomi://add-repo?url=...` link — repositories advertise themselves
+  this way, and the app adds them automatically, or
+- paste the URL under **Settings → Extension repositories**.
+
+Both the repository root and a direct link to its `index.min.json` are accepted;
+they normalise to the same entry.
 
 ## Build
 
@@ -57,12 +79,14 @@ Everything has a working default, so no configuration is needed to build.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `WATCHBOX_REPO_URL` | yuzono/anime-repo | Default extension repository |
-| `WATCHBOX_VERSION_NAME` | `1.0.0` | Version name |
-| `WATCHBOX_VERSION_CODE` | `1` | Version code |
+| `WATCHBOX_REPO_URL` | yuzono/anime-repo | Seed value for `BuildConfig.DEFAULT_REPO_URL` |
+| `WATCHBOX_VERSION_NAME` | current version in `app/build.gradle.kts` | Version name |
+| `WATCHBOX_VERSION_CODE` | `1` locally; CI run number in releases | Version code |
+| `TMDB_API_KEY` | a working shared key | Artwork and metadata enrichment |
 
-The repository URL is also editable at runtime in **Settings → Extension
-repository**, so a shipped APK can be repointed without a rebuild.
+`WATCHBOX_REPO_URL` no longer pre-configures a repository — nothing reads it at
+runtime any more, since repositories are added by the user. It survives as a build
+constant for forks that want to hardcode one.
 
 ## How extensions work
 
@@ -122,7 +146,43 @@ extension would call members this app does not implement.
   rather than installed system-wide, which avoids needing
   `REQUEST_INSTALL_PACKAGES` and `QUERY_ALL_PACKAGES` but means they are not
   shared with other Aniyomi clients.
-- **No cast, no downloads, no tracker sync.**
+- **No downloads and no tracker sync.**
+
+## Casting
+
+Two protocols, listed together in one picker:
+
+- **Chromecast**, via the Cast SDK and `MediaRouter`, using Google's Default Media
+  Receiver (`CC1AD845`).
+- **DLNA/UPnP**, via SSDP discovery and SOAP AVTransport.
+
+Casting is **pull-based**: you hand the receiver a URL and it opens its own
+connection. Neither Cast's `LOAD` nor DLNA's `SetAVTransportURI` carries request
+headers, so a receiver cannot send the `Referer` that extension CDNs require. A
+local proxy therefore relays those streams — the TV fetches from your phone, and
+your phone fetches upstream with the headers. Streams needing no headers skip the
+proxy entirely, keeping the phone out of the data path.
+
+For HLS the manifest is rewritten as it passes through, because a receiver fetches
+segments, variant playlists and encryption keys itself; proxying only the manifest
+fixes nothing.
+
+Three details are easy to get wrong and each one silently returns zero devices:
+
+- **`NEARBY_WIFI_DEVICES` is required on Android 13+.** Without it the router
+  reports no routes at all. It is requested when the cast panel opens.
+- **A multicast lock is required for SSDP.** Android's Wi-Fi driver filters
+  multicast in hardware without one, and SSDP is entirely multicast.
+- **The SSDP socket must join the multicast group.** Several Samsung and LG models
+  reply to the group rather than to the requester, so a plain `DatagramSocket`
+  never sees them.
+
+Two caveats worth knowing before reporting a bug:
+
+- **Most DLNA TVs cannot play HLS at all.** That is a receiver limitation — those
+  sources generally need Chromecast, or the Web Video Caster hand-off.
+- **Seeking is limited on proxied HLS,** because the proxy deliberately does not
+  advertise byte-range support for rewritten manifests.
 
 ## Releasing
 
@@ -137,7 +197,9 @@ Run it from the **Actions** tab with one of three modes:
 
 Pushing a `v*` tag (e.g. `v1.1.0`) publishes automatically and takes the version
 from the tag name. `versionCode` is derived from the workflow run number so it
-always increases, which Android requires for in-place upgrades.
+always increases, which Android requires for in-place upgrades — releases so far
+run 16, 17, 18 against version names 2.7.0, 2.8.0, 2.9.0. A local build defaults
+to `1`, so a locally built APK will not install over a released one.
 
 ### Signing
 
@@ -186,13 +248,15 @@ app/src/main/kotlin/
 │   ├── animesource/              AnimeSource, AnimeHttpSource, models
 │   └── network/                  NetworkHelper, Requests, interceptors
 └── space/nicart/watchbox/
+    ├── cast/                     Chromecast + DLNA transports, discovery, proxy
     ├── core/ui/                  Design tokens, theme, type scale
-    ├── data/local/               DataStore: history, watchlist, settings
+    ├── data/local/               DataStore: history, watchlist, settings, repos
     ├── domain/                   UI models + AnimeRepository
     ├── extension/                Loader, classloader, repo index, installer
     └── ui/
-        ├── components/           Poster cards, shelves, skeletons
+        ├── components/           Poster cards, shelves, skeletons, search field
         ├── navigation/           Routes + floating pill nav bar
+        ├── source/               Per-extension settings bridge
         └── home/ browse/ detail/ player/ search/ library/ settings/ extensions/
 ```
 
@@ -209,11 +273,30 @@ app/src/main/kotlin/
   merging would bury good matches.
 - **Identity is `sourceId` + source-relative `url`.** There is no global id in
   this ecosystem, and titles change between fetches.
+- **Repository fetches report per-repository failures.** With several configured,
+  one unreachable repo must not hide the extensions the others listed — and
+  "not in any repo" is only concluded when every repository actually answered.
+- **Subtitles are drawn in Compose, not by Media3's `SubtitleView`.**
+  `SubtitlePainter` hardcodes the outline to 2dp and `CaptionStyleCompat` exposes
+  no width, so an outline-width setting is impossible without rendering the cues.
+
+### Testing
+
+143 unit tests, run in CI. They deliberately cover only pure logic whose failures
+are *silent* on a device — HLS URI rewriting, DLNA SOAP envelopes, gesture maths,
+filter application, deep-link parsing, subtitle style values — because those break
+in ways that look like missing data rather than errors. Anything better checked by
+looking at the screen is not unit-tested.
+
+```bash
+./gradlew :app:testDebugUnitTest
+```
 
 ## Tech stack
 
 Kotlin 2.1 · Compose BOM 2025.05 · Material 3 · Navigation-Compose (typed
-routes) · Media3 1.6 · Ktor 3.1 · Coil 2.7 · DataStore · kotlinx.serialization
+routes) · Media3 1.6 · Ktor 3.1 · Coil 2.7 · DataStore · kotlinx.serialization ·
+play-services-cast 22 · androidx.mediarouter 1.7
 
 Extension runtime: okhttp 5.3.2 · rxjava 1.3.8 · jsoup 1.22.1 · Injekt ·
 androidx.preference
