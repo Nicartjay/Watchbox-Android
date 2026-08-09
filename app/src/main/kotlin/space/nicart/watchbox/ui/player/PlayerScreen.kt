@@ -8,7 +8,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -17,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,10 +26,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -71,6 +76,7 @@ fun PlayerScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val activityForBrightness = context as? Activity
     val lifecycleOwner = LocalLifecycleOwner.current
 
     // --- landscape lock + keep-awake + immersive, restored on exit
@@ -126,6 +132,15 @@ fun PlayerScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     var openPanel by remember { mutableStateOf(PlayerPanel.NONE) }
     var castPanelOpen by remember { mutableStateOf(false) }
+
+    // Brightness is window-scoped, so it is tied to this activity; volume is a
+    // system stream and re-synced whenever a gesture starts.
+    val brightness = remember(activityForBrightness) {
+        BrightnessController(activityForBrightness)
+    }
+    val volume = remember { VolumeController(context) }
+    var activeGesture by remember { mutableStateOf(VerticalGesture.NONE) }
+    var gestureLevel by remember { mutableFloatStateOf(0f) }
     var playbackError by remember { mutableStateOf<String?>(null) }
 
     // --- player listener
@@ -308,31 +323,101 @@ fun PlayerScreen(
                         },
                     )
                 }
+                // One detector for both axes. Two separate pointerInput
+                // modifiers would compete for the same pointer, so the axis is
+                // decided once per drag and then locked: a seek never turns into
+                // a volume change halfway through.
                 .pointerInput(state.locked, durationMs) {
                     if (state.locked) return@pointerInput
-                    var accumulated = 0f
-                    detectHorizontalDragGestures(
-                        onDragStart = { accumulated = 0f },
-                        onDragEnd = { accumulated = 0f },
-                    ) { _, delta ->
-                        accumulated += delta
-                        // Full-width drag = 60s / 90s / 120s depending on runtime.
-                        val window = when {
-                            durationMs >= 3_600_000L -> 120_000f
-                            durationMs >= 1_800_000L -> 90_000f
-                            else -> 60_000f
+
+                    val slop = viewConfiguration.touchSlop
+                    val edgePx = SYSTEM_EDGE_EXCLUSION_DP.dp.toPx()
+
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+
+                        var axis = DragAxis.UNDECIDED
+                        var seekAccumulated = 0f
+                        var totalDx = 0f
+                        var totalDy = 0f
+
+                        // Left half is brightness, right half is volume, matching
+                        // the convention every other video player uses.
+                        val isLeftHalf = down.position.x < size.width / 2f
+                        val nearSystemEdge =
+                            isInSystemEdgeZone(down.position.y, size.height, edgePx)
+
+                        if (isLeftHalf) brightness.apply(brightness.currentOrDefault())
+                        else volume.sync()
+
+                        var level = if (isLeftHalf) brightness.currentOrDefault() else volume.level
+
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (change.changedToUpIgnoreConsumed()) break
+
+                            val delta = change.positionChange()
+                            totalDx += delta.x
+                            totalDy += delta.y
+
+                            if (axis == DragAxis.UNDECIDED) {
+                                val moved = kotlin.math.hypot(totalDx, totalDy)
+                                if (moved < slop) continue
+
+                                axis = if (isVerticalDrag(totalDx, totalDy)) {
+                                    // Drags beginning at the very top or bottom
+                                    // belong to the system shade and nav gesture.
+                                    if (nearSystemEdge) DragAxis.IGNORED else DragAxis.VERTICAL
+                                } else {
+                                    DragAxis.HORIZONTAL
+                                }
+                            }
+
+                            when (axis) {
+                                DragAxis.VERTICAL -> {
+                                    change.consume()
+                                    level = (level + verticalDragToDelta(delta.y, size.height))
+                                        .coerceIn(0f, 1f)
+
+                                    if (isLeftHalf) {
+                                        brightness.apply(level)
+                                        activeGesture = VerticalGesture.BRIGHTNESS
+                                    } else {
+                                        volume.apply(level)
+                                        activeGesture = VerticalGesture.VOLUME
+                                    }
+                                    gestureLevel = level
+                                }
+
+                                DragAxis.HORIZONTAL -> {
+                                    change.consume()
+                                    seekAccumulated += delta.x
+
+                                    // Full-width drag spans 60s/90s/120s by runtime.
+                                    val window = when {
+                                        durationMs >= 3_600_000L -> 120_000f
+                                        durationMs >= 1_800_000L -> 90_000f
+                                        else -> 60_000f
+                                    }
+                                    val seekDelta = (seekAccumulated / size.width) * window
+                                    if (kotlin.math.abs(seekDelta) >= 1_000f) {
+                                        exoPlayer.seekTo(
+                                            (exoPlayer.currentPosition + seekDelta.toLong())
+                                                .coerceIn(0L, durationMs.coerceAtLeast(0L)),
+                                        )
+                                        seekAccumulated = 0f
+                                    }
+                                    controlsVisible = true
+                                }
+
+                                else -> Unit
+                            }
                         }
-                        val seekDelta = (accumulated / size.width) * window
-                        if (kotlin.math.abs(seekDelta) >= 1_000f) {
-                            exoPlayer.seekTo(
-                                (exoPlayer.currentPosition + seekDelta.toLong())
-                                    .coerceIn(0L, durationMs.coerceAtLeast(0L)),
-                            )
-                            accumulated = 0f
-                        }
-                        controlsVisible = true
+
+                        activeGesture = VerticalGesture.NONE
                     }
-                },
+                }
         )
 
         // --- states
@@ -347,6 +432,12 @@ fun PlayerScreen(
                 modifier = Modifier.align(Alignment.Center),
             )
         }
+
+        GestureLevelIndicator(
+            gesture = activeGesture,
+            level = gestureLevel,
+            modifier = Modifier.align(Alignment.Center),
+        )
 
         // --- controls
         AnimatedVisibility(
@@ -476,3 +567,14 @@ private fun PlayerUiState.toCastMedia(): CastMedia {
         isMovie = episodes.size <= 1,
     )
 }
+
+/** Which axis a drag was locked to, decided once per gesture. */
+private enum class DragAxis { UNDECIDED, HORIZONTAL, VERTICAL, IGNORED }
+
+/**
+ * Height at each end of the screen where vertical drags are left to the system.
+ *
+ * The top is where the notification shade is pulled from and the bottom is the
+ * navigation-gesture area; claiming those makes the player fight the system UI.
+ */
+private const val SYSTEM_EDGE_EXCLUSION_DP = 48
