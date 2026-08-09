@@ -53,7 +53,6 @@ fun TvSearchTrigger(
             .clip(RoundedCornerShape(12.dp))
             .background(tokens.colors.surfaceCard)
             .tvFocusOutline(interaction, RoundedCornerShape(12.dp))
-            .focusable(interactionSource = interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,

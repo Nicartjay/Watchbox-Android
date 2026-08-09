@@ -3,12 +3,17 @@ package space.nicart.watchbox.ui.tv
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Box
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -64,10 +69,33 @@ fun TvTabShell(
     val railFocusRequester = remember { FocusRequester() }
     val contentFocusRequester = remember { FocusRequester() }
 
-    // Claimed once, on the first composition only. Re-requesting on every tab change
-    // would yank focus back to the rail after each selection.
-    LaunchedEffect(Unit) {
-        runCatching { railFocusRequester.requestFocus() }
+    /**
+     * Re-homes focus after a tab switch.
+     *
+     * Selecting a tab replaces the content subtree, which disposes whatever held
+     * focus. Compose does not re-home it, so focus is simply lost and the remote goes
+     * dead until a direction press happens to land somewhere.
+     *
+     * Keyed on the tab alone. An earlier version also keyed on a pending flag and
+     * cleared it before requesting, which re-ran the effect with the flag already
+     * false - so the request never happened.
+     *
+     * The frame wait matters: the requester has no node attached until the new tab has
+     * composed, and requesting before then throws.
+     */
+    var shellHasFocus by remember { mutableStateOf(false) }
+
+    // Retried until it succeeds. A single attempt keyed on the tab is not enough: the
+    // requester is detached while the content subtree is being replaced, so the
+    // request fails silently and focus stays lost - which leaves the remote dead.
+    LaunchedEffect(selectedTab, shellHasFocus) {
+        if (shellHasFocus) return@LaunchedEffect
+
+        repeat(REFOCUS_ATTEMPTS) {
+            withFrameNanos { }
+            if (runCatching { railFocusRequester.requestFocus() }.isSuccess) return@LaunchedEffect
+            delay(REFOCUS_RETRY_MS)
+        }
     }
 
     // The rail overlays the content rather than sitting beside it in a Row. A
@@ -76,11 +104,23 @@ fun TvTabShell(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .onFocusChanged { shellHasFocus = it.hasFocus }
             .background(tokens.colors.background),
     ) {
+        // Slid aside while the rail is expanded rather than letting the rail cover
+        // it. Padding would re-layout the whole screen - reflowing every row and
+        // re-measuring images - on each focus change; a translation moves the same
+        // pixels and animates cheaply.
+        val contentShift by animateDpAsState(
+            targetValue = if (railFocused) RAIL_EXPANDED_SHIFT else 0.dp,
+            animationSpec = tween(180),
+            label = "contentShift",
+        )
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .offset(x = contentShift)
                 .focusRequester(contentFocusRequester)
                 .focusGroup()
                 // Declared so leaving the content finds the rail regardless of what
@@ -108,6 +148,10 @@ fun TvTabShell(
                 selected = selectedTab,
                 onSelect = { selectedTab = it },
                 expanded = railFocused,
+                // Only for the initial claim, so something is focused before the
+                // first key press. Not tied to railFocused, which would re-claim on
+                // every focus change and pin the rail in place.
+                holdFocus = true,
             )
         }
     }
@@ -116,11 +160,25 @@ fun TvTabShell(
 /**
  * Left padding for TV content.
  *
- * The collapsed rail is 72dp and overlays the content, so screens start beyond it.
- * The remainder is overscan clearance - televisions can crop several percent of each
- * edge, so content flush to the screen edge risks being physically cut off.
+ * The collapsed rail is 72dp and overlays the content, so this is the rail plus a
+ * 16dp gutter. No overscan padding is added on this edge: the rail already occupies
+ * it, and the rail's own 8dp inset keeps its icons clear of the cropped region.
  *
- * Deliberately not widened to the rail's *expanded* width: the rail only expands while
- * focused, and reserving space for that would leave a permanent gap.
+ * Deliberately not widened to the rail's *expanded* width. The rail only expands while
+ * focused, and reserving that space permanently would leave a gap that is empty
+ * whenever the content has focus - which is most of the time.
  */
-val TV_CONTENT_START = 120.dp
+val TV_CONTENT_START = 88.dp
+
+/** Frames to keep retrying the focus claim after a tab switch. */
+private const val REFOCUS_ATTEMPTS = 10
+private const val REFOCUS_RETRY_MS = 50L
+
+/**
+ * How far content slides right while the rail is expanded.
+ *
+ * Sized so the shifted content sits the same 16dp clear of the expanded rail as it
+ * does of the collapsed one, keeping the gutter visually constant as the rail opens
+ * and closes.
+ */
+private val RAIL_EXPANDED_SHIFT = 148.dp

@@ -121,7 +121,6 @@ private fun TvExtensionsEntry(updateCount: Int, onClick: () -> Unit) {
             .clip(RoundedCornerShape(16.dp))
             .background(tokens.colors.surfaceCard)
             .tvFocusable(interaction, RoundedCornerShape(16.dp), focusedScale = 1.02f)
-            .focusable(interactionSource = interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 24.dp, vertical = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -168,7 +167,6 @@ private fun TvSourceTile(source: SourceEntry, onClick: () -> Unit) {
             .clip(RoundedCornerShape(16.dp))
             .background(tokens.colors.surfaceCard)
             .tvFocusable(interaction, RoundedCornerShape(16.dp))
-            .focusable(interactionSource = interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(vertical = 20.dp, horizontal = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -308,8 +306,7 @@ private fun TvGridPoster(card: AnimeCard, onClick: () -> Unit) {
                 .background(tokens.colors.surfaceCard)
                 .tvFocusable(interaction, RoundedCornerShape(12.dp))
                 .focusable(interactionSource = interaction)
-                .focusable(interactionSource = interaction)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+                .clickable(interactionSource = interaction, indication = null, onClick = onClick),
         ) {
             WbAsyncImage(
                 // Backdrop when TMDB matched, poster otherwise: a wrong crop still

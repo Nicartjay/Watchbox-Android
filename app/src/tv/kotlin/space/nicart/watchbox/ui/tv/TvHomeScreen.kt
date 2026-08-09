@@ -295,7 +295,6 @@ fun TvLandscapeCard(
                 .clip(RoundedCornerShape(10.dp))
                 .background(tokens.colors.surfaceCard)
                 .tvFocusable(interaction, RoundedCornerShape(10.dp))
-                .focusable(interactionSource = interaction)
                 .clickable(
                     interactionSource = interaction,
                     // Compose's ripple is invisible at TV distance; the border and
