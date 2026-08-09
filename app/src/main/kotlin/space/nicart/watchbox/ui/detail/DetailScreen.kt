@@ -167,7 +167,10 @@ fun DetailScreen(
                         )
                     }
 
-                    if (detail.episodes.isNotEmpty()) {
+                    // A film has nothing to choose between: its single entry is what
+                    // the Play button already opens, so listing it is a redundant row
+                    // that invites a second, identical decision.
+                    if (!detail.isMovie) {
                         item(key = "episodes-title") {
                             DetailSectionTitle(
                                 title = stringResource(R.string.detail_episodes),

@@ -94,6 +94,16 @@ data class AnimeDetail(
 ) {
     val key: String get() = "$sourceId::$url"
 
+    /**
+     * True when this is a single-item title rather than a series.
+     *
+     * Inferred from the episode count rather than a source field, because the ABI has
+     * no notion of "movie" - `getEpisodeList` returns one entry for a film and many for
+     * a series, and that is the only signal every source agrees on. The player already
+     * infers it the same way for cast metadata.
+     */
+    val isMovie: Boolean get() = episodes.size <= 1
+
     /** Hero background: TMDB backdrop when available, else the source poster. */
     val heroImage: String? get() = backdropUrl ?: posterUrl
 
@@ -102,7 +112,8 @@ data class AnimeDetail(
             year,
             status.label.takeIf { status != AnimeStatus.UNKNOWN },
             genres.firstOrNull(),
-            "${episodes.size} episodes".takeIf { episodes.isNotEmpty() },
+            // Omitted for a film: "1 episodes" is both wrong and uninformative.
+            "${episodes.size} episodes".takeIf { !isMovie },
         ).joinToString(" · ")
 }
 
