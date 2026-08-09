@@ -145,6 +145,14 @@ data class EpisodeEntry(
     val url: String,
     val name: String,
     val number: Float,
+    /**
+     * Season number, or null when the source gives no hint of one.
+     *
+     * Parsed from the episode name rather than supplied by the extension API:
+     * `getEpisodeList` returns one flat list with no season field, and sources that
+     * carry several seasons encode it in the name ("S3 E1 - Title").
+     */
+    val season: Int? = null,
     val dateUpload: Long,
     val scanlator: String?,
     /** TMDB still, so episode cards can be thumbnails rather than text rows. */
@@ -177,6 +185,14 @@ data class EpisodeEntry(
         get() = name.isBlank() || GENERIC_NAME.matches(name.trim())
 
     val code: String get() = number.takeIf { it >= 0 }?.let { "E${it.tidy()}" } ?: ""
+
+    /**
+     * Sort key that keeps seasons apart.
+     *
+     * Episodes with no season sort as season 0 so a source that numbers straight
+     * through is left in its own order rather than being shuffled among parsed ones.
+     */
+    val sortKey: Pair<Int, Float> get() = (season ?: 0) to number
 
     val numberLabel: String? get() = number.takeIf { it >= 0 }?.tidy()
 
@@ -213,8 +229,28 @@ internal fun SEpisode.toEntry(): EpisodeEntry = EpisodeEntry(
     url = url,
     name = name,
     number = episode_number,
+    season = parseSeason(name),
     dateUpload = date_upload,
     scanlator = scanlator?.takeIf { it.isNotBlank() },
+)
+
+/**
+ * Pulls a season number out of an episode name.
+ *
+ * Only the leading marker is considered. Matching anywhere in the string would read
+ * the "2" out of a title like "Season of the Witch 2", and a wrong season is worse
+ * than none: it splits one season into several tabs.
+ */
+internal fun parseSeason(name: String): Int? {
+    val groups = SEASON_MARKER.find(name.trim())?.groupValues ?: return null
+    // Either alternative may have matched, so take whichever group captured.
+    return groups.drop(1).firstOrNull { it.isNotEmpty() }?.toIntOrNull()
+}
+
+/** `S3 E1 - ...`, `Season 3 Episode 1`, `3x01`. */
+private val SEASON_MARKER = Regex(
+    """^(?:s(?:eason)?\s*(\d{1,3})(?!\d)|(\d{1,3})\s*x\s*\d+)""",
+    RegexOption.IGNORE_CASE,
 )
 
 /** Overlays TMDB artwork onto an episode, leaving source fields authoritative. */

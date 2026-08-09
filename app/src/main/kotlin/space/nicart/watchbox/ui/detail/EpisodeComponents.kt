@@ -4,6 +4,17 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.LocalIndication
 import space.nicart.watchbox.core.ui.adaptiveFocus
 import space.nicart.watchbox.core.ui.rememberFocusInteraction
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.res.stringResource
+import space.nicart.watchbox.R
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,8 +66,10 @@ import java.util.Date
  *  * **Text rows** — Nuvio's `List` style, used when no stills exist. Rendering
  *    the thumbnail rail without images would just be a row of grey boxes.
  *
- * There is no season concept in this ecosystem: `getEpisodeList` returns one flat
- * list, so no season selector is shown.
+ * `getEpisodeList` returns one flat list with no season field, so the season is read
+ * out of the episode name. When more than one is found a selector is shown and only
+ * the chosen season's episodes are listed - otherwise a multi-season show presents
+ * every season's E1 in a single run, which reads as duplicates.
  */
 private val CARD_WIDTH = 296.dp
 private val CARD_HEIGHT = 184.dp
@@ -94,26 +107,133 @@ fun EpisodeList(
         return
     }
 
-    val hasStills = episodes.any { it.stillUrl != null }
+    val seasons = remember(episodes) {
+        episodes.mapNotNull { it.season }.distinct().sorted()
+    }
 
-    if (hasStills) {
-        EpisodeThumbnailRow(
-            episodes = episodes,
-            watchedUrls = watchedUrls,
-            currentUrl = currentUrl,
-            horizontalPadding = horizontalPadding,
-            onPlay = onPlay,
-            modifier = modifier,
-        )
-    } else {
-        EpisodeTextList(
-            episodes = episodes,
-            watchedUrls = watchedUrls,
-            currentUrl = currentUrl,
-            horizontalPadding = horizontalPadding,
-            onPlay = onPlay,
-            modifier = modifier,
-        )
+    // Defaults to the season holding the episode in progress, so resuming a show does
+    // not open on season 1 when the user is midway through season 3.
+    var selectedSeason by remember(episodes, currentUrl) {
+        val current = episodes.firstOrNull { it.url == currentUrl }?.season
+        mutableStateOf(current ?: seasons.firstOrNull())
+    }
+
+    val shown = remember(episodes, selectedSeason, seasons) {
+        if (seasons.size <= 1 || selectedSeason == null) {
+            episodes
+        } else {
+            episodes.filter { it.season == selectedSeason }
+        }
+    }
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // Only when there is a choice to make: one season needs no selector, and none
+        // means the source numbers straight through.
+        if (seasons.size > 1) {
+            SeasonSelector(
+                seasons = seasons,
+                selected = selectedSeason ?: seasons.first(),
+                onSelect = { selectedSeason = it },
+                horizontalPadding = horizontalPadding,
+            )
+        }
+
+        val hasStills = shown.any { it.stillUrl != null }
+
+        if (hasStills) {
+            EpisodeThumbnailRow(
+                episodes = shown,
+                watchedUrls = watchedUrls,
+                currentUrl = currentUrl,
+                horizontalPadding = horizontalPadding,
+                onPlay = onPlay,
+            )
+        } else {
+            EpisodeTextList(
+                episodes = shown,
+                watchedUrls = watchedUrls,
+                currentUrl = currentUrl,
+                horizontalPadding = horizontalPadding,
+                onPlay = onPlay,
+            )
+        }
+    }
+}
+
+/**
+ * Season dropdown.
+ *
+ * A dropdown rather than a row of chips: a long-running show would otherwise need a
+ * horizontally scrolling strip of seasons, which on a remote means pressing through
+ * every season to reach the last.
+ *
+ * The menu is anchored to a focusable button so a D-pad can open it, and each entry is
+ * a focus target in its own right.
+ */
+@Composable
+private fun SeasonSelector(
+    seasons: List<Int>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    horizontalPadding: Dp,
+) {
+    val tokens = MaterialTheme.wb
+    var expanded by remember { mutableStateOf(false) }
+    val interaction = rememberFocusInteraction()
+
+    Box(modifier = Modifier.padding(horizontal = horizontalPadding)) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(tokens.colors.surfaceCard)
+                .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
+                .clickable(
+                    interactionSource = interaction,
+                    indication = LocalIndication.current,
+                    onClick = { expanded = true },
+                )
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.detail_season, selected),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = tokens.colors.textPrimary,
+            )
+            Icon(
+                imageVector = Icons.Rounded.ArrowDropDown,
+                contentDescription = null,
+                tint = tokens.colors.textSecondary,
+            )
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            containerColor = tokens.colors.surfaceCard,
+        ) {
+            seasons.forEach { season ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = stringResource(R.string.detail_season, season),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = if (season == selected) {
+                                tokens.colors.accent
+                            } else {
+                                tokens.colors.textPrimary
+                            },
+                        )
+                    },
+                    onClick = {
+                        onSelect(season)
+                        expanded = false
+                    },
+                )
+            }
+        }
     }
 }
 

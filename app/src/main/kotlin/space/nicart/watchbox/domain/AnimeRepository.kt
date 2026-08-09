@@ -12,6 +12,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import space.nicart.watchbox.data.remote.TmdbApi
+import space.nicart.watchbox.data.remote.TmdbEpisodeArt
 import space.nicart.watchbox.data.remote.TmdbSuggestion
 import space.nicart.watchbox.data.remote.TmdbType
 import space.nicart.watchbox.extension.ExtensionManager
@@ -224,21 +225,30 @@ class AnimeRepository(
                 tmdb.lookup(resolvedTitle, preferMovie = ordered.size <= 1)
             }
 
-            val stills = if (art != null && art.type == TmdbType.TV) {
-                guarded("stills(${art.tmdbId})") {
-                    tmdb.episodeStills(art.tmdbId, season = 1)
-                }.orEmpty()
-            } else {
-                emptyMap()
-            }
+            // Fetched per season, keyed by season. Season 1's episodes were previously
+            // used for every season, so in a multi-season show S2E1 and S3E1 both showed
+            // season 1 episode 1's still, title, overview and runtime.
+            val seasons = ordered.mapNotNull { it.season }.distinct().ifEmpty { listOf(1) }
 
-            val enrichedEpisodes = if (stills.isEmpty()) {
+            val stillsBySeason: Map<Int, Map<Int, TmdbEpisodeArt>> =
+                if (art != null && art.type == TmdbType.TV) {
+                    seasons.take(MAX_SEASON_LOOKUPS).associateWith { season ->
+                        guarded("stills(${art.tmdbId} s$season)") {
+                            tmdb.episodeStills(art.tmdbId, season = season)
+                        }.orEmpty()
+                    }
+                } else {
+                    emptyMap()
+                }
+
+            val enrichedEpisodes = if (stillsBySeason.isEmpty()) {
                 ordered
             } else {
                 ordered.map { episode ->
-                    // Match on episode number; sources and TMDB agree on that far
-                    // more reliably than on titles or ordering.
-                    episode.withArt(stills[episode.number.toInt()])
+                    // Match on season and episode number; sources and TMDB agree on
+                    // those far more reliably than on titles or ordering.
+                    val forSeason = stillsBySeason[episode.season ?: 1].orEmpty()
+                    episode.withArt(forSeason[episode.number.toInt()])
                 }
             }
 
@@ -270,7 +280,14 @@ class AnimeRepository(
     private fun List<SEpisode>.sortedEpisodes(): List<EpisodeEntry> {
         val mapped = map { it.toEntry() }
         val hasNumbers = mapped.any { it.number >= 0 }
-        return if (hasNumbers) mapped.sortedBy { it.number } else mapped.reversed()
+        // Season first, then number. Sorting on the number alone interleaved the
+        // seasons of a multi-season show - S3E1, S2E1, S1E1, S3E2 - because every
+        // season restarts at 1.
+        return if (hasNumbers) {
+            mapped.sortedWith(compareBy({ it.season ?: 0 }, { it.number }))
+        } else {
+            mapped.reversed()
+        }
     }
 
     // ----------------------------------------------------------- suggestions
@@ -526,6 +543,14 @@ class AnimeRepository(
         const val NO_SOURCES = "No sources installed yet."
         const val SOURCE_TIMEOUT_MS = 15_000L
         const val MAX_SUGGESTIONS = 8
+
+        /**
+         * Caps the per-season still lookups for one title.
+         *
+         * A long-running show would otherwise issue a request per season on every
+         * detail open. Later seasons simply keep the source's own titles.
+         */
+        const val MAX_SEASON_LOOKUPS = 12
 
         /**
          * Shorter than the general source timeout: this runs once per candidate

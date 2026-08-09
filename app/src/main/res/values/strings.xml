@@ -106,6 +106,7 @@
 
     <!-- Detail -->
     <string name="detail_episodes">Episodes</string>
+    <string name="detail_season">Season %1$d</string>
     <string name="detail_seasons">Seasons</string>
     <string name="detail_cast">Cast</string>
     <string name="detail_more_like_this">More Like This</string>
