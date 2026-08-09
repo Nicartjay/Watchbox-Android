@@ -1,6 +1,9 @@
 package space.nicart.watchbox.ui.detail
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.LocalIndication
+import space.nicart.watchbox.core.ui.adaptiveFocus
+import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -158,6 +161,7 @@ private fun EpisodeThumbnailCard(
     onClick: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
 
     Box(
         modifier = Modifier
@@ -165,7 +169,12 @@ private fun EpisodeThumbnailCard(
             .height(CARD_HEIGHT)
             .clip(RoundedCornerShape(CARD_RADIUS))
             .background(tokens.colors.surfaceCard.copy(alpha = 0.45f))
-            .clickable(onClick = onClick),
+            .adaptiveFocus(interaction, RoundedCornerShape(CARD_RADIUS), scale = false)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            ),
     ) {
         WbAsyncImage(
             url = episode.stillUrl,
@@ -304,6 +313,7 @@ private fun EpisodeTextRow(
     onClick: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
 
     Row(
         modifier = Modifier
@@ -317,7 +327,12 @@ private fun EpisodeTextRow(
                     tokens.colors.surfaceCard
                 },
             )
-            .clickable(onClick = onClick)
+            .adaptiveFocus(interaction, RoundedCornerShape(ROW_RADIUS), scale = false)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),

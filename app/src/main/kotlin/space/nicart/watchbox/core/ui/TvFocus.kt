@@ -121,14 +121,16 @@ fun Modifier.adaptiveFocus(
     interactionSource: MutableInteractionSource,
     shape: RoundedCornerShape = RoundedCornerShape(12.dp),
     scale: Boolean = true,
+    /** Overridden where the item is itself white, which a white outline vanishes into. */
+    borderColor: Color = Color.White,
 ): Modifier {
     val metrics = LocalLayoutMetrics.current
     if (!metrics.isFocusDriven) return this
 
     return if (scale) {
-        tvFocusable(interactionSource, shape)
+        tvFocusable(interactionSource, shape, borderColor)
     } else {
-        tvFocusOutline(interactionSource, shape)
+        tvFocusOutline(interactionSource, shape, borderColor)
     }
 }
 

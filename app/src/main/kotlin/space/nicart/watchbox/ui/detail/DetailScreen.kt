@@ -9,6 +9,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
@@ -59,9 +69,14 @@ fun DetailScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+
+    /** True while focus is on the action buttons, the first focusable item. */
+    var atTopFocusable by remember { mutableStateOf(false) }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val metrics = LocalLayoutMetrics.current
+        val isFocusDriven = metrics.isFocusDriven
         val isTablet = maxWidth >= 720.dp
 
         // A wide hero needs room for text *beside* the artwork, which a portrait tablet
@@ -137,6 +152,33 @@ fun DetailScreen(
                         // is overlaid outside it, so a group spanning both traps focus
                         // on the button with no route into the content.
                         .tvInitialFocus()
+                        // Returns the hero to view when focus is already on the topmost
+                        // focusable item.
+                        //
+                        // The hero holds nothing focusable, so once focus sits on the
+                        // action buttons there is nothing above it to move to: Compose
+                        // has no reason to scroll, and the top of the page becomes
+                        // unreachable. Handled here rather than by making the hero
+                        // focusable, which would add a stop that does nothing when
+                        // activated.
+                        .onPreviewKeyEvent { event ->
+                            if (!isFocusDriven) return@onPreviewKeyEvent false
+                            if (event.type != KeyEventType.KeyDown) {
+                                return@onPreviewKeyEvent false
+                            }
+                            if (event.key != Key.DirectionUp) {
+                                return@onPreviewKeyEvent false
+                            }
+                            // Only when already scrolled and nothing focusable is above,
+                            // so normal upward movement between rows is untouched.
+                            val alreadyAtTop = listState.firstVisibleItemIndex == 0 &&
+                                listState.firstVisibleItemScrollOffset == 0
+                            if (!atTopFocusable || alreadyAtTop) {
+                                return@onPreviewKeyEvent false
+                            }
+                            scope.launch { listState.animateScrollToItem(0) }
+                            true
+                        }
                         .zIndex(1f),
                     contentPadding = PaddingValues(bottom = 32.dp + NavOverlayPadding),
                     verticalArrangement = Arrangement.spacedBy(0.dp),
@@ -168,6 +210,9 @@ fun DetailScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                // The topmost focusable content, so this is what marks
+                                // "nothing above to move to".
+                                .onFocusChanged { atTopFocusable = it.hasFocus }
                                 .padding(horizontal = contentPadding)
                                 .padding(bottom = 20.dp),
                             // Left-aligned under the hero copy on a wide screen, where

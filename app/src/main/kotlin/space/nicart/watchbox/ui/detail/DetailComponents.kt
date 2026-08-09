@@ -5,6 +5,9 @@ import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.LocalIndication
+import space.nicart.watchbox.core.ui.adaptiveFocus
+import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -278,6 +281,8 @@ fun DetailActionButtons(
     val tokens = MaterialTheme.wb
     val buttonHeight = if (isTablet) 56.dp else 52.dp
     var expanded by remember { mutableStateOf(false) }
+    val playInteraction = rememberFocusInteraction()
+    val moreInteraction = rememberFocusInteraction()
 
     val menuProgress by animateFloatAsState(
         targetValue = if (expanded) 1f else 0f,
@@ -330,6 +335,9 @@ fun DetailActionButtons(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // --- Play: white pill, dark label
+            // The outline is drawn in the background colour, inset inside the pill. The
+            // pill is filled with textPrimary, so an outline in white - or in the accent,
+            // which is white on the default Monochrome theme - is invisible on it.
             Surface(
                 modifier = Modifier
                     .then(
@@ -339,10 +347,17 @@ fun DetailActionButtons(
                             Modifier.weight(1f)
                         },
                     )
-                    .height(buttonHeight),
+                    .height(buttonHeight)
+                    .adaptiveFocus(
+                        playInteraction,
+                        RoundedCornerShape(40.dp),
+                        scale = false,
+                        borderColor = tokens.colors.background,
+                    ),
                 shape = RoundedCornerShape(40.dp),
                 color = tokens.colors.textPrimary,
                 contentColor = tokens.colors.background,
+                interactionSource = playInteraction,
                 onClick = onPlay,
             ) {
                 Row(
@@ -397,7 +412,10 @@ fun DetailActionButtons(
 
             // --- more
             Surface(
-                modifier = Modifier.size(buttonHeight),
+                modifier = Modifier
+                    .size(buttonHeight)
+                    .adaptiveFocus(moreInteraction, CircleShape, scale = false),
+                interactionSource = moreInteraction,
                 shape = CircleShape,
                 color = if (expanded) {
                     tokens.colors.textPrimary
@@ -430,11 +448,13 @@ private fun SecondaryAction(
     onClick: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
     Box(modifier = Modifier.width(size * progress)) {
         if (progress > 0.01f) {
             Surface(
                 modifier = Modifier
                     .size(size)
+                    .adaptiveFocus(interaction, CircleShape, scale = false)
                     .graphicsLayer {
                         alpha = progress
                         val s = 0.86f + 0.14f * progress
@@ -444,6 +464,7 @@ private fun SecondaryAction(
                 shape = CircleShape,
                 color = if (active) tokens.colors.textPrimary else tokens.colors.surfaceCard,
                 contentColor = if (active) tokens.colors.background else tokens.colors.textPrimary,
+                interactionSource = interaction,
                 onClick = onClick,
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -466,12 +487,18 @@ private fun DetailCircleButton(
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
     Box(
         modifier = modifier
             .size(40.dp)
             .clip(CircleShape)
             .background(if (active) tokens.colors.textPrimary else Color.Transparent)
-            .clickable(onClick = onClick),
+            .adaptiveFocus(interaction, CircleShape, scale = false)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
