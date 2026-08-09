@@ -184,6 +184,18 @@ android {
         kotlin.srcDir("src/test/kotlin")
     }
 
+    // The project keeps sources under `<set>/kotlin` rather than the default
+    // `<set>/java`, so each flavor set needs the same wiring or its files are
+    // silently ignored - which compiles, then fails at runtime on the missing
+    // entry point.
+    sourceSets.getByName("mobile") {
+        kotlin.srcDir("src/mobile/kotlin")
+    }
+
+    sourceSets.getByName("tv") {
+        kotlin.srcDir("src/tv/kotlin")
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

@@ -16,7 +16,7 @@ import space.nicart.watchbox.core.ui.WatchBoxTheme
 import space.nicart.watchbox.data.local.AppSettings
 import space.nicart.watchbox.data.local.ExtensionRepo
 import space.nicart.watchbox.extension.RepoDeepLink
-import space.nicart.watchbox.ui.WatchBoxApp
+import space.nicart.watchbox.ui.AppRoot
 
 @UnstableApi
 class MainActivity : ComponentActivity() {
@@ -41,7 +41,8 @@ class MainActivity : ComponentActivity() {
                 appTheme = settings.theme,
                 amoled = settings.amoled,
             ) {
-                WatchBoxApp(container = container)
+                // Resolved per flavor: WatchBoxApp on phones, TvApp on television.
+                AppRoot(container = container)
             }
         }
     }
