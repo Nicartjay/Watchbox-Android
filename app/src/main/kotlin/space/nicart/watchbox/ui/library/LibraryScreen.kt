@@ -61,7 +61,7 @@ fun LibraryScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var tab by remember { mutableStateOf(LibraryTab.MY_LIST) }
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize().tvInitialFocus()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val padding = sectionHorizontalPadding(maxWidth)
         // One definition of the column ladder, in LayoutMetrics. Four copies of this
         // `when` had already drifted - Search computed it and never used it.

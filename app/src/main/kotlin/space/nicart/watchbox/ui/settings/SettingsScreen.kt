@@ -2,6 +2,9 @@ package space.nicart.watchbox.ui.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import space.nicart.watchbox.core.ui.adaptiveFocus
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +27,18 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -31,6 +46,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -87,11 +103,47 @@ fun SettingsScreen(
     val addRepoInvalid = stringResource(R.string.settings_repos_invalid)
     val addRepoDuplicate = stringResource(R.string.settings_repos_duplicate)
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize().tvInitialFocus()) {
+    val repoFieldFocus = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
+
+    /** True while the text field is open. On TV it starts closed; elsewhere always open. */
+    var repoEditing by remember { mutableStateOf(false) }
+
+    /**
+     * Validates and adds whatever is in the field.
+     *
+     * Shared by the Add button and the keyboard's Done action: a duplicate or a typo has
+     * to report the same way from both, or one path looks broken.
+     */
+    fun submitRepo() {
+        val url = repoDraft.trim()
+        repoError = when {
+            url.isBlank() -> null
+            !url.looksLikeHttpUrl() -> addRepoInvalid
+            settings.repos.any { existing ->
+                existing.url.equals(ExtensionRepo.normaliseUrl(url), ignoreCase = true)
+            } -> addRepoDuplicate
+
+            else -> {
+                viewModel.addRepo(url)
+                repoDraft = ""
+                // Closed after a successful add, so focus returns to the row list and
+                // the keyboard goes away.
+                repoEditing = false
+                focusManager.clearFocus()
+                null
+            }
+        }
+    }
+
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val padding = sectionHorizontalPadding(maxWidth)
 
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            // On the list, not the screen: the focusable rows are children of this
+            // LazyColumn, so a claim on the outer Box resolves before any of them exist
+            // and focus lands nowhere.
+            modifier = Modifier.fillMaxSize().tvInitialFocus(),
             contentPadding = PaddingValues(
                 start = padding,
                 end = padding,
@@ -195,37 +247,60 @@ fun SettingsScreen(
                         Spacer(Modifier.height(8.dp))
                     }
 
-                    // A TextField captures the D-pad: arrow keys become caret movement,
-                    // so on a television focus enters this field and can never leave -
-                    // every setting below it becomes unreachable. On TV the repository
-                    // is added by deep link instead, so the field is simply omitted.
-                    if (!metrics.isTv) {
-                    OutlinedTextField(
-                        value = repoDraft,
-                        onValueChange = {
-                            repoDraft = it
-                            repoError = null
-                        },
-                        placeholder = {
-                            Text(
-                                text = stringResource(R.string.settings_repos_hint),
-                                color = tokens.colors.textMuted,
-                            )
-                        },
-                        isError = repoError != null,
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = tokens.colors.surface,
-                            unfocusedContainerColor = tokens.colors.surface,
-                            focusedBorderColor = tokens.colors.borderDefault,
-                            unfocusedBorderColor = tokens.colors.borderSubtle,
-                            focusedTextColor = tokens.colors.textPrimary,
-                            unfocusedTextColor = tokens.colors.textPrimary,
-                            cursorColor = tokens.colors.accent,
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    // On TV the field is not focusable until the user opens it. A
+                    // TextField that takes focus on entry raises the IME, which then
+                    // consumes every D-pad press - the remote appears to move only
+                    // keyboard keys and no app row can be reached. Pressing OK on this
+                    // row is what hands focus to the field.
+                    if (metrics.isTv && !repoEditing) {
+                        SettingsActionRow(
+                            title = repoDraft.ifBlank {
+                                stringResource(R.string.settings_repos_hint)
+                            },
+                            onClick = { repoEditing = true },
+                        )
+                    } else {
+                        OutlinedTextField(
+                            value = repoDraft,
+                            onValueChange = {
+                                repoDraft = it
+                                repoError = null
+                            },
+                            placeholder = {
+                                Text(
+                                    text = stringResource(R.string.settings_repos_hint),
+                                    color = tokens.colors.textMuted,
+                                )
+                            },
+                            isError = repoError != null,
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = tokens.colors.surface,
+                                unfocusedContainerColor = tokens.colors.surface,
+                                focusedBorderColor = tokens.colors.borderDefault,
+                                unfocusedBorderColor = tokens.colors.borderSubtle,
+                                focusedTextColor = tokens.colors.textPrimary,
+                                unfocusedTextColor = tokens.colors.textPrimary,
+                                cursorColor = tokens.colors.accent,
+                            ),
+                            // Done commits, so a remote's OK adds the repository without
+                            // having to reach the Add button.
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { submitRepo() }),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(repoFieldFocus),
+                        )
+
+                        // Focus is requested only once the user asked to edit, so the
+                        // keyboard never appears unbidden.
+                        LaunchedEffect(repoEditing) {
+                            if (repoEditing) {
+                                runCatching { repoFieldFocus.requestFocus() }
+                            }
+                        }
+                    }
 
                     repoError?.let { message ->
                         Spacer(Modifier.height(6.dp))
@@ -240,29 +315,7 @@ fun SettingsScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         SettingsTextAction(
                             label = stringResource(R.string.settings_repos_add),
-                            onClick = {
-                                val url = repoDraft.trim()
-                                repoError = when {
-                                    url.isBlank() -> null
-                                    // Checked here rather than after the write: a
-                                    // silent no-op on a typo'd duplicate looks like
-                                    // the Add button is broken.
-                                    !url.looksLikeHttpUrl() ->
-                                        addRepoInvalid
-                                    settings.repos.any { existing ->
-                                        existing.url.equals(
-                                            ExtensionRepo.normaliseUrl(url),
-                                            ignoreCase = true,
-                                        )
-                                    } -> addRepoDuplicate
-
-                                    else -> {
-                                        viewModel.addRepo(url)
-                                        repoDraft = ""
-                                        null
-                                    }
-                                }
-                            },
+                            onClick = ::submitRepo,
                         )
                         SettingsTextAction(
                             label = stringResource(R.string.settings_repos_clear),
@@ -272,7 +325,6 @@ fun SettingsScreen(
                                 repoError = null
                             },
                         )
-                    }
                     }
                 }
             }
@@ -500,13 +552,18 @@ private fun SettingsToggleRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
+    val interaction = remember { MutableInteractionSource() }
     val tokens = MaterialTheme.wb
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(tokens.colors.surfaceCard)
-            .clickable { onCheckedChange(!checked) }
+            .adaptiveFocus(interaction, RoundedCornerShape(16.dp), scale = false)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+            ) { onCheckedChange(!checked) }
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -534,13 +591,19 @@ private fun SettingsToggleRow(
 
 @Composable
 private fun SettingsActionRow(title: String, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
     val tokens = MaterialTheme.wb
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(tokens.colors.surfaceCard)
-            .clickable(onClick = onClick)
+            .adaptiveFocus(interaction, RoundedCornerShape(16.dp), scale = false)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -554,12 +617,18 @@ private fun SettingsActionRow(title: String, onClick: () -> Unit) {
 
 @Composable
 private fun SettingsTextAction(label: String, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
     val tokens = MaterialTheme.wb
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
             .background(tokens.colors.surface)
-            .clickable(onClick = onClick)
+            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
         Text(
@@ -577,6 +646,7 @@ private fun ThemeSwatch(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    val interaction = remember { MutableInteractionSource() }
     val tokens = MaterialTheme.wb
     val accent = Color(paletteForPreview(theme).secondary)
 
@@ -585,7 +655,12 @@ private fun ThemeSwatch(
             .size(36.dp)
             .clip(CircleShape)
             .background(accent)
-            .clickable(onClick = onClick)
+            .adaptiveFocus(interaction, RoundedCornerShape(999.dp), scale = false)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
             .then(
                 if (selected) {
                     Modifier.border(3.dp, tokens.colors.textPrimary, CircleShape)
@@ -715,6 +790,7 @@ private fun RepoRow(
     onToggle: (Boolean) -> Unit,
     onRemove: () -> Unit,
 ) {
+    val removeInteraction = remember { MutableInteractionSource() }
     val tokens = MaterialTheme.wb
 
     Row(
@@ -759,14 +835,25 @@ private fun RepoRow(
             ),
         )
 
-        Icon(
-            imageVector = Icons.Rounded.Delete,
-            contentDescription = stringResource(R.string.settings_repos_remove),
-            tint = tokens.colors.textMuted,
+        Box(
             modifier = Modifier
-                .size(20.dp)
-                .clickable(onClick = onRemove),
-        )
+                .size(36.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .adaptiveFocus(removeInteraction, RoundedCornerShape(10.dp), scale = false)
+                .clickable(
+                    interactionSource = removeInteraction,
+                    indication = LocalIndication.current,
+                    onClick = onRemove,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Delete,
+                contentDescription = stringResource(R.string.settings_repos_remove),
+                tint = tokens.colors.textMuted,
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }
 

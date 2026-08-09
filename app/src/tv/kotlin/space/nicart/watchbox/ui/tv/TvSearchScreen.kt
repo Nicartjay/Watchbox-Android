@@ -1,10 +1,5 @@
 package space.nicart.watchbox.ui.tv
 
-import android.app.Activity
-import android.content.Intent
-import android.speech.RecognizerIntent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +22,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.R
+import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
+import space.nicart.watchbox.ui.components.WbSearchField
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.ui.components.WbEmptyState
@@ -36,11 +42,12 @@ import space.nicart.watchbox.ui.search.SearchViewModel
 /**
  * TV search.
  *
- * Text entry goes through the system voice recogniser rather than an on-screen field.
- * Typing with a D-pad means moving a cursor around a virtual keyboard one letter at a
- * time, and every TV interface offers voice for exactly that reason. The recogniser is
- * launched as an intent, so it degrades gracefully: a device without it returns no
- * result and the previous query stands.
+ * Text entry is an ordinary field, opened on demand.
+ *
+ * A TextField consumes the D-pad while focused - arrow keys become caret movement - so it
+ * must not take focus on entry: doing so raises the keyboard, which then swallows every
+ * press and leaves nothing else on screen reachable. Up and Back release it explicitly,
+ * and submitting hands focus to the results.
  */
 @Composable
 fun TvSearchScreen(
@@ -51,20 +58,8 @@ fun TvSearchScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
 
-    val voiceSearch = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
-
-        val spoken = result.data
-            ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-            ?.firstOrNull()
-            ?.takeIf { it.isNotBlank() }
-            ?: return@rememberLauncherForActivityResult
-
-        viewModel.onQueryChange(spoken)
-        viewModel.submit()
-    }
+    val fieldFocus = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -80,24 +75,41 @@ fun TvSearchScreen(
                     color = tokens.colors.textPrimary,
                 )
                 Spacer(Modifier.height(20.dp))
-                TvSearchTrigger(
-                    query = state.query,
-                    placeholder = stringResource(R.string.tv_search_hint),
-                    onClick = {
-                        voiceSearch.launch(
-                            Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                                putExtra(
-                                    RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
-                                )
-                                putExtra(
-                                    RecognizerIntent.EXTRA_PROMPT,
-                                    // Shown by the recogniser's own UI.
-                                    "Say a title",
-                                )
-                            },
-                        )
+                WbSearchField(
+                    value = state.query,
+                    onValueChange = viewModel::onQueryChange,
+                    placeholder = stringResource(R.string.empty_search_hint),
+                    onSubmit = {
+                        viewModel.submit()
+                        // Released on submit so the results are reachable without having
+                        // to escape the field first.
+                        focusManager.clearFocus()
                     },
+                    modifier = Modifier
+                        .focusRequester(fieldFocus)
+                        // A TextField consumes the D-pad while focused, so Up and Back
+                        // release it and Down moves into the results - otherwise focus
+                        // enters the field and cannot leave.
+                        .onPreviewKeyEvent { event ->
+                            // KeyDown, not KeyUp: a TextField consumes directional keys
+                            // on KeyDown, so a handler gated on KeyUp never runs and the
+                            // field keeps focus regardless.
+                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+
+                            when (event.key) {
+                                Key.DirectionUp, Key.Back, Key.Escape -> {
+                                    focusManager.clearFocus()
+                                    event.key != Key.Back
+                                }
+
+                                Key.DirectionDown -> {
+                                    focusManager.moveFocus(FocusDirection.Down)
+                                    true
+                                }
+
+                                else -> false
+                            }
+                        },
                 )
             }
         }

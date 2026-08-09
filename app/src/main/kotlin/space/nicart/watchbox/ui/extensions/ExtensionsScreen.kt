@@ -68,11 +68,11 @@ fun ExtensionsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize().tvInitialFocus()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val padding = sectionHorizontalPadding(maxWidth)
 
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().tvInitialFocus(),
             contentPadding = PaddingValues(
                 start = padding,
                 end = padding,

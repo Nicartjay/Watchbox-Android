@@ -123,7 +123,13 @@ fun TvHomeScreen(
 
     // Seeded from the first card so the backdrop is populated before the D-pad has
     // touched anything, rather than opening on flat black.
-    val backdrop = focused ?: state.firstCard()
+    //
+    // Resolved through the artwork map, not taken raw: the state's cards carry only what
+    // the source returned, and the TMDB logo and backdrop live in that map. Using the
+    // raw card meant the hero showed a typeset title until the user moved focus, even
+    // though the logo had already been fetched.
+    val seed = state.firstCard()
+    val backdrop = focused ?: seed?.let { artwork[it.key] ?: it }
 
     Box(modifier = modifier.fillMaxSize()) {
         TvBackdrop(card = backdrop, fade = scrollProgress)
