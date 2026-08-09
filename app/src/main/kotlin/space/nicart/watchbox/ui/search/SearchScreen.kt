@@ -16,17 +16,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -34,7 +27,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.R
@@ -45,7 +37,9 @@ import space.nicart.watchbox.ui.components.WbShelfSection
 import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
 import space.nicart.watchbox.ui.components.WbPosterCard
+import space.nicart.watchbox.ui.components.WbChip
 import space.nicart.watchbox.ui.components.WbScreenHeader
+import space.nicart.watchbox.ui.components.WbSearchField
 import space.nicart.watchbox.ui.components.sectionHorizontalPadding
 
 /**
@@ -85,53 +79,37 @@ fun SearchScreen(
                 WbScreenHeader(title = stringResource(R.string.title_search))
                 Spacer(Modifier.height(6.dp))
 
-                OutlinedTextField(
+                WbSearchField(
                     value = state.query,
                     onValueChange = viewModel::onQueryChange,
-                    placeholder = {
-                        Text(
-                            text = stringResource(R.string.empty_search_hint),
-                            color = tokens.colors.textMuted,
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Rounded.Search,
-                            contentDescription = null,
-                            tint = tokens.colors.textMuted,
-                        )
-                    },
-                    trailingIcon = {
-                        if (state.query.isNotEmpty()) {
-                            Icon(
-                                imageVector = Icons.Rounded.Close,
-                                contentDescription = "Clear",
-                                tint = tokens.colors.textMuted,
-                                modifier = Modifier
-                                    .size(20.dp)
-                                    .clickable {
-                                        viewModel.onQueryChange("")
-                                    },
-                            )
-                        }
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { viewModel.submit() }),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = tokens.colors.surfaceCard,
-                        unfocusedContainerColor = tokens.colors.surfaceCard,
-                        focusedBorderColor = tokens.colors.borderDefault,
-                        unfocusedBorderColor = tokens.colors.borderSubtle,
-                        focusedTextColor = tokens.colors.textPrimary,
-                        unfocusedTextColor = tokens.colors.textPrimary,
-                        cursorColor = tokens.colors.accent,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = stringResource(R.string.empty_search_hint),
+                    onSubmit = viewModel::submit,
                 )
 
-                Spacer(Modifier.height(12.dp))
+                // Scope picker. Shown only with more than one source installed,
+                // since narrowing to the single source you already have is a no-op.
+                if (state.sources.size > 1) {
+                    Spacer(Modifier.height(10.dp))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        item(key = "all") {
+                            WbChip(
+                                label = stringResource(R.string.search_all_sources),
+                                selected = state.selectedSourceId == null,
+                                onClick = { viewModel.onSelectSource(null) },
+                            )
+                        }
+                        items(items = state.sources, key = { it.id }) { source ->
+                            WbChip(
+                                label = source.name,
+                                selected = state.selectedSourceId == source.id,
+                                onClick = { viewModel.onSelectSource(source.id) },
+                            )
+                        }
+                    }
+                }
 
                 Spacer(Modifier.height(14.dp))
             }

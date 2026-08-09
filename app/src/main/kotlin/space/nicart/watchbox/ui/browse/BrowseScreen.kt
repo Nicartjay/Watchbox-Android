@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Extension
+import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -51,6 +52,7 @@ import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
 import space.nicart.watchbox.ui.components.WbPosterCard
 import space.nicart.watchbox.ui.components.WbScreenHeader
+import space.nicart.watchbox.ui.components.WbSearchField
 import space.nicart.watchbox.ui.components.sectionHorizontalPadding
 
 /**
@@ -227,9 +229,50 @@ fun BrowseScreen(
                     WbBackButton(onClick = onBack)
                     Spacer(Modifier.size(8.dp))
                     WbScreenHeader(title = sourceName, modifier = Modifier.weight(1f))
+
+                    // Only offered when the source actually declares filters, so
+                    // the button never opens an empty panel.
+                    if (state.hasFilters) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    if (state.filtersActive) {
+                                        tokens.colors.accent
+                                    } else {
+                                        tokens.colors.surface
+                                    },
+                                )
+                                .clickable { viewModel.setFilterPanelOpen(true) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.FilterList,
+                                contentDescription = stringResource(R.string.source_filters),
+                                tint = if (state.filtersActive) {
+                                    tokens.colors.onAccent
+                                } else {
+                                    tokens.colors.textSecondary
+                                },
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    }
                 }
 
-                if (supportsLatest) {
+                Spacer(Modifier.height(10.dp))
+
+                WbSearchField(
+                    value = state.query,
+                    onValueChange = viewModel::onQueryChange,
+                    placeholder = stringResource(R.string.source_search_hint),
+                    onSubmit = viewModel::submitQuery,
+                )
+
+                // Popular/Latest are hidden while searching: neither applies to a
+                // query, and leaving them selectable implies they filter results.
+                if (supportsLatest && state.mode != BrowseMode.SEARCH) {
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         WbChip(
@@ -294,5 +337,14 @@ fun BrowseScreen(
                 }
             }
         }
+
+        SourceFilterPanel(
+            entries = state.filters,
+            visible = state.filterPanelOpen,
+            onChange = viewModel::onFilterChange,
+            onApply = viewModel::applyFilters,
+            onReset = viewModel::resetFilters,
+            onDismiss = { viewModel.setFilterPanelOpen(false) },
+        )
     }
 }

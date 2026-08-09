@@ -18,6 +18,8 @@ import space.nicart.watchbox.extension.model.InstallStep
 data class ExtensionsUiState(
     val installed: List<Extension.Installed> = emptyList(),
     val available: List<Extension.Available> = emptyList(),
+    /** Filter text applied to both lists. */
+    val query: String = "",
     val failures: List<String> = emptyList(),
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
@@ -25,6 +27,36 @@ data class ExtensionsUiState(
     /** Package name -> current step, for per-row progress. */
     val installing: Map<String, InstallStep> = emptyMap(),
 )
+
+/** Carries the four local flows through the outer [combine], which is full. */
+private data class LocalState(
+    val installing: Map<String, InstallStep>,
+    val refreshing: Boolean,
+    val error: String?,
+    val query: String,
+)
+
+/**
+ * Whether an extension matches a filter term.
+ *
+ * Matches on language as well as name so "es" finds the Spanish extensions, and
+ * on the last package-name segment so a partially-known id still resolves.
+ *
+ * Only the last segment is used, never the whole package name: every extension
+ * shares the `eu.kanade.tachiyomi.animeextension` prefix, so matching the full
+ * string makes short queries hit everything - "de" matches via "kan*ade*" and "en"
+ * via "ext*en*sion", which silently turns a language search into a no-op.
+ *
+ * Blank matches everything, keeping the unfiltered list the default.
+ */
+internal fun Extension.matches(query: String): Boolean {
+    val term = query.trim()
+    if (term.isBlank()) return true
+
+    return name.contains(term, ignoreCase = true) ||
+        lang.contains(term, ignoreCase = true) ||
+        pkgName.substringAfterLast('.').contains(term, ignoreCase = true)
+}
 
 class ExtensionsViewModel(
     private val extensions: ExtensionManager,
@@ -34,29 +66,32 @@ class ExtensionsViewModel(
     private val _installing = MutableStateFlow<Map<String, InstallStep>>(emptyMap())
     private val _refreshing = MutableStateFlow(false)
     private val _error = MutableStateFlow<String?>(null)
+    private val _query = MutableStateFlow("")
 
     val uiState: StateFlow<ExtensionsUiState> = combine(
         extensions.installed,
         extensions.available,
         extensions.failures,
         extensions.isLoading,
-        combine(_installing, _refreshing, _error) { installing, refreshing, error ->
-            Triple(installing, refreshing, error)
+        combine(_installing, _refreshing, _error, _query) { installing, refreshing, error, query ->
+            LocalState(installing, refreshing, error, query)
         },
-    ) { installed, available, failures, isLoading, (installing, refreshing, error) ->
+    ) { installed, available, failures, isLoading, local ->
         val installedPkgs = installed.map { it.pkgName }.toSet()
         val nsfwAllowed = nsfwEnabled
 
         ExtensionsUiState(
-            installed = installed,
+            installed = installed.filter { it.matches(local.query) },
             available = available
                 .filterNot { it.pkgName in installedPkgs }
-                .filter { nsfwAllowed || !it.isNsfw },
+                .filter { nsfwAllowed || !it.isNsfw }
+                .filter { it.matches(local.query) },
+            query = local.query,
             failures = failures.map { "${it.pkgName}: ${it.reason}" },
             isLoading = isLoading,
-            isRefreshing = refreshing,
-            errorMessage = error,
-            installing = installing,
+            isRefreshing = local.refreshing,
+            errorMessage = local.error,
+            installing = local.installing,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -112,6 +147,10 @@ class ExtensionsViewModel(
                 _error.value = "Could not remove ${extension.name}."
             }
         }
+    }
+
+    fun onQueryChange(query: String) {
+        _query.value = query
     }
 
     fun dismissError() {

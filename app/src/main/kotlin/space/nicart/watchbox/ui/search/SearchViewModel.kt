@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.AnimeRow
+import space.nicart.watchbox.extension.ExtensionManager
 
 data class SearchUiState(
     val query: String = "",
@@ -21,11 +22,19 @@ data class SearchUiState(
     val isLoading: Boolean = false,
     val hasSearched: Boolean = false,
     val hasNoSources: Boolean = false,
+    /** Every installed source, for the scope picker. */
+    val sources: List<SearchSource> = emptyList(),
+    /** Null means search every source. */
+    val selectedSourceId: Long? = null,
 )
+
+/** One source the search can be narrowed to. */
+data class SearchSource(val id: Long, val name: String)
 
 class SearchViewModel(
     private val repository: AnimeRepository,
     private val store: WatchBoxStore,
+    private val extensions: ExtensionManager,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SearchUiState())
@@ -40,6 +49,41 @@ class SearchViewModel(
             }
         }
         _uiState.value = _uiState.value.copy(hasNoSources = !repository.hasSources())
+
+        // Rebuilt when extensions change so installing one updates the picker
+        // without leaving the screen.
+        viewModelScope.launch {
+            extensions.installed.collect {
+                val sources = extensions.catalogueSources()
+                    .map { source -> SearchSource(source.id, source.name) }
+
+                _uiState.value = _uiState.value.copy(
+                    sources = sources,
+                    hasNoSources = sources.isEmpty(),
+                    // Drop a selection whose source has been uninstalled, so the
+                    // screen cannot be stuck searching something that is gone.
+                    selectedSourceId = _uiState.value.selectedSourceId
+                        ?.takeIf { id -> sources.any { it.id == id } },
+                )
+            }
+        }
+    }
+
+    /**
+     * Narrows the search to one source, or widens it to all when null.
+     *
+     * Re-runs immediately with the existing query rather than waiting for another
+     * keystroke, since changing scope is itself the request.
+     */
+    fun onSelectSource(sourceId: Long?) {
+        if (sourceId == _uiState.value.selectedSourceId) return
+        _uiState.value = _uiState.value.copy(selectedSourceId = sourceId)
+
+        val query = _uiState.value.query
+        if (query.isBlank()) return
+
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch { runSearch(query) }
     }
 
     /**
@@ -81,7 +125,31 @@ class SearchViewModel(
 
     private suspend fun runSearch(query: String) {
         _uiState.value = _uiState.value.copy(isLoading = true)
-        val rows = repository.searchAll(query)
+
+        val sourceId = _uiState.value.selectedSourceId
+        val rows = if (sourceId == null) {
+            repository.searchAll(query)
+        } else {
+            // Wrapped in the same row shape so the results list renders
+            // identically whether one source or all were queried.
+            repository.search(sourceId, query)
+                .getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { items ->
+                    val name = _uiState.value.sources
+                        .firstOrNull { it.id == sourceId }?.name ?: ""
+                    listOf(
+                        AnimeRow(
+                            sourceId = sourceId,
+                            sourceName = name,
+                            title = name,
+                            items = items,
+                        ),
+                    )
+                }
+                .orEmpty()
+        }
+
         _uiState.value = _uiState.value.copy(
             results = rows,
             isLoading = false,
@@ -97,10 +165,11 @@ class SearchViewModel(
         fun factory(
             repository: AnimeRepository,
             store: WatchBoxStore,
+            extensions: ExtensionManager,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                SearchViewModel(repository, store) as T
+                SearchViewModel(repository, store, extensions) as T
         }
     }
 }

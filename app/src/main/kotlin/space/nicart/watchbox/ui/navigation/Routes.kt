@@ -51,6 +51,15 @@ object Routes {
     /** Extension repository manager. */
     @Serializable
     data object Extensions
+
+    /**
+     * Settings for one extension's sources.
+     *
+     * Keyed by package name rather than source id: an extension may bundle several
+     * sources, and they are configured together on one screen.
+     */
+    @Serializable
+    data class SourceSettings(val pkgName: String, val extensionName: String)
 }
 
 /**

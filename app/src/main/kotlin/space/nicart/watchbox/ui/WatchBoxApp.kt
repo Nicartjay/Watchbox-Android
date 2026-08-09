@@ -17,6 +17,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
@@ -48,6 +49,9 @@ import space.nicart.watchbox.ui.navigation.rememberWbNavBarScrollState
 import space.nicart.watchbox.ui.player.PlayerScreen
 import space.nicart.watchbox.ui.player.PlayerViewModel
 import space.nicart.watchbox.ui.search.SearchScreen
+import space.nicart.watchbox.ui.source.SourcePreferenceGroup
+import space.nicart.watchbox.ui.source.SourceSettingsScreen
+import space.nicart.watchbox.ui.source.readSourcePreferences
 import space.nicart.watchbox.ui.search.SearchViewModel
 import space.nicart.watchbox.ui.settings.SettingsScreen
 import space.nicart.watchbox.ui.settings.SettingsViewModel
@@ -178,6 +182,39 @@ fun WatchBoxApp(
                 ExtensionsScreen(
                     viewModel = viewModel,
                     onBack = navController::popBackStack,
+                    onOpenSettings = { extension ->
+                        navController.navigate(
+                            Routes.SourceSettings(extension.pkgName, extension.name),
+                        )
+                    },
+                )
+            }
+
+            composable<Routes.SourceSettings> { entry ->
+                val route = entry.toRoute<Routes.SourceSettings>()
+                val context = LocalContext.current
+
+                // Read once per visit rather than per recomposition: building the
+                // preference tree runs extension code and touches SharedPreferences.
+                val groups = remember(route.pkgName) {
+                    container.extensionManager.installed.value
+                        .firstOrNull { it.pkgName == route.pkgName }
+                        ?.sources
+                        ?.map { source ->
+                            SourcePreferenceGroup(
+                                sourceId = source.id,
+                                sourceName = source.name,
+                                preferences = readSourcePreferences(context, source),
+                            )
+                        }
+                        ?.filter { it.preferences.isNotEmpty() }
+                        .orEmpty()
+                }
+
+                SourceSettingsScreen(
+                    extensionName = route.extensionName,
+                    groups = groups,
+                    onBack = navController::popBackStack,
                 )
             }
         }
@@ -258,6 +295,7 @@ private fun TabShell(
                         factory = SearchViewModel.factory(
                             container.repository,
                             container.store,
+                            container.extensionManager,
                         ),
                     )
                     SearchScreen(viewModel = viewModel, onOpenAnime = onOpenAnime)

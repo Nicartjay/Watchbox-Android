@@ -2,6 +2,7 @@ package space.nicart.watchbox.extension.model
 
 import android.graphics.drawable.Drawable
 import eu.kanade.tachiyomi.animesource.AnimeSource
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 
 /**
  * An extension the app knows about, in one of three states.
@@ -35,7 +36,18 @@ sealed interface Extension {
         val hasUpdate: Boolean = false,
         /** True when the extension is installed but no longer in any repo. */
         val isObsolete: Boolean = false,
-    ) : Extension
+    ) : Extension {
+
+        /**
+         * Whether any bundled source exposes its own preference screen.
+         *
+         * Checked before offering a settings button so it never opens an empty
+         * screen: implementing [ConfigurableAnimeSource] is optional, and plenty
+         * of sources have nothing to configure.
+         */
+        fun hasConfigurableSources(): Boolean =
+            sources.any { it is ConfigurableAnimeSource }
+    }
 
     data class Available(
         override val name: String,

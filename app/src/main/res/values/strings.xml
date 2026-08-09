@@ -30,11 +30,20 @@
     <string name="extensions_empty_available">No extensions found in this repository.</string>
     <string name="extensions_failed_title">Some extensions could not load</string>
     <string name="extensions_refresh">Refresh</string>
+    <string name="extensions_settings">Extension settings</string>
+    <string name="extensions_search_hint">Search extensions</string>
+    <string name="extensions_no_matches">No extensions match your search.</string>
     <string name="settings_repo_url">Extension repository</string>
     <string name="settings_repo_url_summary">URL of the repository index used to list extensions</string>
     <string name="settings_nsfw">Show 18+ extensions</string>
     <string name="source_popular">Popular</string>
     <string name="source_latest">Latest</string>
+    <string name="source_search_hint">Search this source</string>
+    <string name="source_filters">Filters</string>
+    <string name="source_filters_apply">Apply</string>
+    <string name="source_filters_reset">Reset</string>
+    <string name="source_filters_none">This source has no filters.</string>
+    <string name="source_no_preferences">This source has no settings.</string>
 
     <!-- Common -->
     <string name="action_play">Play</string>
@@ -44,6 +53,7 @@
 
     <!-- Empty / error states -->
     <string name="empty_search_hint">Search movies and TV shows</string>
+    <string name="search_all_sources">All sources</string>
     <string name="empty_search_title">Nothing found</string>
     <string name="empty_no_sources_title">No sources installed</string>
     <string name="empty_no_sources_body">Install an extension to start browsing anime.</string>

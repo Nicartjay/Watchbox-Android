@@ -26,13 +26,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Upgrade
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,9 +42,9 @@ import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.extension.model.Extension
 import space.nicart.watchbox.extension.model.InstallStep
 import space.nicart.watchbox.ui.components.NavOverlayPadding
-import space.nicart.watchbox.ui.components.WbAsyncImage
 import space.nicart.watchbox.ui.components.WbBackButton
 import space.nicart.watchbox.ui.components.WbScreenHeader
+import space.nicart.watchbox.ui.components.WbSearchField
 import space.nicart.watchbox.ui.components.sectionHorizontalPadding
 
 /**
@@ -60,6 +59,7 @@ import space.nicart.watchbox.ui.components.sectionHorizontalPadding
 fun ExtensionsScreen(
     viewModel: ExtensionsViewModel,
     onBack: () -> Unit,
+    onOpenSettings: (Extension.Installed) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -117,6 +117,14 @@ fun ExtensionsScreen(
                 }
             }
 
+            item(key = "search") {
+                WbSearchField(
+                    value = state.query,
+                    onValueChange = viewModel::onQueryChange,
+                    placeholder = stringResource(R.string.extensions_search_hint),
+                )
+            }
+
             state.errorMessage?.let { message ->
                 item(key = "error") {
                     Box(
@@ -171,6 +179,9 @@ fun ExtensionsScreen(
                     InstalledRow(
                         extension = extension,
                         onUninstall = { viewModel.uninstall(extension) },
+                        onOpenSettings = extension
+                            .takeIf { it.hasConfigurableSources() }
+                            ?.let { { onOpenSettings(it) } },
                     )
                 }
             }
@@ -182,7 +193,11 @@ fun ExtensionsScreen(
             if (state.available.isEmpty() && !state.isRefreshing) {
                 item(key = "available-empty") {
                     Text(
-                        text = stringResource(R.string.extensions_empty_available),
+                        text = if (state.query.isBlank()) {
+                            stringResource(R.string.extensions_empty_available)
+                        } else {
+                            stringResource(R.string.extensions_no_matches)
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         color = tokens.colors.textMuted,
                         modifier = Modifier.padding(vertical = 10.dp),
@@ -215,6 +230,7 @@ private fun SectionLabel(text: String) {
 private fun InstalledRow(
     extension: Extension.Installed,
     onUninstall: () -> Unit,
+    onOpenSettings: (() -> Unit)?,
 ) {
     val tokens = MaterialTheme.wb
 
@@ -237,13 +253,27 @@ private fun InstalledRow(
             extension.hasUpdate -> tokens.colors.accent
             else -> tokens.colors.danger
         },
+        // Installed extensions have no icon URL — the drawable comes straight
+        // from PackageManager. See ExtensionIcon for why the two differ.
         iconUrl = null,
+        iconDrawable = extension.icon,
         trailing = {
-            ActionButton(
-                icon = Icons.Rounded.Delete,
-                description = stringResource(R.string.extensions_uninstall),
-                onClick = onUninstall,
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Only shown when the extension actually exposes preferences, so
+                // the button never opens an empty screen.
+                onOpenSettings?.let {
+                    ActionButton(
+                        icon = Icons.Rounded.Settings,
+                        description = stringResource(R.string.extensions_settings),
+                        onClick = it,
+                    )
+                }
+                ActionButton(
+                    icon = Icons.Rounded.Delete,
+                    description = stringResource(R.string.extensions_uninstall),
+                    onClick = onUninstall,
+                )
+            }
         },
     )
 }
@@ -293,6 +323,7 @@ private fun ExtensionRow(
     badge: String?,
     badgeColor: androidx.compose.ui.graphics.Color,
     iconUrl: String?,
+    iconDrawable: android.graphics.drawable.Drawable? = null,
     trailing: @Composable () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
@@ -306,19 +337,14 @@ private fun ExtensionRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(
+        ExtensionIconSlot(
+            drawable = iconDrawable,
+            iconUrl = iconUrl,
             modifier = Modifier
                 .size(40.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .background(tokens.colors.surface),
-        ) {
-            WbAsyncImage(
-                url = iconUrl,
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
+        )
 
         Column(
             modifier = Modifier.weight(1f),

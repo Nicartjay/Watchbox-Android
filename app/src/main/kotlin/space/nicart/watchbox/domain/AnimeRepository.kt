@@ -128,14 +128,27 @@ class AnimeRepository(
         sourceId: Long,
         query: String,
         page: Int = 1,
+        filters: AnimeFilterList = AnimeFilterList(),
     ): Result<List<AnimeCard>> = runCatching {
         val source = catalogueOrThrow(sourceId)
         withContext(Dispatchers.IO) {
-            source.getSearchAnime(page, query, AnimeFilterList())
+            source.getSearchAnime(page, query, filters)
                 .animes
                 .map { it.toCard(source) }
         }
     }
+
+    /**
+     * The filter list a source offers, or an empty list.
+     *
+     * Built fresh on every call: the ABI expects the host to mutate the returned
+     * filters in place, so a cached list would leak one screen's selections into
+     * the next. Guarded because `getFilterList` runs extension code that may throw.
+     */
+    fun filterList(sourceId: Long): AnimeFilterList =
+        extensions.catalogueSourceById(sourceId)
+            ?.let { source -> runCatching { source.getFilterList() }.getOrNull() }
+            ?: AnimeFilterList()
 
     /**
      * Searches every installed source at once.
