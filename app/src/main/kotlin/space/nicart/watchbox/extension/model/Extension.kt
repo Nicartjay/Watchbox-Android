@@ -61,6 +61,13 @@ sealed interface Extension {
         val iconUrl: String,
         val apkUrl: String,
         val sources: List<AvailableSource> = emptyList(),
+        /**
+         * Which repository listed this extension.
+         *
+         * Recorded so the list can be filtered by origin, and so a package offered
+         * by several repositories can be attributed to the one that won.
+         */
+        val repoUrl: String = "",
     ) : Extension
 
     /**

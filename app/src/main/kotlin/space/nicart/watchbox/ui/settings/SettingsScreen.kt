@@ -21,6 +21,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -46,7 +49,7 @@ import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.AppTheme
 import space.nicart.watchbox.core.ui.paletteForPreview
 import space.nicart.watchbox.data.remote.AppUpdate
-import space.nicart.watchbox.extension.ExtensionRepoApi
+import space.nicart.watchbox.data.local.ExtensionRepo
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.WbScreenHeader
@@ -68,9 +71,12 @@ fun SettingsScreen(
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
 
-    var repoDraft by remember(settings.repoUrl) {
-        mutableStateOf(settings.repoUrl)
-    }
+    var repoDraft by remember { mutableStateOf("") }
+    var repoError by remember { mutableStateOf<String?>(null) }
+
+    // Resolved outside the click handler; stringResource is not callable there.
+    val addRepoInvalid = stringResource(R.string.settings_repos_invalid)
+    val addRepoDuplicate = stringResource(R.string.settings_repos_duplicate)
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val padding = sectionHorizontalPadding(maxWidth)
@@ -144,22 +150,50 @@ fun SettingsScreen(
                 )
             }
 
-            // ------------------------------------------------------ server
-            item(key = "server-label") {
-                SettingsGroupLabel(stringResource(R.string.settings_repo_url))
+            // ----------------------------------------------- repositories
+            item(key = "repos-label") {
+                SettingsGroupLabel(stringResource(R.string.settings_repos))
             }
 
-            item(key = "server") {
+            item(key = "repos") {
                 SettingsCard {
                     Text(
-                        text = stringResource(R.string.settings_repo_url_summary),
+                        text = stringResource(R.string.settings_repos_summary),
                         style = MaterialTheme.typography.bodyMedium,
                         color = tokens.colors.textMuted,
                     )
-                    Spacer(Modifier.height(10.dp))
+
+                    Spacer(Modifier.height(12.dp))
+
+                    settings.repos.forEach { repo ->
+                        RepoRow(
+                            repo = repo,
+                            onToggle = { viewModel.setRepoEnabled(repo.url, it) },
+                            // The last repository cannot be removed: an empty list
+                            // leaves nothing to browse and no way back except a
+                            // reset, which is not discoverable from an empty screen.
+                            onRemove = if (settings.repos.size > 1) {
+                                { viewModel.removeRepo(repo.url) }
+                            } else {
+                                null
+                            },
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+
                     OutlinedTextField(
                         value = repoDraft,
-                        onValueChange = { repoDraft = it },
+                        onValueChange = {
+                            repoDraft = it
+                            repoError = null
+                        },
+                        placeholder = {
+                            Text(
+                                text = stringResource(R.string.settings_repos_hint),
+                                color = tokens.colors.textMuted,
+                            )
+                        },
+                        isError = repoError != null,
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -173,17 +207,50 @@ fun SettingsScreen(
                         ),
                         modifier = Modifier.fillMaxWidth(),
                     )
+
+                    repoError?.let { message ->
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = tokens.colors.danger,
+                        )
+                    }
+
                     Spacer(Modifier.height(10.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         SettingsTextAction(
-                            label = "Save",
-                            onClick = { viewModel.setRepoUrl(repoDraft) },
+                            label = stringResource(R.string.settings_repos_add),
+                            onClick = {
+                                val url = repoDraft.trim()
+                                repoError = when {
+                                    url.isBlank() -> null
+                                    // Checked here rather than after the write: a
+                                    // silent no-op on a typo'd duplicate looks like
+                                    // the Add button is broken.
+                                    !url.looksLikeHttpUrl() ->
+                                        addRepoInvalid
+                                    settings.repos.any { existing ->
+                                        existing.url.equals(
+                                            ExtensionRepo.normaliseUrl(url),
+                                            ignoreCase = true,
+                                        )
+                                    } -> addRepoDuplicate
+
+                                    else -> {
+                                        viewModel.addRepo(url)
+                                        repoDraft = ""
+                                        null
+                                    }
+                                }
+                            },
                         )
                         SettingsTextAction(
-                            label = "Reset",
+                            label = stringResource(R.string.settings_repos_reset),
                             onClick = {
-                                viewModel.setRepoUrl("")
-                                repoDraft = ExtensionRepoApi.DEFAULT_REPO
+                                viewModel.resetRepos()
+                                repoDraft = ""
+                                repoError = null
                             },
                         )
                     }
@@ -496,3 +563,87 @@ private fun UpdateCard(
 }
 
 private fun Long.asMegabytes(): String = "%.1f MB".format(this / 1024.0 / 1024.0)
+
+/**
+ * One configured repository: name, enable switch, and removal.
+ *
+ * The full URL is shown beneath the derived name because two repositories can
+ * share an owner, and the URL is the only thing that truly distinguishes them.
+ */
+@Composable
+private fun RepoRow(
+    repo: ExtensionRepo,
+    onToggle: (Boolean) -> Unit,
+    onRemove: (() -> Unit)?,
+) {
+    val tokens = MaterialTheme.wb
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(tokens.colors.surface)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = repo.displayName,
+                style = MaterialTheme.typography.bodyLarge,
+                // Dimmed when disabled, so the list reads at a glance.
+                color = if (repo.enabled) {
+                    tokens.colors.textPrimary
+                } else {
+                    tokens.colors.textMuted
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = repo.url,
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.colors.textMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        Switch(
+            checked = repo.enabled,
+            onCheckedChange = onToggle,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = tokens.colors.onAccent,
+                checkedTrackColor = tokens.colors.accent,
+                uncheckedThumbColor = tokens.colors.textMuted,
+                uncheckedTrackColor = tokens.colors.surfaceCard,
+            ),
+        )
+
+        onRemove?.let {
+            Icon(
+                imageVector = Icons.Rounded.Delete,
+                contentDescription = stringResource(R.string.settings_repos_remove),
+                tint = tokens.colors.textMuted,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clickable(onClick = it),
+            )
+        }
+    }
+}
+
+/**
+ * Cheap sanity check for a pasted repository URL.
+ *
+ * Deliberately not strict validation - only a scheme and a host are required.
+ * Rejecting anything more adventurous would block self-hosted repos on odd ports
+ * or LAN addresses, and the real verification is whether the index fetch succeeds.
+ */
+private fun String.looksLikeHttpUrl(): Boolean {
+    val trimmed = trim()
+    if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) return false
+
+    val host = trimmed.substringAfter("://").substringBefore('/')
+    return host.isNotBlank() && host.contains('.')
+}

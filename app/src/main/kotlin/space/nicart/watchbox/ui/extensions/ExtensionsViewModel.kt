@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import space.nicart.watchbox.data.local.ExtensionRepo
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.extension.ExtensionManager
 import space.nicart.watchbox.extension.model.Extension
@@ -18,22 +19,34 @@ import space.nicart.watchbox.extension.model.InstallStep
 data class ExtensionsUiState(
     val installed: List<Extension.Installed> = emptyList(),
     val available: List<Extension.Available> = emptyList(),
-    /** Filter text applied to both lists. */
-    val query: String = "",
+    val filters: ExtensionFilters = ExtensionFilters(),
     val failures: List<String> = emptyList(),
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
     val errorMessage: String? = null,
     /** Package name -> current step, for per-row progress. */
     val installing: Map<String, InstallStep> = emptyMap(),
-)
+    /** Language codes offered by the filter panel. */
+    val languages: List<String> = emptyList(),
+    /** Configured repositories, for the repository filter. */
+    val repos: List<ExtensionRepo> = emptyList(),
+    val filterPanelOpen: Boolean = false,
+    /** True when some repositories loaded and others failed. */
+    val partialRefresh: Boolean = false,
+) {
+    /** Convenience for the search field. */
+    val query: String get() = filters.query
+}
 
-/** Carries the four local flows through the outer [combine], which is full. */
+/** Carries the local flows through the outer [combine], which is full. */
 private data class LocalState(
     val installing: Map<String, InstallStep>,
     val refreshing: Boolean,
     val error: String?,
-    val query: String,
+    val filters: ExtensionFilters,
+    val repos: List<ExtensionRepo>,
+    val panelOpen: Boolean,
+    val partial: Boolean,
 )
 
 /**
@@ -66,32 +79,51 @@ class ExtensionsViewModel(
     private val _installing = MutableStateFlow<Map<String, InstallStep>>(emptyMap())
     private val _refreshing = MutableStateFlow(false)
     private val _error = MutableStateFlow<String?>(null)
-    private val _query = MutableStateFlow("")
+    private val _filters = MutableStateFlow(ExtensionFilters())
+    private val _panelOpen = MutableStateFlow(false)
+    private val _partial = MutableStateFlow(false)
 
     val uiState: StateFlow<ExtensionsUiState> = combine(
         extensions.installed,
         extensions.available,
         extensions.failures,
         extensions.isLoading,
-        combine(_installing, _refreshing, _error, _query) { installing, refreshing, error, query ->
-            LocalState(installing, refreshing, error, query)
+        combine(
+            _installing,
+            _refreshing,
+            _error,
+            _filters,
+            combine(store.settings, _panelOpen, _partial) { settings, panelOpen, partial ->
+                Triple(settings.repos, panelOpen, partial)
+            },
+        ) { installing, refreshing, error, filters, (repos, panelOpen, partial) ->
+            LocalState(installing, refreshing, error, filters, repos, panelOpen, partial)
         },
     ) { installed, available, failures, isLoading, local ->
         val installedPkgs = installed.map { it.pkgName }.toSet()
         val nsfwAllowed = nsfwEnabled
 
+        // NSFW visibility is decided before filtering, so the 18+ filter can only
+        // ever narrow what the setting already permits.
+        val visibleAvailable = available
+            .filterNot { it.pkgName in installedPkgs }
+            .filter { nsfwAllowed || !it.isNsfw }
+
         ExtensionsUiState(
-            installed = installed.filter { it.matches(local.query) },
-            available = available
-                .filterNot { it.pkgName in installedPkgs }
-                .filter { nsfwAllowed || !it.isNsfw }
-                .filter { it.matches(local.query) },
-            query = local.query,
+            installed = installed.applyFilters(local.filters),
+            available = visibleAvailable.applyFilters(local.filters),
+            filters = local.filters,
             failures = failures.map { "${it.pkgName}: ${it.reason}" },
             isLoading = isLoading,
             isRefreshing = local.refreshing,
             errorMessage = local.error,
             installing = local.installing,
+            // Offered languages come from the unfiltered lists, or selecting one
+            // would remove every other option from the panel.
+            languages = (installed + visibleAvailable).availableLanguages(),
+            repos = local.repos,
+            filterPanelOpen = local.panelOpen,
+            partialRefresh = local.partial,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -113,12 +145,56 @@ class ExtensionsViewModel(
             _refreshing.value = true
             _error.value = null
 
-            val repoUrl = store.currentSettings().repoUrl
-            extensions.refreshAvailable(repoUrl)
-                .onFailure { _error.value = it.message ?: "Could not reach the repository." }
+            val result = extensions.refreshAvailable(store.currentSettings().repos)
+
+            // Reported per repository: with several configured, "could not reach the
+            // repository" would not say which, and a single failure among four is a
+            // very different situation from total failure.
+            _error.value = when {
+                result.allFailed -> result.failures.first().let { failure ->
+                    "${failure.repo.displayName}: ${failure.message}"
+                }
+
+                result.hasFailures -> result.failures
+                    .joinToString(prefix = "Could not reach ") { it.repo.displayName }
+
+                else -> null
+            }
+            _partial.value = result.hasFailures && !result.allFailed
 
             _refreshing.value = false
         }
+    }
+
+    fun onQueryChange(query: String) {
+        _filters.value = _filters.value.copy(query = query)
+    }
+
+    fun setFilterPanelOpen(open: Boolean) {
+        _panelOpen.value = open
+    }
+
+    fun toggleLanguage(lang: String) {
+        val current = _filters.value.languages
+        _filters.value = _filters.value.copy(
+            languages = if (lang in current) current - lang else current + lang,
+        )
+    }
+
+    fun setNsfwFilter(filter: NsfwFilter) {
+        _filters.value = _filters.value.copy(nsfw = filter)
+    }
+
+    fun toggleRepo(repoUrl: String) {
+        val current = _filters.value.repoUrls
+        _filters.value = _filters.value.copy(
+            repoUrls = if (repoUrl in current) current - repoUrl else current + repoUrl,
+        )
+    }
+
+    /** Clears every filter but keeps the search text, which is typed separately. */
+    fun resetFilters() {
+        _filters.value = ExtensionFilters(query = _filters.value.query)
     }
 
     fun install(extension: Extension.Available) {
@@ -147,10 +223,6 @@ class ExtensionsViewModel(
                 _error.value = "Could not remove ${extension.name}."
             }
         }
-    }
-
-    fun onQueryChange(query: String) {
-        _query.value = query
     }
 
     fun dismissError() {

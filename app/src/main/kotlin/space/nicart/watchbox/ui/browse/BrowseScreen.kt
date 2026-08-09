@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.R
@@ -65,6 +66,8 @@ fun SourceListScreen(
     onOpenSource: (SourceEntry) -> Unit,
     onOpenExtensions: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Extensions with a newer build available; shown as a badge. */
+    updateCount: Int = 0,
 ) {
     val sources by viewModel.sources.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
@@ -110,6 +113,23 @@ fun SourceListScreen(
                         color = tokens.colors.textPrimary,
                         modifier = Modifier.weight(1f),
                     )
+                    // Populated by the startup repository check, so pending updates
+                    // are visible without opening the extension list first.
+                    if (updateCount > 0) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(tokens.colors.accent)
+                                .padding(horizontal = 7.dp, vertical = 2.dp),
+                        ) {
+                            Text(
+                                text = updateCount.toString(),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = tokens.colors.onAccent,
+                            )
+                        }
+                    }
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                         contentDescription = null,

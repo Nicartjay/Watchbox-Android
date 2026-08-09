@@ -43,7 +43,13 @@ class WatchBoxApplication : Application(), ImageLoaderFactory {
         val networkHelper = installExtensionInjekt(this)
 
         container = AppContainer(this, networkHelper)
-        container.extensionManager.init()
+
+        // Checks for extension updates on every launch. The repository list is
+        // supplied lazily because the store is read from disk, which must not
+        // happen on the main thread during onCreate.
+        container.extensionManager.init(
+            repoProvider = { container.store.currentSettings().repos },
+        )
 
         // Initialised eagerly so a Chromecast session started from the system UI
         // is already visible the first time the player opens.

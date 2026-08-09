@@ -40,8 +40,7 @@ class WatchBoxStore(context: Context) {
         .catch { emit(androidx.datastore.preferences.core.emptyPreferences()) }
         .map { prefs ->
             AppSettings(
-                repoUrl = prefs[Keys.REPO_URL]?.takeIf { it.isNotBlank() }
-                    ?: ExtensionRepoApi.DEFAULT_REPO,
+                repos = readRepos(prefs),
                 theme = AppTheme.fromName(prefs[Keys.THEME]),
                 amoled = prefs[Keys.AMOLED] ?: false,
                 autoPlayNext = prefs[Keys.AUTO_NEXT] ?: true,
@@ -58,10 +57,65 @@ class WatchBoxStore(context: Context) {
 
     suspend fun currentSettings(): AppSettings = settings.first()
 
-    suspend fun setRepoUrl(url: String) = store.edit { prefs ->
-        val normalised = url.trim().trimEnd('/')
-        if (normalised.isBlank()) prefs.remove(Keys.REPO_URL)
-        else prefs[Keys.REPO_URL] = normalised
+    // -------------------------------------------------------- repositories
+
+    /**
+     * Resolves the stored repository list.
+     *
+     * Migrates the legacy single-URL key on read rather than with a one-shot
+     * write: a read-side migration cannot half-apply, and a user who had a custom
+     * repository configured keeps it instead of silently reverting to the default.
+     */
+    private fun readRepos(prefs: Preferences): List<ExtensionRepo> {
+        val stored = decodeList<ExtensionRepo>(prefs[Keys.REPOS])
+        if (stored.isNotEmpty()) return stored
+
+        val legacy = prefs[Keys.REPO_URL]?.takeIf { it.isNotBlank() }
+        return when {
+            legacy != null -> listOf(ExtensionRepo(url = ExtensionRepo.normaliseUrl(legacy)))
+            else -> ExtensionRepo.DEFAULT
+        }
+    }
+
+    /**
+     * Adds a repository, or returns false when it is already present.
+     *
+     * De-duplicated on the normalised URL so the same repo pasted as a root and as
+     * an index link cannot produce two entries fetching the same index.
+     */
+    suspend fun addRepo(url: String): Boolean {
+        val normalised = ExtensionRepo.normaliseUrl(url)
+        if (normalised.isBlank()) return false
+
+        var added = false
+        store.edit { prefs ->
+            val current = readRepos(prefs)
+            if (current.any { it.url.equals(normalised, ignoreCase = true) }) return@edit
+
+            prefs[Keys.REPOS] = json.encodeToString(current + ExtensionRepo(normalised))
+            added = true
+        }
+        return added
+    }
+
+    suspend fun removeRepo(url: String) = store.edit { prefs ->
+        val next = readRepos(prefs).filterNot { it.url.equals(url, ignoreCase = true) }
+        prefs[Keys.REPOS] = json.encodeToString(next)
+    }
+
+    suspend fun setRepoEnabled(url: String, enabled: Boolean) = store.edit { prefs ->
+        val next = readRepos(prefs).map { repo ->
+            if (repo.url.equals(url, ignoreCase = true)) repo.copy(enabled = enabled) else repo
+        }
+        prefs[Keys.REPOS] = json.encodeToString(next)
+    }
+
+    /** Restores the shipped default list. */
+    suspend fun resetRepos() = store.edit { prefs ->
+        // The legacy key is cleared too, or the read-side migration would resurrect
+        // the old custom URL on the next read.
+        prefs.remove(Keys.REPO_URL)
+        prefs[Keys.REPOS] = json.encodeToString(ExtensionRepo.DEFAULT)
     }
 
     suspend fun setTheme(theme: AppTheme) = store.edit { it[Keys.THEME] = theme.name }
@@ -181,7 +235,9 @@ class WatchBoxStore(context: Context) {
     }
 
     private object Keys {
+        /** Legacy single repository. Read for migration only; never written. */
         val REPO_URL = stringPreferencesKey("extension_repo_url")
+        val REPOS = stringPreferencesKey("extension_repos")
         val THEME = stringPreferencesKey("theme")
         val AMOLED = booleanPreferencesKey("amoled")
         val AUTO_NEXT = booleanPreferencesKey("auto_play_next")
@@ -200,7 +256,7 @@ class WatchBoxStore(context: Context) {
 }
 
 data class AppSettings(
-    val repoUrl: String = ExtensionRepoApi.DEFAULT_REPO,
+    val repos: List<ExtensionRepo> = ExtensionRepo.DEFAULT,
     val theme: AppTheme = AppTheme.Default,
     val amoled: Boolean = false,
     val autoPlayNext: Boolean = true,
@@ -214,6 +270,10 @@ data class AppSettings(
     val subtitleLanguage: String = "en",
     val lastServerId: String? = null,
 ) {
+
+    /** Repositories to actually fetch from. */
+    val enabledRepos: List<ExtensionRepo>
+        get() = repos.filter { it.enabled }
 
     /**
      * True when an automatic check is due.

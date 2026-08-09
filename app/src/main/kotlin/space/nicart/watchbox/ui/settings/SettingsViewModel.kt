@@ -124,8 +124,20 @@ class SettingsViewModel(
         viewModelScope.launch { store.setAutoPlayNext(enabled) }
     }
 
-    fun setRepoUrl(url: String) {
-        viewModelScope.launch { store.setRepoUrl(url) }
+    fun addRepo(url: String) {
+        viewModelScope.launch { store.addRepo(url) }
+    }
+
+    fun removeRepo(url: String) {
+        viewModelScope.launch { store.removeRepo(url) }
+    }
+
+    fun setRepoEnabled(url: String, enabled: Boolean) {
+        viewModelScope.launch { store.setRepoEnabled(url, enabled) }
+    }
+
+    fun resetRepos() {
+        viewModelScope.launch { store.resetRepos() }
     }
 
     fun setNsfwEnabled(enabled: Boolean) {

@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.runtime.Composable
@@ -91,6 +92,32 @@ fun ExtensionsScreen(
                         title = stringResource(R.string.title_extensions),
                         modifier = Modifier.weight(1f),
                     )
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                if (state.filters.isActive) {
+                                    tokens.colors.accent
+                                } else {
+                                    tokens.colors.surface
+                                },
+                            )
+                            .clickable { viewModel.setFilterPanelOpen(true) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.FilterList,
+                            contentDescription = stringResource(R.string.extensions_filters),
+                            tint = if (state.filters.isActive) {
+                                tokens.colors.onAccent
+                            } else {
+                                tokens.colors.textSecondary
+                            },
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    Spacer(Modifier.size(8.dp))
                     Box(
                         modifier = Modifier
                             .size(40.dp)
@@ -213,6 +240,18 @@ fun ExtensionsScreen(
                 )
             }
         }
+
+        ExtensionFilterPanel(
+            filters = state.filters,
+            languages = state.languages,
+            repos = state.repos,
+            visible = state.filterPanelOpen,
+            onToggleLanguage = viewModel::toggleLanguage,
+            onSetNsfw = viewModel::setNsfwFilter,
+            onToggleRepo = viewModel::toggleRepo,
+            onReset = viewModel::resetFilters,
+            onDismiss = { viewModel.setFilterPanelOpen(false) },
+        )
     }
 }
 

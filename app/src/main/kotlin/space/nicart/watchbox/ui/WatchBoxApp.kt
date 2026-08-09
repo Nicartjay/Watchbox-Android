@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
@@ -306,10 +307,14 @@ private fun TabShell(
                         key = "sources",
                         factory = SourceListViewModel.factory(container.extensionManager),
                     )
+                    val updateCount by container.extensionManager.updateCount
+                        .collectAsStateWithLifecycle()
+
                     SourceListScreen(
                         viewModel = viewModel,
                         onOpenSource = { onOpenSource(it.id, it.name) },
                         onOpenExtensions = onOpenExtensions,
+                        updateCount = updateCount,
                     )
                 }
 
