@@ -127,6 +127,7 @@ fun WatchBoxApp(
                 DetailScreen(
                     viewModel = viewModel,
                     onBack = navController::popBackStack,
+                    extensionForSource = container.extensionManager::extensionForSource,
                     // A suggestion opens its own detail page, pushed onto the
                     // stack so Back returns to the title it was suggested from.
                     onOpenAnime = navController::openAnime,

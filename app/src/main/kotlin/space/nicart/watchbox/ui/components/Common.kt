@@ -123,6 +123,14 @@ fun WbAsyncImage(
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
     fallbackLabel: String? = null,
+    /**
+     * Where the image sits when it does not fill its box.
+     *
+     * Only matters with [ContentScale.Fit], which letterboxes: a wide logo in a taller
+     * box is centred by default, which reads as an indent when everything beside it is
+     * left-aligned.
+     */
+    alignment: Alignment = Alignment.Center,
 ) {
     val tokens = MaterialTheme.wb
 
@@ -153,6 +161,7 @@ fun WbAsyncImage(
             .build(),
         contentDescription = contentDescription,
         contentScale = contentScale,
+        alignment = alignment,
         modifier = modifier,
         loading = {
             Box(modifier = Modifier.fillMaxSize().background(rememberShimmerBrush()))

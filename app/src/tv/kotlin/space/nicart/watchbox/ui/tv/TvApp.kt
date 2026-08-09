@@ -86,6 +86,7 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
             DetailScreen(
                 viewModel = viewModel,
                 onBack = navController::popBackStack,
+                extensionForSource = container.extensionManager::extensionForSource,
                 onOpenAnime = { navController.openAnime(it) },
                 onPlay = { episode, resumeMs ->
                     navController.navigate(

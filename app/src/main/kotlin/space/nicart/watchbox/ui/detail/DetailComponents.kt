@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -270,6 +272,8 @@ fun DetailActionButtons(
     onToggleWatchlist: () -> Unit,
     modifier: Modifier = Modifier,
     isTablet: Boolean = false,
+    /** True on a wide hero, where buttons size to their content. */
+    compactButtons: Boolean = false,
 ) {
     val tokens = MaterialTheme.wb
     val buttonHeight = if (isTablet) 56.dp else 52.dp
@@ -303,21 +307,38 @@ fun DetailActionButtons(
 
     Box(
         modifier = modifier
-            .widthIn(max = if (isTablet) 520.dp else 420.dp)
-            .fillMaxWidth()
+            // Content-sized on a wide hero: the stretched pill is a phone treatment,
+            // where the row owns the full width. Beside a title it reads as a stray
+            // banner rather than a button.
+            .then(
+                if (compactButtons) {
+                    // wrapContentWidth, not an empty Modifier: the parent Box in
+                    // DetailScreen is fillMaxWidth, and without this the Row inherits
+                    // that constraint and the Play button stretches the whole screen.
+                    Modifier.wrapContentWidth(Alignment.Start)
+                } else {
+                    Modifier.widthIn(max = if (isTablet) 520.dp else 420.dp).fillMaxWidth()
+                },
+            )
             .height(buttonHeight),
     ) {
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .fillMaxWidth(),
+                .then(if (compactButtons) Modifier else Modifier.fillMaxWidth()),
             horizontalArrangement = Arrangement.Start,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // --- Play: white pill, dark label
             Surface(
                 modifier = Modifier
-                    .weight(1f)
+                    .then(
+                        if (compactButtons) {
+                            Modifier.widthIn(min = 200.dp)
+                        } else {
+                            Modifier.weight(1f)
+                        },
+                    )
                     .height(buttonHeight),
                 shape = RoundedCornerShape(40.dp),
                 color = tokens.colors.textPrimary,
@@ -325,7 +346,14 @@ fun DetailActionButtons(
                 onClick = onPlay,
             ) {
                 Row(
-                    modifier = Modifier.fillMaxSize(),
+                    // fillMaxHeight, not fillMaxSize, when content-sized: fillMaxSize
+                    // expands to the available width, which is what kept the button
+                    // stretched across the screen no matter what the wrappers said.
+                    modifier = if (compactButtons) {
+                        Modifier.fillMaxHeight().padding(horizontal = 28.dp)
+                    } else {
+                        Modifier.fillMaxSize()
+                    },
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {

@@ -361,44 +361,22 @@ fun TvLandscapeCard(
                 modifier = Modifier.fillMaxSize(),
             )
 
-            // Scrim only under the logo, so artwork stays bright everywhere else.
-            if (card.logoUrl != null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                0f to Color.Transparent,
-                                0.55f to Color.Black.copy(alpha = 0.45f),
-                                1f to Color.Black.copy(alpha = 0.75f),
-                            ),
-                        ),
-                )
-                WbAsyncImage(
-                    url = card.logoUrl,
-                    contentDescription = card.title,
-                    // Fit, never Crop: a logo is mostly transparent and cropping
-                    // cuts the wordmark.
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(10.dp)
-                        .fillMaxWidth(0.7f)
-                        .height(CARD_LOGO_HEIGHT),
-                )
-            }
         }
 
-        // Only when no logo was found, or the title would appear twice.
-        if (card.logoUrl == null) {
-            Text(
-                text = card.title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = tokens.colors.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        // Always the title text, never the TMDB logo.
+        //
+        // A logo composited onto a card competes with the artwork behind it and needs a
+        // scrim to stay legible, which dulls the image the card exists to show. It is
+        // also inconsistent: only some titles have a logo, so a row ends up half
+        // wordmarks and half text at different optical sizes. The hero still uses the
+        // logo, where it is large enough to earn the space.
+        Text(
+            text = card.title,
+            style = MaterialTheme.typography.bodyLarge,
+            color = tokens.colors.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 
     TvFocusReporter(interaction = interaction, onFocused = onFocus)
@@ -432,4 +410,3 @@ private val CARD_WIDTH = 300.dp
 /** 16:9, matching the backdrop it displays. */
 private const val CARD_ASPECT = 1.777f
 
-private val CARD_LOGO_HEIGHT = 40.dp

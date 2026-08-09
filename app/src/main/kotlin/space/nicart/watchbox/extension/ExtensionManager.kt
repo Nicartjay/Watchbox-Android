@@ -125,6 +125,18 @@ class ExtensionManager(
 
     fun sourceById(id: Long): AnimeSource? = _sources.value[id]
 
+    /**
+     * The extension a source belongs to.
+     *
+     * Needed because a source has no icon of its own - the icon belongs to the
+     * extension that created it, and [sources] flattens that association away. Walking
+     * the installed list is cheap: it holds a handful of entries, not thousands.
+     */
+    fun extensionForSource(sourceId: Long): Extension.Installed? =
+        _installed.value.firstOrNull { extension ->
+            extension.sources.any { it.id == sourceId }
+        }
+
     fun catalogueSourceById(id: Long): AnimeCatalogueSource? =
         _sources.value[id] as? AnimeCatalogueSource
 

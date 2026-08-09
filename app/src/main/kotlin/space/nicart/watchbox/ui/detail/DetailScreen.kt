@@ -23,6 +23,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import space.nicart.watchbox.core.ui.LocalLayoutMetrics
+import space.nicart.watchbox.extension.model.Extension
 import space.nicart.watchbox.core.ui.tvInitialFocus
 import space.nicart.watchbox.R
 import space.nicart.watchbox.domain.AnimeCard
@@ -48,6 +50,8 @@ import space.nicart.watchbox.ui.components.WbShelfSection
 fun DetailScreen(
     viewModel: DetailViewModel,
     onBack: () -> Unit,
+    /** Resolves a source's owning extension, for its icon. */
+    extensionForSource: (Long) -> Extension.Installed? = { null },
     onPlay: (episode: EpisodeEntry, resumeMs: Long) -> Unit,
     onOpenAnime: (AnimeCard) -> Unit,
     modifier: Modifier = Modifier,
@@ -57,14 +61,32 @@ fun DetailScreen(
     val density = LocalDensity.current
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val metrics = LocalLayoutMetrics.current
         val isTablet = maxWidth >= 720.dp
-        val contentPadding = if (isTablet) 32.dp else 18.dp
+
+        // A wide hero needs room for text *beside* the artwork, which a portrait tablet
+        // does not have even though it is a tablet. Gated on the landscape width rather
+        // than the form factor for that reason.
+        val usesWideHero = metrics.isTv || maxWidth >= 900.dp
+
+        val contentPadding = when {
+            metrics.isTv -> metrics.screenPadding
+            isTablet -> 32.dp
+            else -> 18.dp
+        }
         val contentMaxWidth = if (isTablet) {
             (maxWidth.value * 0.6f).dp.coerceIn(520.dp, 680.dp)
         } else {
             maxWidth
         }
-        val heroHeight = detailHeroHeight(maxWidth, isTablet)
+        // The wide hero is the screen, not a banner above it: it carries the badge,
+        // title, metadata, summary and actions, and the Netflix layout depends on that
+        // vertical room. The stacked phone hero keeps its own proportional sizing.
+        val heroHeight = if (usesWideHero) {
+            (maxHeight.value * 0.78f).dp.coerceAtLeast(360.dp)
+        } else {
+            detailHeroHeight(maxWidth, isTablet)
+        }
 
         val scrollOffset by remember {
             derivedStateOf {
@@ -87,6 +109,13 @@ fun DetailScreen(
         }
 
         val detail = state.detail
+
+        // The extension's icon, which stands in for Netflix's "N". Looked up rather
+        // than carried on the model: a source has no icon of its own, it belongs to the
+        // extension that created it.
+        val extensionIcon = remember(detail?.sourceId) {
+            detail?.sourceId?.let { extensionForSource(it)?.icon }
+        }
 
         when {
             state.isLoading && detail == null -> WbLoading()
@@ -113,13 +142,26 @@ fun DetailScreen(
                     verticalArrangement = Arrangement.spacedBy(0.dp),
                 ) {
                     item(key = "hero") {
-                        DetailHero(
-                            detail = detail,
-                            heroHeight = heroHeight,
-                            scrollOffset = scrollOffset,
-                            isTablet = isTablet,
-                            contentMaxWidth = contentMaxWidth,
-                        )
+                        // Landscape screens get the Netflix-style hero: a full-bleed
+                        // backdrop with the copy overlaid on the left. The phone keeps
+                        // its stacked layout, which is the only thing that works when
+                        // there is no width to place text beside the image.
+                        if (usesWideHero) {
+                            NetflixDetailHero(
+                                detail = detail,
+                                extensionIcon = extensionIcon,
+                                heroHeight = heroHeight,
+                                contentPadding = contentPadding,
+                            )
+                        } else {
+                            DetailHero(
+                                detail = detail,
+                                heroHeight = heroHeight,
+                                scrollOffset = scrollOffset,
+                                isTablet = isTablet,
+                                contentMaxWidth = contentMaxWidth,
+                            )
+                        }
                     }
 
                     item(key = "actions") {
@@ -128,7 +170,14 @@ fun DetailScreen(
                                 .fillMaxWidth()
                                 .padding(horizontal = contentPadding)
                                 .padding(bottom = 20.dp),
-                            contentAlignment = Alignment.Center,
+                            // Left-aligned under the hero copy on a wide screen, where
+                            // centring would detach the buttons from the title they act
+                            // on. Centred on a phone, where the copy is centred too.
+                            contentAlignment = if (usesWideHero) {
+                                Alignment.CenterStart
+                            } else {
+                                Alignment.Center
+                            },
                         ) {
                             DetailActionButtons(
                                 playLabel = stringResource(
@@ -149,11 +198,14 @@ fun DetailScreen(
                                 },
                                 onToggleWatched = viewModel::toggleWatched,
                                 onToggleWatchlist = viewModel::toggleWatchlist,
+                                compactButtons = usesWideHero,
                             )
                         }
                     }
 
-                    item(key = "meta") {
+                    // Skipped on a wide screen: the hero already carries the year,
+                    // rating, episode count and genres, so this repeats them.
+                    if (!usesWideHero) item(key = "meta") {
                         DetailMetaInfo(
                             detail = detail,
                             modifier = Modifier
