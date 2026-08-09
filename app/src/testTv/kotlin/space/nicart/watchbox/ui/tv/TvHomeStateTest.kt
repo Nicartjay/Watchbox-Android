@@ -1,7 +1,6 @@
 package space.nicart.watchbox.ui.tv
 
 import space.nicart.watchbox.domain.AnimeCard
-import space.nicart.watchbox.domain.AnimeRow
 import space.nicart.watchbox.ui.browse.SourceEntry
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -11,11 +10,11 @@ import kotlin.test.assertTrue
 /**
  * Tests for the TV home's single-source state.
  *
- * The TV home shows one source rather than a rail per source, so the state has to answer
- * questions the phone feed never asks: which source is selected, whether a selection
- * survives an extension list change, and what the backdrop shows before focus lands.
- * Those are the parts that break silently - a lost selection just looks like the feed
- * jumped to a different catalogue.
+ * The TV home shows one source, with Popular as a row and Latest as a paging grid, so the
+ * state answers questions the phone feed never asks: which source is selected, whether a
+ * selection survives an extension list change, what seeds the backdrop, and when paging
+ * should stop. Those fail silently - a lost selection just looks like the feed jumped to
+ * a different catalogue, and a paging bug looks like a source with no content.
  */
 class TvHomeStateTest {
 
@@ -33,13 +32,6 @@ class TvHomeStateTest {
         supportsLatest = supportsLatest,
     )
 
-    private fun row(title: String, vararg titles: String) = AnimeRow(
-        sourceId = 1L,
-        sourceName = "Cineby",
-        title = title,
-        items = titles.map(::card),
-    )
-
     // ------------------------------------------------------------ empty state
 
     @Test
@@ -49,92 +41,87 @@ class TvHomeStateTest {
 
     @Test
     fun `a source present means not empty`() {
-        val state = TvHomeState(sources = listOf(source(1L, "Cineby")))
-        assertTrue(!state.hasNoSources)
+        assertTrue(!TvHomeState(sources = listOf(source(1L, "Cineby"))).hasNoSources)
+    }
+
+    @Test
+    fun `isEmpty covers both feeds`() {
+        // Used to decide whether to reload on an extension change, so it must not report
+        // empty when only one of the two returned content.
+        assertTrue(TvHomeState().isEmpty)
+        assertTrue(!TvHomeState(popular = listOf(card("A"))).isEmpty)
+        assertTrue(!TvHomeState(latest = listOf(card("B"))).isEmpty)
     }
 
     // -------------------------------------------------------- backdrop seeding
 
     @Test
-    fun `the first card seeds the backdrop`() {
-        // Otherwise the screen opens on flat black until the D-pad moves.
-        val state = TvHomeState(rows = listOf(row("Popular", "A", "B")))
+    fun `popular seeds the backdrop`() {
+        // Popular is the row on screen at rest, so the backdrop should match it rather
+        // than something further down the grid.
+        val state = TvHomeState(popular = listOf(card("A")), latest = listOf(card("B")))
         assertEquals("A", state.firstCard()?.title)
     }
 
     @Test
-    fun `no rows means no seed card`() {
+    fun `latest seeds the backdrop when popular is empty`() {
+        // A source can return an empty Popular while Latest has content.
+        val state = TvHomeState(latest = listOf(card("B")))
+        assertEquals("B", state.firstCard()?.title)
+    }
+
+    @Test
+    fun `no content means no seed card`() {
         assertNull(TvHomeState().firstCard())
     }
 
-    @Test
-    fun `an empty first row does not crash the seed`() {
-        // A source can return an empty Popular while Latest has content.
-        val state = TvHomeState(
-            rows = listOf(row("Popular"), row("Latest", "C")),
-        )
-        // firstOrNull on the first row's items yields null rather than reaching into
-        // the second row - documented so the behaviour is deliberate.
-        assertNull(state.firstCard())
-    }
-
-    // ----------------------------------------------------------- row shape
+    // ---------------------------------------------------------------- paging
 
     @Test
-    fun `row titles do not repeat the source name`() {
-        // The picker in the top-right already names the source, so prefixing every row
-        // with it buries the word that actually distinguishes one row from the other.
-        val state = TvHomeState(
-            selected = source(1L, "Cineby"),
-            rows = listOf(row("Latest", "A"), row("Popular", "B")),
-        )
-        assertTrue(state.rows.none { it.title.contains("Cineby") })
-        assertEquals(listOf("Latest", "Popular"), state.rows.map { it.title })
+    fun `paging starts enabled so the first append can run`() {
+        assertTrue(TvHomeState().hasMoreLatest)
     }
 
     @Test
-    fun `a source without a latest feed yields a single row`() {
-        // Popular only, rather than an empty Latest row.
-        val state = TvHomeState(
-            selected = source(2L, "NoLatest", supportsLatest = false),
-            rows = listOf(row("Popular", "A", "B")),
-        )
-        assertEquals(1, state.rows.size)
-        assertEquals("Popular", state.rows.single().title)
+    fun `a page counter of zero means nothing has loaded`() {
+        // The next append asks for page 1; a stale counter would skip pages.
+        assertEquals(0, TvHomeState().latestPage)
     }
 
     @Test
-    fun `both feeds yield two rows, latest first`() {
-        val state = TvHomeState(rows = listOf(row("Latest", "A"), row("Popular", "B")))
-
-        // Latest leads because it is the row that changes between visits, so it is what
-        // the backdrop shows on open. A fixed order also means the rows do not reshuffle
-        // between sources depending on which feeds each one supports.
-        assertEquals(listOf("Latest", "Popular"), state.rows.map { it.title })
+    fun `appending is not the same as loading`() {
+        // The grid keeps its content while appending, but shows nothing while loading -
+        // conflating them would blank the screen on every page.
+        val appending = TvHomeState(
+            popular = listOf(card("A")),
+            isLoading = false,
+            isAppending = true,
+        )
+        assertTrue(!appending.isEmpty)
+        assertTrue(appending.isAppending)
     }
 
     // ------------------------------------------------------------- selection
 
     @Test
-    fun `selection is independent of the row contents`() {
-        // The picker shows the selected source even while its rows are still loading.
+    fun `selection is independent of the content`() {
+        // The picker shows the selected source even while its feeds are still loading.
         val state = TvHomeState(
             sources = listOf(source(1L, "Cineby"), source(2L, "Zoro")),
             selected = source(2L, "Zoro"),
             isLoading = true,
-            rows = emptyList(),
         )
         assertEquals("Zoro", state.selected?.name)
-        assertTrue(state.rows.isEmpty())
+        assertTrue(state.isEmpty)
     }
 
     @Test
-    fun `an error is only meaningful with no rows`() {
-        // A partial failure should not replace content the user can already see.
-        val withContent = TvHomeState(
-            rows = listOf(row("Popular", "A")),
-            errorMessage = null,
+    fun `a source without a latest feed still has popular`() {
+        val state = TvHomeState(
+            selected = source(2L, "NoLatest", supportsLatest = false),
+            popular = listOf(card("A"), card("B")),
         )
-        assertNull(withContent.errorMessage)
+        assertEquals(2, state.popular.size)
+        assertTrue(state.latest.isEmpty())
     }
 }

@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.domain.AnimeRepository
-import space.nicart.watchbox.domain.AnimeRow
 import space.nicart.watchbox.extension.ExtensionManager
 import space.nicart.watchbox.ui.browse.SourceEntry
 
@@ -30,11 +29,26 @@ import space.nicart.watchbox.ui.browse.SourceEntry
 data class TvHomeState(
     val sources: List<SourceEntry> = emptyList(),
     val selected: SourceEntry? = null,
-    val rows: List<AnimeRow> = emptyList(),
+    /** Popular, as a single horizontal row. */
+    val popular: List<AnimeCard> = emptyList(),
+    /**
+     * Latest, as a growing grid.
+     *
+     * A grid rather than a row because it is the browsing surface: a horizontal row caps
+     * what you can reach at whatever fits on one line, while a grid keeps paging as long
+     * as the user keeps scrolling. Popular stays a row precisely because it is a
+     * shortlist, not something to browse through.
+     */
+    val latest: List<AnimeCard> = emptyList(),
+    val latestPage: Int = 0,
     val isLoading: Boolean = true,
+    val isAppending: Boolean = false,
+    val hasMoreLatest: Boolean = true,
     val errorMessage: String? = null,
 ) {
     val hasNoSources: Boolean get() = sources.isEmpty()
+
+    val isEmpty: Boolean get() = popular.isEmpty() && latest.isEmpty()
 }
 
 class TvHomeViewModel(
@@ -76,10 +90,14 @@ class TvHomeViewModel(
                 _state.value = _state.value.copy(sources = sources, selected = keep)
 
                 val target = keep ?: sources.firstOrNull()
-                if (target != null && (keep == null || _state.value.rows.isEmpty())) {
+                if (target != null && (keep == null || _state.value.isEmpty)) {
                     select(target)
                 } else if (sources.isEmpty()) {
-                    _state.value = _state.value.copy(isLoading = false, rows = emptyList())
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        popular = emptyList(),
+                        latest = emptyList(),
+                    )
                 }
             }
         }
@@ -94,8 +112,14 @@ class TvHomeViewModel(
             isLoading = true,
             errorMessage = null,
             // Cleared rather than kept: leaving the previous source's posters on screen
-            // under a new source's name is worse than an honest empty moment.
-            rows = emptyList(),
+            // under a new source's name is worse than an honest empty moment. The page
+            // counter resets with them, or the next append would fetch page 5 of a
+            // catalogue showing page 1.
+            popular = emptyList(),
+            latest = emptyList(),
+            latestPage = 0,
+            hasMoreLatest = true,
+            isAppending = false,
         )
 
         loadJob = viewModelScope.launch {
@@ -104,50 +128,58 @@ class TvHomeViewModel(
             val (popular, latest) = coroutineScope {
                 val popularDeferred = async { repository.popular(source.id) }
                 val latestDeferred = async {
-                    if (source.supportsLatest) repository.latest(source.id) else null
+                    if (source.supportsLatest) repository.latest(source.id, page = 1) else null
                 }
                 popularDeferred.await() to latestDeferred.await()
             }
 
-            val rows = buildList {
-                // Latest first: it is the row that changes between visits, so it is
-                // what the backdrop should be showing when the screen opens. Popular is
-                // largely static and stays useful one press down.
-                //
-                // Omitted entirely when the source does not support it, rather than
-                // shown empty - a source without a latest feed is normal.
-                latest?.getOrNull()?.takeIf { it.isNotEmpty() }?.let { items ->
-                    add(
-                        AnimeRow(
-                            sourceId = source.id,
-                            sourceName = source.name,
-                            title = ROW_LATEST,
-                            items = items,
-                            isLatest = true,
-                        ),
-                    )
-                }
-
-                popular.getOrNull()?.takeIf { it.isNotEmpty() }?.let { items ->
-                    add(
-                        AnimeRow(
-                            sourceId = source.id,
-                            sourceName = source.name,
-                            title = ROW_POPULAR,
-                            items = items,
-                        ),
-                    )
-                }
-            }
+            val popularItems = popular.getOrNull().orEmpty()
+            val latestItems = latest?.getOrNull().orEmpty()
 
             _state.value = _state.value.copy(
-                rows = rows,
+                popular = popularItems,
+                latest = latestItems,
+                latestPage = if (latestItems.isEmpty()) 0 else 1,
                 isLoading = false,
+                // Inferred from an empty page rather than the ABI's hasNextPage, which
+                // is unreliable across sources - running dry is the only dependable
+                // signal.
+                hasMoreLatest = latestItems.isNotEmpty(),
                 // Only when nothing loaded at all: one feed failing while the other
                 // returned titles is not worth an error over content the user can see.
                 errorMessage = (popular.exceptionOrNull() ?: latest?.exceptionOrNull())
                     ?.let { it.message ?: "This source could not be reached." }
-                    ?.takeIf { rows.isEmpty() },
+                    ?.takeIf { popularItems.isEmpty() && latestItems.isEmpty() },
+            )
+        }
+    }
+
+    /**
+     * Appends the next page of Latest.
+     *
+     * Guarded against re-entry: the grid fires this as focus approaches the end, which
+     * happens repeatedly while a page is still in flight.
+     */
+    fun loadMoreLatest() {
+        val current = _state.value
+        val source = current.selected ?: return
+
+        if (current.isLoading || current.isAppending || !current.hasMoreLatest) return
+        if (!source.supportsLatest) return
+
+        _state.value = current.copy(isAppending = true)
+
+        viewModelScope.launch {
+            val nextPage = current.latestPage + 1
+            val page = repository.latest(source.id, page = nextPage).getOrNull().orEmpty()
+
+            _state.value = _state.value.copy(
+                // De-duplicated by key: several sources repeat entries across pages, and
+                // a duplicate key crashes a lazy grid rather than merely looking wrong.
+                latest = (_state.value.latest + page).distinctBy { it.key },
+                latestPage = nextPage,
+                isAppending = false,
+                hasMoreLatest = page.isNotEmpty(),
             )
         }
     }
@@ -165,17 +197,10 @@ class TvHomeViewModel(
 }
 
 /**
- * Row labels.
+ * First card, used to seed the backdrop before focus lands.
  *
- * Just the feed name: the source is already named by the picker in the top-right corner,
- * so "Popular on Cineby" repeats it on every row and buries the word that distinguishes
- * one row from the other.
- *
- * Latest is always first, and the order is fixed - so the rows do not reshuffle between
- * sources depending on which feeds each one happens to support.
+ * Popular first, matching the on-screen order, so the backdrop shows what the user is
+ * looking at rather than something further down.
  */
-private const val ROW_POPULAR = "Popular"
-private const val ROW_LATEST = "Latest"
-
-/** First card across all rows, used to seed the backdrop before focus lands. */
-fun TvHomeState.firstCard(): AnimeCard? = rows.firstOrNull()?.items?.firstOrNull()
+fun TvHomeState.firstCard(): AnimeCard? =
+    popular.firstOrNull() ?: latest.firstOrNull()

@@ -22,6 +22,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -84,6 +93,28 @@ fun TvHomeScreen(
     val tokens = MaterialTheme.wb
 
     var pickerOpen by remember { mutableStateOf(false) }
+    val gridState = rememberLazyGridState()
+
+    /**
+     * How far the grid has scrolled, as 0..1.
+     *
+     * Drives the backdrop fade. Measured against one screen's worth of travel rather
+     * than the whole list: the artwork should be gone by the time the user is browsing
+     * the grid, not fade imperceptibly across hundreds of items.
+     */
+    val scrollProgress by remember {
+        derivedStateOf {
+            val info = gridState.layoutInfo
+            val first = info.visibleItemsInfo.firstOrNull()
+            when {
+                first == null -> 0f
+                // Past the first item, the artwork is fully covered.
+                gridState.firstVisibleItemIndex > 0 -> 1f
+                else -> (gridState.firstVisibleItemScrollOffset / FADE_DISTANCE_PX)
+                    .coerceIn(0f, 1f)
+            }
+        }
+    }
 
     if (state.hasNoSources) {
         TvHomeEmpty(onOpenSettings = onOpenSettings, modifier = modifier)
@@ -95,7 +126,7 @@ fun TvHomeScreen(
     val backdrop = focused ?: state.firstCard()
 
     Box(modifier = modifier.fillMaxSize()) {
-        TvBackdrop(card = backdrop)
+        TvBackdrop(card = backdrop, fade = scrollProgress)
 
         // Title block sits in the upper-left third, clear of both the rail and the rows.
         // Rows first, so the title block and picker draw over them. The rows fill the
@@ -105,15 +136,20 @@ fun TvHomeScreen(
         TvHomeRows(
             state = state,
             artwork = artwork,
+            gridState = gridState,
             onFocus = artworkViewModel::onFocus,
             onRowVisible = artworkViewModel::onRowVisible,
             onOpenAnime = onOpenAnime,
+            onLoadMore = viewModel::loadMoreLatest,
         )
 
+        // Faded out with the backdrop it sits on: text over a black background that no
+        // longer shows the artwork it describes is just clutter.
         TvBackdropDetail(
             card = backdrop,
             modifier = Modifier
                 .align(Alignment.TopStart)
+                .alpha(1f - scrollProgress)
                 .padding(start = TV_CONTENT_START, top = 80.dp, end = 48.dp),
         )
 
@@ -162,7 +198,7 @@ private fun TvHomeEmpty(onOpenSettings: () -> Unit, modifier: Modifier = Modifie
  * to 16:9 loses most of the frame, usually including the subject.
  */
 @Composable
-private fun TvBackdrop(card: AnimeCard?) {
+private fun TvBackdrop(card: AnimeCard?, fade: Float) {
     val tokens = MaterialTheme.wb
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -197,6 +233,18 @@ private fun TvBackdrop(card: AnimeCard?) {
                     ),
                 ),
         )
+
+        // Scroll-driven fade to black. A solid overlay whose opacity follows the scroll,
+        // rather than moving the image: the artwork belongs to the focused title, and
+        // once the user is browsing the grid it is no longer what they are looking at.
+        // Capped just below fully opaque so the transition never looks like a hard cut.
+        if (fade > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(tokens.colors.background.copy(alpha = fade * MAX_FADE)),
+            )
+        }
     }
 }
 
@@ -250,40 +298,164 @@ private fun TvBackdropDetail(card: AnimeCard?, modifier: Modifier = Modifier) {
 }
 
 /**
- * The rows, anchored at the bottom of the screen.
+ * Popular as a row, then Latest as a paging grid.
  *
- * Only the first row is on screen at rest. Scrolling reveals the rest, which is what
- * keeps the backdrop visible while still giving access to the whole feed.
+ * One scrolling container for both, so the D-pad moves continuously from the Popular row
+ * into the grid rather than crossing a boundary between two independently scrolling
+ * lists - which on a remote reads as focus getting stuck.
+ *
+ * Latest pages as focus approaches the end. Driven by focus position rather than scroll
+ * offset because with a D-pad the list only scrolls *because* focus moved, so watching
+ * focus fires earlier and more directly.
  */
 @Composable
 private fun TvHomeRows(
     state: TvHomeState,
     artwork: Map<String, AnimeCard>,
+    gridState: LazyGridState,
     onFocus: (AnimeCard) -> Unit,
     onRowVisible: (String, List<AnimeCard>) -> Unit,
     onOpenAnime: (AnimeCard) -> Unit,
+    onLoadMore: () -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        // The top padding is the mechanism: it places the first row at the bottom edge
-        // while leaving everything above it as visible backdrop.
-        contentPadding = PaddingValues(top = ROWS_TOP_INSET, bottom = 40.dp),
-        verticalArrangement = Arrangement.spacedBy(28.dp),
-    ) {
-        items(items = state.rows, key = { "${it.sourceId}-${it.title}" }) { row ->
-            val rowKey = "tv-home-${row.sourceId}-${row.title}"
+    val tokens = MaterialTheme.wb
 
-            LaunchedEffect(rowKey) { onRowVisible(rowKey, row.items) }
-
-            TvPortraitRow(
-                title = row.title,
-                items = row.items,
-                artwork = artwork,
-                onFocus = onFocus,
-                onClick = onOpenAnime,
-            )
+    val shouldAppend by remember {
+        derivedStateOf {
+            val last = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val total = gridState.layoutInfo.totalItemsCount
+            total > 0 && last >= total - LATEST_COLUMNS * 2
         }
     }
+    LaunchedEffect(shouldAppend) {
+        if (shouldAppend) onLoadMore()
+    }
+
+    LazyVerticalGrid(
+        state = gridState,
+        columns = GridCells.Fixed(LATEST_COLUMNS),
+        modifier = Modifier.fillMaxSize(),
+        // The top inset is what places the Popular row at the bottom edge, leaving
+        // everything above it as visible backdrop.
+        contentPadding = PaddingValues(
+            // Clears the navigation rail, which overlays the content. Without this the
+            // grid's first column drew underneath it.
+            start = TV_CONTENT_START,
+            end = 48.dp,
+            top = ROWS_TOP_INSET,
+            bottom = 48.dp,
+        ),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        if (state.popular.isNotEmpty()) {
+            item(key = "popular-row", span = { GridItemSpan(maxLineSpan) }) {
+                LaunchedEffect(state.selected?.id) {
+                    onRowVisible("tv-popular-${state.selected?.id}", state.popular)
+                }
+
+                TvPortraitRow(
+                    title = stringResource(R.string.tv_row_popular),
+                    items = state.popular,
+                    artwork = artwork,
+                    onFocus = onFocus,
+                    onClick = onOpenAnime,
+                )
+            }
+        }
+
+        if (state.latest.isNotEmpty()) {
+            item(key = "latest-label", span = { GridItemSpan(maxLineSpan) }) {
+                Text(
+                    text = stringResource(R.string.tv_row_latest),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.colors.textPrimary,
+                    // No start padding: the grid's contentPadding already applies it to
+                    // every item, and adding it here would double the inset.
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+            }
+
+            items(items = state.latest, key = { it.key }) { card ->
+                // Padded per item rather than on the grid, so the label above can align
+                // with the first column while the grid keeps even spacing.
+                TvGridPortraitCard(
+                    card = artwork[card.key] ?: card,
+                    onFocus = { onFocus(card) },
+                    onClick = { onOpenAnime(card) },
+                )
+            }
+        }
+
+        if (state.isAppending) {
+            item(key = "appending", span = { GridItemSpan(maxLineSpan) }) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        color = tokens.colors.accent,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(26.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A Latest grid cell.
+ *
+ * Fills its column rather than taking a fixed width, so the grid controls the size and
+ * the poster scale reaches it through the column count.
+ */
+@Composable
+private fun TvGridPortraitCard(
+    card: AnimeCard,
+    onFocus: () -> Unit,
+    onClick: () -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
+
+    Column(
+        modifier = Modifier.padding(start = 0.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(POSTER_ASPECT)
+                .clip(RoundedCornerShape(10.dp))
+                .background(tokens.colors.surfaceCard)
+                .tvFocusable(interaction, RoundedCornerShape(10.dp))
+                .clickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = onClick,
+                ),
+        ) {
+            WbAsyncImage(
+                url = card.tmdbPosterUrl ?: card.posterUrl,
+                contentDescription = card.title,
+                contentScale = ContentScale.Crop,
+                fallbackLabel = card.title,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+
+        Text(
+            text = card.title,
+            style = MaterialTheme.typography.bodyMedium,
+            color = tokens.colors.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+
+    TvFocusReporter(interaction = interaction, onFocused = onFocus)
 }
 
 /** A row of portrait posters. */
@@ -303,18 +475,14 @@ fun TvPortraitRow(
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
             color = tokens.colors.textPrimary,
-            modifier = Modifier.padding(start = TV_CONTENT_START),
         )
 
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             // Room for the focused card to scale without being clipped by the row.
-            contentPadding = PaddingValues(
-                start = TV_CONTENT_START,
-                end = 48.dp,
-                top = 8.dp,
-                bottom = 8.dp,
-            ),
+            // Vertical only: this row is a full-span item inside the grid, which already
+            // applies the horizontal inset.
+            contentPadding = PaddingValues(vertical = 8.dp),
         ) {
             items(items = items, key = { it.key }) { card ->
                 TvPortraitCard(
@@ -564,3 +732,17 @@ private val HERO_LOGO_HEIGHT = 96.dp
  * against the row's own height, which does not scale with the screen.
  */
 private val ROWS_TOP_INSET = 330.dp
+
+/** Columns in the Latest grid. Fewer than a phone: a D-pad crosses one per press. */
+private const val LATEST_COLUMNS = 6
+
+/**
+ * Scroll distance over which the backdrop fades, in pixels.
+ *
+ * One row's worth of travel. Deliberately short: the fade is a transition into browsing,
+ * not a slow dissolve that leaves the artwork half-visible behind a grid.
+ */
+private const val FADE_DISTANCE_PX = 420f
+
+/** Just short of opaque, so the transition never reads as a hard cut. */
+private const val MAX_FADE = 0.97f
