@@ -1,6 +1,7 @@
 package space.nicart.watchbox.data.remote
 
 import io.ktor.client.HttpClient
+import space.nicart.watchbox.BuildConfig
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
@@ -29,6 +30,8 @@ import kotlinx.serialization.json.Json
 class UpdateChecker(
     private val client: HttpClient,
     private val currentVersion: String,
+    /** Which APK to pick from a release that carries several. */
+    private val formFactor: String = BuildConfig.FORM_FACTOR,
     private val owner: String = REPO_OWNER,
     private val repo: String = REPO_NAME,
 ) {
@@ -49,10 +52,10 @@ class UpdateChecker(
             return@withContext UpdateResult.Failed("Release has no version tag.")
         }
 
-        // The APK is matched by extension rather than by exact name so a rename
-        // in the release workflow does not silently break updates.
-        val asset = release.assets.orEmpty()
-            .firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
+        // Matched to this build's form factor. A release carries both a phone and a
+        // TV APK, and taking the first .apk would install the wrong UI - a TV would
+        // download the touch build and become unusable with a remote.
+        val asset = selectApkAsset(release.assets.orEmpty(), formFactor)
 
         when {
             compareVersions(remote, currentVersion) <= 0 -> UpdateResult.UpToDate
@@ -106,6 +109,50 @@ class UpdateChecker(
          * must not be told they are perpetually out of date. Missing components
          * count as zero, so `2.1` equals `2.1.0`.
          */
+        /**
+         * Chooses the APK matching [formFactor].
+         *
+         * Named `-tv` for the television build; anything else is the phone build.
+         * Falls back to the only APK present when there is exactly one, so a release
+         * published before the split still updates rather than reporting no APK.
+         *
+         * Returns null rather than guessing when several APKs exist but none matches:
+         * installing the wrong form factor is worse than reporting no update, because
+         * a TV that installs the touch build cannot be navigated to fix it.
+         */
+        internal fun selectApkAsset(
+            assets: List<GithubAsset>,
+            formFactor: String,
+        ): GithubAsset? {
+            val apks = assets.filter { it.name.endsWith(".apk", ignoreCase = true) }
+            if (apks.isEmpty()) return null
+            if (apks.size == 1) return apks.single()
+
+            val wantsTv = formFactor.equals("tv", ignoreCase = true)
+            val tvAssets = apks.filter { it.name.contains(TV_ASSET_MARKER, ignoreCase = true) }
+
+            // Matched positively in both directions rather than by negation. Treating
+            // "not TV" as "mobile" would accept any other variant that might appear in
+            // a release - a wear or ABI-split APK - as the phone build.
+            return if (wantsTv) {
+                tvAssets.firstOrNull()
+            } else {
+                (apks - tvAssets.toSet()).firstOrNull { it.name.matchesMobileNaming() }
+            }
+        }
+
+        /** Marks the television APK in a release. Set by the release workflow. */
+        private const val TV_ASSET_MARKER = "-tv"
+
+        /**
+         * Whether a name looks like the phone APK.
+         *
+         * `watchbox-<version>.apk` and nothing more: a name carrying any other
+         * qualifier is some third artifact, not this build.
+         */
+        private fun String.matchesMobileNaming(): Boolean =
+            Regex("""^watchbox-[0-9][^-]*\.apk$""", RegexOption.IGNORE_CASE).matches(this)
+
         fun compareVersions(a: String, b: String): Int {
             val left = a.toVersionParts()
             val right = b.toVersionParts()
@@ -143,7 +190,7 @@ sealed interface UpdateResult {
 // ---------------------------------------------------------------- wire format
 
 @Serializable
-private data class GithubRelease(
+internal data class GithubRelease(
     @SerialName("tag_name") val tagName: String = "",
     val name: String? = null,
     val body: String? = null,
@@ -154,7 +201,7 @@ private data class GithubRelease(
 )
 
 @Serializable
-private data class GithubAsset(
+internal data class GithubAsset(
     val name: String = "",
     val size: Long = 0,
     @SerialName("browser_download_url") val downloadUrl: String = "",

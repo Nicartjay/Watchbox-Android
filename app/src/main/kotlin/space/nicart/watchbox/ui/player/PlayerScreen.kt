@@ -10,6 +10,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -28,6 +29,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -168,6 +174,71 @@ fun PlayerScreen(
     var bufferedMs by remember { mutableLongStateOf(0L) }
     var controlsVisible by remember { mutableStateOf(true) }
     var openPanel by remember { mutableStateOf(PlayerPanel.NONE) }
+
+    val playerFocusRequester = remember { FocusRequester() }
+
+    /**
+     * Applies a mapped remote action.
+     *
+     * Returns true when the key was consumed, so unhandled keys still fall through to
+     * the system - Back in particular must keep working.
+     */
+    fun handlePlayerKey(action: PlayerKeyAction): Boolean {
+        // Any handled press re-arms the auto-hide timer, so the controls do not
+        // vanish mid-interaction.
+        if (action != PlayerKeyAction.NONE && action != PlayerKeyAction.DISMISS) {
+            controlsVisible = true
+        }
+
+        return when (action) {
+            PlayerKeyAction.SHOW_CONTROLS -> true
+
+            PlayerKeyAction.TOGGLE_PLAY -> {
+                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                true
+            }
+
+            PlayerKeyAction.PLAY -> { exoPlayer.play(); true }
+            PlayerKeyAction.PAUSE -> { exoPlayer.pause(); true }
+
+            PlayerKeyAction.SEEK_BACK, PlayerKeyAction.SEEK_FORWARD -> {
+                val delta = if (action == PlayerKeyAction.SEEK_FORWARD) {
+                    PLAYER_KEY_SEEK_MS
+                } else {
+                    -PLAYER_KEY_SEEK_MS
+                }
+                exoPlayer.seekTo(
+                    (exoPlayer.currentPosition + delta)
+                        .coerceIn(0L, exoPlayer.duration.coerceAtLeast(0L)),
+                )
+                true
+            }
+
+            PlayerKeyAction.NEXT_EPISODE -> {
+                state.nextEpisode?.let(viewModel::goToEpisode) != null
+            }
+
+            PlayerKeyAction.PREVIOUS_EPISODE -> {
+                state.previousEpisode?.let(viewModel::goToEpisode) != null
+            }
+
+            // Returns false so the system handles Back when there is nothing of ours
+            // left to dismiss, which is what leaves the player.
+            PlayerKeyAction.DISMISS -> when {
+                openPanel != PlayerPanel.NONE -> { openPanel = PlayerPanel.NONE; true }
+                state.locked -> { viewModel.setLocked(false); true }
+                controlsVisible -> { controlsVisible = false; true }
+                else -> false
+            }
+
+            PlayerKeyAction.NONE -> false
+        }
+    }
+
+    // Claimed once the surface exists, so the first remote press does something.
+    LaunchedEffect(Unit) {
+        runCatching { playerFocusRequester.requestFocus() }
+    }
     var castPanelOpen by remember { mutableStateOf(false) }
 
     // Brightness is window-scoped, so it is tied to this activity; volume is a
@@ -339,6 +410,24 @@ fun PlayerScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                // Remote input. Focusable so key events arrive at all, and focus is
+                // claimed on entry: without it the first press is spent establishing
+                // focus and the remote appears dead.
+                .focusRequester(playerFocusRequester)
+                .focusable()
+                .onKeyEvent { event ->
+                    // KeyUp only. A held direction repeats KeyDown, which would seek
+                    // dozens of times from one press.
+                    if (event.type != KeyEventType.KeyUp) return@onKeyEvent false
+
+                    val action = mapPlayerKey(
+                        keyCode = event.nativeKeyEvent.keyCode,
+                        controlsVisible = controlsVisible,
+                        panelOpen = openPanel != PlayerPanel.NONE,
+                        isLocked = state.locked,
+                    )
+                    handlePlayerKey(action)
+                }
                 .pointerInput(state.locked) {
                     detectTapGestures(
                         onTap = {

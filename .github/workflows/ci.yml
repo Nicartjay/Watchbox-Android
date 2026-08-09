@@ -40,16 +40,17 @@ jobs:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
       - name: Assemble debug
-        run: ./gradlew :app:assembleDebug --stacktrace
+        # Both flavors: a TV-only compile error would otherwise reach main unseen.
+        run: ./gradlew :app:assembleMobileDebug :app:assembleTvDebug --stacktrace
 
       - name: Unit tests
-        run: ./gradlew :app:testDebugUnitTest --stacktrace
+        run: ./gradlew :app:testMobileDebugUnitTest --stacktrace
 
       - name: Verify extension ABI (compiled classes)
         run: python3 tools/verify-extension-abi.py
 
       - name: Lint
-        run: ./gradlew :app:lintDebug --stacktrace
+        run: ./gradlew :app:lintMobileDebug --stacktrace
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v5

@@ -127,57 +127,93 @@ jobs:
           WATCHBOX_VERSION_NAME: ${{ steps.version.outputs.version }}
           # Monotonic across runs, which Android requires for upgrades.
           WATCHBOX_VERSION_CODE: ${{ github.run_number }}
-        run: ./gradlew :app:assembleRelease --stacktrace
+        # Both form factors. A phone build and a TV build ship from one release; the
+        # updater picks the right one by asset name.
+        run: ./gradlew :app:assembleMobileRelease :app:assembleTvRelease --stacktrace
 
       - name: Verify extension ABI survived minification
         # R8 strips the eu.kanade.tachiyomi tree unless the keep rules hold,
         # and it only shows up in release builds. Fail here, not on a user's
         # device.
         run: |
-          apk="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -1)"
-          python3 tools/verify-release-abi.py "${apk}"
+          # Checked on both: the keep rules are shared, but a flavor-specific
+          # manifest or source set could still change what R8 sees.
+          for apk in $(find app/build/outputs/apk/mobile app/build/outputs/apk/tv -name '*-release.apk'); do
+            echo "== ${apk}"
+            python3 tools/verify-release-abi.py "${apk}"
+          done
 
       - name: Verify signature
         run: |
-          apk="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -1)"
-          if [[ -z "${apk}" ]]; then
+          apks=$(find app/build/outputs/apk/mobile app/build/outputs/apk/tv -name '*-release.apk' | sort)
+          if [[ -z "${apks}" ]]; then
             echo "No release APK was produced." >&2
             exit 1
           fi
 
-          build_tools="$(ls -d "${ANDROID_HOME}"/build-tools/* | sort -V | tail -1)"
-          certs="$("${build_tools}/apksigner" verify --print-certs "${apk}")"
-          echo "${certs}"
-
-          # A build signed with a per-runner debug key cannot update any other
-          # build, so fail loudly rather than shipping a dead-end APK.
-          if grep -q 'CN=Android Debug' <<< "${certs}"; then
-            echo "::error::APK was signed with a debug key; release.jks was not used." >&2
+          count=$(wc -l <<< "${apks}")
+          if [[ "${count}" -ne 2 ]]; then
+            echo "::error::Expected 2 release APKs (mobile + tv), found ${count}." >&2
+            echo "${apks}" >&2
             exit 1
           fi
 
-          {
-            echo "### Signing"
-            echo
-            echo '```'
-            grep -E 'DN:|SHA-256 digest' <<< "${certs}"
-            echo '```'
-          } >> "${GITHUB_STEP_SUMMARY}"
+          build_tools="$(ls -d "${ANDROID_HOME}"/build-tools/* | sort -V | tail -1)"
 
-      - name: Rename APK
+          echo "### Signing" >> "${GITHUB_STEP_SUMMARY}"
+          for apk in ${apks}; do
+            certs="$("${build_tools}/apksigner" verify --print-certs "${apk}")"
+            echo "== ${apk}"
+            echo "${certs}"
+
+            # A build signed with a per-runner debug key cannot update any other
+            # build, so fail loudly rather than shipping a dead-end APK.
+            if grep -q 'CN=Android Debug' <<< "${certs}"; then
+              echo "::error::${apk} was signed with a debug key; release.jks was not used." >&2
+              exit 1
+            fi
+
+            {
+              echo
+              echo "**$(basename "${apk}")**"
+              echo '```'
+              grep -E 'DN:|SHA-256 digest' <<< "${certs}"
+              echo '```'
+            } >> "${GITHUB_STEP_SUMMARY}"
+          done
+
+      - name: Rename APKs
         id: apk
+        # The names are load-bearing: UpdateChecker.selectApkAsset matches the TV
+        # build on a "-tv" suffix and the phone build on the bare name, so a release
+        # asset renamed by hand will send devices the wrong APK.
         run: |
-          src="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -1)"
-          dest="watchbox-${{ steps.version.outputs.version }}.apk"
-          mv "${src}" "${dest}"
-          echo "path=${dest}" >> "${GITHUB_OUTPUT}"
-          ls -lh "${dest}"
+          version="${{ steps.version.outputs.version }}"
+
+          mobile_src="$(find app/build/outputs/apk/mobile -name '*-release.apk' | head -1)"
+          tv_src="$(find app/build/outputs/apk/tv -name '*-release.apk' | head -1)"
+
+          for pair in "mobile:${mobile_src}" "tv:${tv_src}"; do
+            if [[ -z "${pair#*:}" ]]; then
+              echo "::error::No release APK for ${pair%%:*}." >&2
+              exit 1
+            fi
+          done
+
+          mv "${mobile_src}" "watchbox-${version}.apk"
+          mv "${tv_src}" "watchbox-${version}-tv.apk"
+
+          echo "mobile=watchbox-${version}.apk" >> "${GITHUB_OUTPUT}"
+          echo "tv=watchbox-${version}-tv.apk" >> "${GITHUB_OUTPUT}"
+          ls -lh watchbox-*.apk
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
           name: watchbox-${{ steps.version.outputs.version }}
-          path: ${{ steps.apk.outputs.path }}
+          path: |
+            ${{ steps.apk.outputs.mobile }}
+            ${{ steps.apk.outputs.tv }}
           if-no-files-found: error
           retention-days: 90
 
@@ -220,9 +256,12 @@ jobs:
           fi
 
           if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
-            echo "Release already exists; uploading the APK to it instead."
+            echo "Release already exists; uploading the APKs to it instead."
             gh release upload "${{ steps.version.outputs.tag }}" \
-              "${{ steps.apk.outputs.path }}" --clobber
+              "${{ steps.apk.outputs.mobile }}" \
+              "${{ steps.apk.outputs.tv }}" --clobber
           else
-            gh release create "${args[@]}" "${{ steps.apk.outputs.path }}"
+            gh release create "${args[@]}" \
+              "${{ steps.apk.outputs.mobile }}" \
+              "${{ steps.apk.outputs.tv }}"
           fi
