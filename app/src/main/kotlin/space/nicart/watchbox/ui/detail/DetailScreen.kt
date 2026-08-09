@@ -23,6 +23,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import space.nicart.watchbox.core.ui.tvInitialFocus
 import space.nicart.watchbox.R
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.domain.EpisodeEntry
@@ -103,6 +104,10 @@ fun DetailScreen(
                     state = listState,
                     modifier = Modifier
                         .fillMaxSize()
+                        // Applied to the list rather than the screen: the back button
+                        // is overlaid outside it, so a group spanning both traps focus
+                        // on the button with no route into the content.
+                        .tvInitialFocus()
                         .zIndex(1f),
                     contentPadding = PaddingValues(bottom = 32.dp + NavOverlayPadding),
                     verticalArrangement = Arrangement.spacedBy(0.dp),

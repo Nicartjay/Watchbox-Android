@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import space.nicart.watchbox.core.ui.tvInitialFocus
 import space.nicart.watchbox.core.ui.LocalLayoutMetrics
 import space.nicart.watchbox.R
 import space.nicart.watchbox.data.local.WatchHistoryEntry
@@ -58,7 +59,7 @@ fun LibraryScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var tab by remember { mutableStateOf(LibraryTab.MY_LIST) }
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize().tvInitialFocus()) {
         val padding = sectionHorizontalPadding(maxWidth)
         // One definition of the column ladder, in LayoutMetrics. Four copies of this
         // `when` had already drifted - Search computed it and never used it.

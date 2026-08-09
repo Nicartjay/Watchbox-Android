@@ -6,6 +6,15 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.focusGroup
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -122,3 +131,43 @@ fun Modifier.adaptiveFocus(
         tvFocusOutline(interactionSource, shape)
     }
 }
+
+/**
+ * Claims initial focus for a screen, on TV only.
+ *
+ * Every screen needs something focused before the first key press, or that press is
+ * spent establishing focus and the remote appears dead. Compose focuses nothing by
+ * default, and screens shared with the phone build have no reason to do it themselves.
+ *
+ * Applied to a container that wraps the screen's focusable content, so focus lands on
+ * the first child rather than on the container itself.
+ *
+ * The retry matters: on the frame this runs, the screen's children may not have
+ * composed yet, and `requestFocus` reports success even when its target has no node -
+ * so observed focus is what the loop waits for, not the call's return value.
+ */
+@Composable
+fun Modifier.tvInitialFocus(): Modifier {
+    val metrics = LocalLayoutMetrics.current
+    if (!metrics.isFocusDriven) return this
+
+    val requester = remember { FocusRequester() }
+    var hasFocus by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        repeat(INITIAL_FOCUS_ATTEMPTS) {
+            withFrameNanos { }
+            runCatching { requester.requestFocus() }
+            if (hasFocus) return@LaunchedEffect
+            delay(INITIAL_FOCUS_RETRY_MS)
+        }
+    }
+
+    return this
+        .focusRequester(requester)
+        .onFocusChanged { hasFocus = it.hasFocus }
+        .focusGroup()
+}
+
+private const val INITIAL_FOCUS_ATTEMPTS = 12
+private const val INITIAL_FOCUS_RETRY_MS = 60L

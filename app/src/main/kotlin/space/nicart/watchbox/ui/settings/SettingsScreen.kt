@@ -44,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import space.nicart.watchbox.core.ui.tvInitialFocus
 import space.nicart.watchbox.BuildConfig
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.AppTheme
@@ -80,7 +81,7 @@ fun SettingsScreen(
     val addRepoInvalid = stringResource(R.string.settings_repos_invalid)
     val addRepoDuplicate = stringResource(R.string.settings_repos_duplicate)
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize().tvInitialFocus()) {
         val padding = sectionHorizontalPadding(maxWidth)
 
         LazyColumn(

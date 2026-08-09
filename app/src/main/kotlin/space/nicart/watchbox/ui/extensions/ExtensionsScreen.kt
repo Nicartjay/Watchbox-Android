@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import space.nicart.watchbox.core.ui.tvInitialFocus
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.extension.model.Extension
@@ -67,7 +68,7 @@ fun ExtensionsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize().tvInitialFocus()) {
         val padding = sectionHorizontalPadding(maxWidth)
 
         LazyColumn(
