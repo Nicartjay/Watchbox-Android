@@ -12,6 +12,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import space.nicart.watchbox.data.remote.TmdbApi
+import space.nicart.watchbox.data.remote.TmdbSuggestion
 import space.nicart.watchbox.data.remote.TmdbType
 import space.nicart.watchbox.extension.ExtensionManager
 
@@ -285,9 +286,16 @@ class AnimeRepository(
             if (own.isNotEmpty()) return own.toCards(source, excluding = animeUrl)
         }
 
-        // Tier 2: keyword search, unless the source says its search is unhelpful.
+        // A source can veto searching entirely; without search neither remaining
+        // tier can produce anything.
         if (http?.disableRelatedAnimesBySearch == true) return emptyList()
 
+        // Tier 2: TMDB recommendations, resolved against this source.
+        tmdbSuggestions(source, animeUrl, title).takeIf { it.isNotEmpty() }
+            ?.let { return it }
+
+        // Tier 3: longest-word keyword search. Weakest of the three, but it is
+        // the only option for a title TMDB does not know.
         val keyword = title.toSearchKeyword() ?: return emptyList()
 
         val found = guarded("relatedSearch(${source.name})") {
@@ -298,6 +306,91 @@ class AnimeRepository(
 
         return found.toCards(source, excluding = animeUrl)
     }
+
+    /**
+     * TMDB recommendations, filtered to what this source actually carries.
+     *
+     * TMDB returns titles, not extension entries: they have no source URL and so
+     * cannot be played directly. Each is therefore searched on the source and
+     * dropped when it is not found, which keeps every card in the rail tappable
+     * at the cost of a shorter rail.
+     *
+     * Uses TMDB's own poster rather than the source's, since it is generally the
+     * cleaner artwork, but the source URL is what makes the card playable.
+     */
+    private suspend fun tmdbSuggestions(
+        source: AnimeCatalogueSource,
+        animeUrl: String,
+        title: String,
+    ): List<AnimeCard> {
+        val art = guarded("tmdbLookup($title)") { tmdb.lookup(title) } ?: return emptyList()
+
+        val recommended = guarded("tmdbRecs(${art.tmdbId})") {
+            tmdb.recommendations(art.tmdbId, art.type)
+        }.orEmpty()
+
+        if (recommended.isEmpty()) return emptyList()
+
+        // Probing is capped rather than unbounded: each candidate is a search
+        // request against a third-party site, and more than a rail's worth is
+        // wasted work. A little headroom covers the ones that will not resolve.
+        return coroutineScope {
+            recommended.take(MAX_SUGGESTIONS * 2)
+                .map { suggestion -> async { suggestion.resolveOn(source, animeUrl) } }
+                .awaitAll()
+                .filterNotNull()
+                .distinctBy { it.url }
+                .take(MAX_SUGGESTIONS)
+        }
+    }
+
+    /** Finds this TMDB title on [source], or null when the source lacks it. */
+    private suspend fun TmdbSuggestion.resolveOn(
+        source: AnimeCatalogueSource,
+        excluding: String,
+    ): AnimeCard? {
+        val hits = guarded("resolve($title)") {
+            withTimeout(RESOLVE_TIMEOUT_MS) {
+                source.getSearchAnime(1, title, AnimeFilterList()).animes
+            }
+        }.orEmpty()
+
+        // Require a real title match, not merely the source's first result:
+        // most sources return something for any query, so taking the top hit
+        // blindly would fill the rail with unrelated entries.
+        val match = hits.firstOrNull { it.title.matchesLoosely(title) }
+            ?: return null
+
+        if (match.url == excluding) return null
+
+        return match.toCard(source).copy(
+            tmdbPosterUrl = posterUrl,
+            backdropUrl = backdropUrl,
+            tmdbId = tmdbId,
+            year = year,
+        )
+    }
+
+    /**
+     * Compares titles after normalising case, punctuation and spacing.
+     *
+     * Sources and TMDB disagree constantly on colons, hyphens and season
+     * suffixes, so exact equality rejects almost every real match while a bare
+     * `contains` accepts far too much. Containment on the normalised forms is the
+     * usable middle ground.
+     */
+    private fun String.matchesLoosely(other: String): Boolean {
+        val a = normaliseForMatch()
+        val b = other.normaliseForMatch()
+        if (a.isEmpty() || b.isEmpty()) return false
+        return a == b || a.contains(b) || b.contains(a)
+    }
+
+    private fun String.normaliseForMatch(): String = TmdbApi.cleanTitle(this)
+        .lowercase()
+        .filter { it.isLetterOrDigit() || it == ' ' }
+        .replace(Regex("""\s+"""), " ")
+        .trim()
 
     private fun List<SAnime>.toCards(
         source: AnimeCatalogueSource,
@@ -406,7 +499,13 @@ class AnimeRepository(
         const val TAG = "AnimeRepository"
         const val NO_SOURCES = "No sources installed yet."
         const val SOURCE_TIMEOUT_MS = 15_000L
-        const val MAX_SUGGESTIONS = 20
+        const val MAX_SUGGESTIONS = 8
+
+        /**
+         * Shorter than the general source timeout: this runs once per candidate
+         * and a slow site must not stall the whole rail.
+         */
+        const val RESOLVE_TIMEOUT_MS = 8_000L
         const val MIN_KEYWORD_LENGTH = 4
 
         /** Words too common to distinguish one title from another. */

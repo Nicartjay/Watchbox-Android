@@ -152,6 +152,47 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
         return art
     }
 
+    /**
+     * Titles TMDB considers related.
+     *
+     * Uses `/recommendations` rather than `/similar`: the two sound
+     * interchangeable but are not. For Frieren, recommendations returned
+     * "To Your Eternity" and "The Ancient Magus' Bride" while similar returned
+     * unrelated entries, so similar is not worth offering as a fallback.
+     *
+     * Returned as plain titles plus artwork. They carry no source URL, so the
+     * caller must resolve each against an installed extension before any of them
+     * can be played.
+     */
+    suspend fun recommendations(tmdbId: Int, type: TmdbType): List<TmdbSuggestion> {
+        val key = "recs:${type.path}:$tmdbId"
+
+        @Suppress("UNCHECKED_CAST")
+        cache[key]?.let {
+            return if (it === MISS) emptyList() else it as List<TmdbSuggestion>
+        }
+
+        val body = request("${type.path}/$tmdbId/recommendations", emptyMap())
+        val results = body
+            ?.let { runCatching { json.decodeFromString<RecommendationResponse>(it) }.getOrNull() }
+            ?.results
+            .orEmpty()
+            .mapNotNull { entry ->
+                val name = entry.displayTitle.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                TmdbSuggestion(
+                    tmdbId = entry.id,
+                    title = name,
+                    posterUrl = image(entry.posterPath, POSTER_SIZE),
+                    backdropUrl = image(entry.backdropPath, BACKDROP_SIZE),
+                    year = entry.year,
+                    isMovie = entry.mediaType == "movie" || type == TmdbType.MOVIE,
+                )
+            }
+
+        cache[key] = results.ifEmpty { MISS }
+        return results
+    }
+
     private suspend fun request(path: String, params: Map<String, String>): String? {
         val query = (params + ("api_key" to apiKey) + ("language" to "en-US"))
             .entries
@@ -227,6 +268,21 @@ data class TmdbArtwork(
     val seasonCount: Int,
 )
 
+/**
+ * A TMDB-recommended title.
+ *
+ * Deliberately not an [space.nicart.watchbox.domain.AnimeCard]: it has no source
+ * URL yet and is therefore not playable until matched to an extension entry.
+ */
+data class TmdbSuggestion(
+    val tmdbId: Int,
+    val title: String,
+    val posterUrl: String?,
+    val backdropUrl: String?,
+    val year: String?,
+    val isMovie: Boolean,
+)
+
 data class TmdbEpisodeArt(
     val number: Int,
     val name: String,
@@ -290,6 +346,27 @@ private data class ImageEntry(
     @SerialName("file_path") val filePath: String = "",
     @SerialName("iso_639_1") val iso6391: String? = null,
 )
+
+@Serializable
+private data class RecommendationResponse(val results: List<RecommendationEntry>? = null)
+
+@Serializable
+private data class RecommendationEntry(
+    val id: Int = 0,
+    val name: String? = null,
+    val title: String? = null,
+    @SerialName("poster_path") val posterPath: String? = null,
+    @SerialName("backdrop_path") val backdropPath: String? = null,
+    @SerialName("first_air_date") val firstAirDate: String? = null,
+    @SerialName("release_date") val releaseDate: String? = null,
+    @SerialName("media_type") val mediaType: String? = null,
+) {
+    val displayTitle: String get() = name ?: title ?: ""
+
+    val year: String? get() = (firstAirDate ?: releaseDate)
+        ?.take(4)
+        ?.takeIf { it.length == 4 }
+}
 
 @Serializable
 private data class SeasonResponse(val episodes: List<SeasonEpisode>? = null)
