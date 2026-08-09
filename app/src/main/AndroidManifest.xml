@@ -15,6 +15,15 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!--
+      Casting. Android's Wi-Fi driver filters multicast frames not addressed to
+      the device unless a multicast lock is held, which is exactly the traffic
+      SSDP (DLNA) and mDNS (Chromecast) discovery depends on, so without this
+      permission discovery silently finds nothing.
+    -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!--
       Deliberately absent: QUERY_ALL_PACKAGES. Extensions live in this app's
       private storage, so package enumeration is never required.
     -->
@@ -46,6 +55,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          The Cast SDK loads this class reflectively by name, so it must also be
+          kept by R8. See the cast rules in proguard-rules.pro.
+        -->
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="space.nicart.watchbox.cast.CastOptionsProvider" />
 
         <!--
           Grants the package installer read access to the downloaded update APK.

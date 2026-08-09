@@ -63,6 +63,13 @@ REQUIRED_CLASSES = [
 # Counts from dexdump across real extension APKs: kotlinx.serialization 2823
 # references, kotlin.jvm 942, kotlin.coroutines 842, jsoup 356,
 # androidx.preference 333, okhttp3 ~1500.
+# Classes loaded reflectively by name from AndroidManifest.xml. R8 renaming these
+# breaks the feature in release builds only, which is how the Injekt launch crash
+# and the stripped-stdlib regression both shipped.
+REQUIRED_REFLECTIVE = [
+    "space/nicart/watchbox/cast/CastOptionsProvider",
+]
+
 REQUIRED_EXTERNAL = [
     "kotlin/jvm/internal/Intrinsics",
     "kotlin/jvm/internal/DefaultConstructorMarker",
@@ -160,6 +167,13 @@ def main():
             if f"Leu/kanade/tachiyomi/{cls};" not in dump:
                 failures.append(f"STRIPPED OR RENAMED  eu.kanade.tachiyomi.{cls}")
 
+        for cls in REQUIRED_REFLECTIVE:
+            if f"L{cls};" not in dump:
+                failures.append(
+                    f"STRIPPED OR RENAMED  {cls.replace('/', '.')} "
+                    "(named in AndroidManifest, loaded by reflection)"
+                )
+
         for cls in REQUIRED_EXTERNAL:
             if f"L{cls};" not in dump:
                 failures.append(
@@ -187,7 +201,8 @@ def main():
             sys.exit(1)
 
         print(f"verified {len(REQUIRED_CLASSES)} ABI classes, "
-              f"{len(REQUIRED_EXTERNAL)} host-provided library classes and "
+              f"{len(REQUIRED_EXTERNAL)} host-provided library classes, "
+              f"{len(REQUIRED_REFLECTIVE)} reflective classes and "
               f"{sum(len(m) for m in REQUIRED_MEMBERS.values())} members")
         print("ABI survived minification")
 

@@ -31,6 +31,11 @@ jsoup = "1.22.1"
 okhttp = "5.3.2"
 quickjs = "0.9.2"
 androidx-preference = "1.2.1"
+
+# Casting. play-services-cast-framework is a Google Play dependency; see the note
+# in the cast package about why it is used instead of a raw protocol client.
+play-services-cast = "22.0.0"
+androidx-mediarouter = "1.7.0"
 kotlinx-serialization = "1.8.1"
 kotlinx-coroutines = "1.10.2"
 
@@ -91,6 +96,10 @@ okhttp-dnsoverhttps = { module = "com.squareup.okhttp3:okhttp-dnsoverhttps", ver
 okhttp-logging = { module = "com.squareup.okhttp3:logging-interceptor", version.ref = "okhttp" }
 okhttp-brotli = { module = "com.squareup.okhttp3:okhttp-brotli", version.ref = "okhttp" }
 androidx-preference = { module = "androidx.preference:preference-ktx", version.ref = "androidx-preference" }
+
+# Casting
+play-services-cast-framework = { module = "com.google.android.gms:play-services-cast-framework", version.ref = "play-services-cast" }
+androidx-mediarouter = { module = "androidx.mediarouter:mediarouter", version.ref = "androidx-mediarouter" }
 
 # Kotlinx
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }

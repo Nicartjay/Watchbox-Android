@@ -234,4 +234,11 @@ dependencies {
     implementation(libs.okhttp.logging)
     implementation(libs.okhttp.brotli)
     implementation(libs.androidx.preference)
+
+    // ---- Casting ------------------------------------------------------
+    // Chromecast discovery, the session lifecycle and the standard cast button.
+    // Reimplementing protobuf-over-TLS by hand would be several hundred lines
+    // for a worse device picker; the trade is a Google Play dependency.
+    implementation(libs.play.services.cast.framework)
+    implementation(libs.androidx.mediarouter)
 }

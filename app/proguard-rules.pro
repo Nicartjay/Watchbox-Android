@@ -98,6 +98,17 @@
 # androidx.preference is reachable only from ConfigurableAnimeSource.
 -keep class androidx.preference.** { *; }
 
+# ======================================================================
+# Casting
+# ======================================================================
+#
+# The Cast SDK instantiates the options provider reflectively from the class name
+# in AndroidManifest.xml, so renaming or removing it breaks casting only in
+# release builds -- the same failure mode as the Injekt regression.
+-keep class space.nicart.watchbox.cast.CastOptionsProvider { *; }
+-keep class com.google.android.gms.cast.** { *; }
+-dontwarn com.google.android.gms.cast.**
+
 # ---------------------------------------------------------------- Kotlin
 -dontwarn kotlin.**
 -keepclassmembers class kotlin.Metadata { public <methods>; }
