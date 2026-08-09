@@ -58,7 +58,8 @@ import space.nicart.watchbox.ui.navigation.WbNavigationRail
 @Composable
 fun TvTabShell(
     container: AppContainer,
-    content: @Composable (AppTab) -> Unit,
+    /** Receives the current tab and a way to switch it. */
+    content: @Composable (AppTab, (AppTab) -> Unit) -> Unit,
 ) {
     val tokens = MaterialTheme.wb
 
@@ -133,7 +134,7 @@ fun TvTabShell(
                 .focusProperties { left = railFocusRequester },
         ) {
             stateHolder.SaveableStateProvider(selectedTab.name) {
-                content(selectedTab)
+                content(selectedTab) { selectedTab = it }
             }
         }
 
@@ -153,10 +154,6 @@ fun TvTabShell(
                 selected = selectedTab,
                 onSelect = { selectedTab = it },
                 expanded = railFocused,
-                // Only for the initial claim, so something is focused before the
-                // first key press. Not tied to railFocused, which would re-claim on
-                // every focus change and pin the rail in place.
-                holdFocus = true,
             )
         }
     }

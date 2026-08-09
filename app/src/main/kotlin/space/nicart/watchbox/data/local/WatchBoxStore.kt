@@ -60,6 +60,8 @@ class WatchBoxStore(context: Context) {
                 subtitleTextColor = prefs[Keys.SUB_COLOR] ?: SUBTITLE_DEFAULT_COLOR,
                 subtitleBackgroundOpacity = prefs[Keys.SUB_BG_OPACITY] ?: 0.6f,
                 subtitleBold = prefs[Keys.SUB_BOLD] ?: false,
+                uiScale = prefs[Keys.UI_SCALE] ?: 1f,
+                posterScale = prefs[Keys.POSTER_SCALE] ?: 1f,
                 subtitleEdgeWidth = enumOrDefault(
                     prefs[Keys.SUB_EDGE_WIDTH],
                     SubtitleEdgeWidth.MEDIUM,
@@ -170,6 +172,20 @@ class WatchBoxStore(context: Context) {
     }
 
     suspend fun setSubtitleBold(bold: Boolean) = store.edit { it[Keys.SUB_BOLD] = bold }
+
+    /**
+     * Overall UI scale.
+     *
+     * Clamped rather than trusted: a value near zero renders the app unreadable and
+     * unrecoverable, since the setting itself would be too small to find.
+     */
+    suspend fun setUiScale(scale: Float) = store.edit {
+        it[Keys.UI_SCALE] = scale.coerceIn(UI_SCALE_MIN, UI_SCALE_MAX)
+    }
+
+    suspend fun setPosterScale(scale: Float) = store.edit {
+        it[Keys.POSTER_SCALE] = scale.coerceIn(POSTER_SCALE_MIN, POSTER_SCALE_MAX)
+    }
 
     suspend fun setSubtitleEdgeWidth(width: SubtitleEdgeWidth) = store.edit {
         it[Keys.SUB_EDGE_WIDTH] = width.name
@@ -297,6 +313,8 @@ class WatchBoxStore(context: Context) {
         val SUB_BG_OPACITY = floatPreferencesKey("subtitle_bg_opacity")
         val SUB_BOLD = booleanPreferencesKey("subtitle_bold")
         val SUB_EDGE_WIDTH = stringPreferencesKey("subtitle_edge_width")
+        val UI_SCALE = floatPreferencesKey("ui_scale")
+        val POSTER_SCALE = floatPreferencesKey("poster_scale")
         val SUB_LANG = stringPreferencesKey("subtitle_language")
         val LAST_SERVER = stringPreferencesKey("last_server_id")
         val HISTORY = stringPreferencesKey("watch_history")
@@ -323,6 +341,10 @@ data class AppSettings(
     val subtitleBackgroundOpacity: Float = 0.6f,
     val subtitleBold: Boolean = false,
     val subtitleEdgeWidth: SubtitleEdgeWidth = SubtitleEdgeWidth.MEDIUM,
+    /** Multiplier applied to text and spacing. */
+    val uiScale: Float = 1f,
+    /** Multiplier applied to poster and card sizes only. */
+    val posterScale: Float = 1f,
     val subtitleLanguage: String = "en",
     val lastServerId: String? = null,
 ) {
@@ -349,3 +371,17 @@ data class AppSettings(
 
 /** Default subtitle colour: opaque white. */
 internal const val SUBTITLE_DEFAULT_COLOR: Int = 0xFFFFFFFF.toInt()
+
+/**
+ * Bounds for the UI scale.
+ *
+ * The floor is 0.8 rather than something smaller because the setting has to remain
+ * legible enough to undo. The ceiling is 1.4: beyond that a phone layout starts
+ * clipping rather than reflowing, since the design uses fixed poster metrics.
+ */
+internal const val UI_SCALE_MIN = 0.8f
+internal const val UI_SCALE_MAX = 1.4f
+
+/** Posters tolerate a wider range: they scale independently of any text inside them. */
+internal const val POSTER_SCALE_MIN = 0.7f
+internal const val POSTER_SCALE_MAX = 1.6f

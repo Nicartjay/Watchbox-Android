@@ -24,6 +24,13 @@ data class HomeUiState(
     val errorMessage: String? = null,
     /** True when nothing is installed yet, which needs an onboarding prompt. */
     val hasNoSources: Boolean = false,
+    /**
+     * True when not even a repository is configured.
+     *
+     * Distinct from [hasNoSources]: with no repository the extension list is empty, so
+     * sending the user there is a dead end. They need to add a repository first.
+     */
+    val hasNoRepos: Boolean = false,
 )
 
 /** Continue Watching + My List, derived from persisted state. */
@@ -72,10 +79,13 @@ class HomeViewModel(
 
     fun load(refresh: Boolean = false) {
         viewModelScope.launch {
+            val hasRepos = store.currentSettings().repos.isNotEmpty()
+
             if (!repository.hasSources()) {
                 _uiState.value = HomeUiState(
                     isLoading = false,
                     hasNoSources = true,
+                    hasNoRepos = !hasRepos,
                     feed = null,
                 )
                 return@launch

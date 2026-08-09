@@ -115,7 +115,10 @@ data class LayoutMetrics(
 fun layoutMetricsFor(formFactor: FormFactor, widthDp: Int): LayoutMetrics = when (formFactor) {
     FormFactor.TV -> LayoutMetrics(
         formFactor = formFactor,
-        screenPadding = 48.dp,
+        // Clears the 72dp navigation rail, which overlays the content, plus a 16dp
+        // gutter. Screens that use this for their left inset would otherwise draw
+        // underneath the rail.
+        screenPadding = 88.dp,
         posterWidth = 168.dp,
         gridColumns = 6,
         usesNavRail = true,
@@ -153,6 +156,15 @@ private fun tabletColumns(widthDp: Int): Int = when {
     else -> 4
 }
 
+/**
+ * Adjusts a column count for the poster scale.
+ *
+ * Larger posters mean fewer fit across, so a grid that ignored the scale would simply
+ * squash them. Floored at two: one column per row stops being a grid.
+ */
+fun LayoutMetrics.gridColumnsScaled(posterScale: Float): Int =
+    (gridColumns / posterScale).toInt().coerceAtLeast(2)
+
 /** Metrics for the current window. Provided once, near the root. */
 val LocalLayoutMetrics = staticCompositionLocalOf {
     layoutMetricsFor(FormFactor.COMPACT, widthDp = 400)
@@ -165,3 +177,12 @@ fun rememberLayoutMetrics(widthDp: Int): LayoutMetrics {
     val context = LocalContext.current
     return layoutMetricsFor(detectFormFactor(context, widthDp), widthDp)
 }
+
+/**
+ * Multiplier for poster and card sizes.
+ *
+ * Separate from the UI scale because the two answer different complaints: "the text is
+ * too small to read" and "I want to see more titles at once" pull in opposite
+ * directions, and a single control cannot satisfy both.
+ */
+val LocalPosterScale = staticCompositionLocalOf { 1f }

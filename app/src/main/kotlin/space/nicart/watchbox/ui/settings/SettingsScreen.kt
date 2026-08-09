@@ -50,9 +50,14 @@ import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.AppTheme
 import space.nicart.watchbox.core.ui.paletteForPreview
 import space.nicart.watchbox.data.remote.AppUpdate
+import space.nicart.watchbox.data.local.POSTER_SCALE_MAX
+import space.nicart.watchbox.data.local.POSTER_SCALE_MIN
+import space.nicart.watchbox.data.local.UI_SCALE_MAX
+import space.nicart.watchbox.data.local.UI_SCALE_MIN
 import space.nicart.watchbox.data.local.ExtensionRepo
 import space.nicart.watchbox.ui.player.SubtitleBackground
 import space.nicart.watchbox.ui.player.subtitleStyle
+import space.nicart.watchbox.core.ui.LocalLayoutMetrics
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.WbScreenHeader
@@ -71,6 +76,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val metrics = LocalLayoutMetrics.current
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
 
@@ -189,6 +195,11 @@ fun SettingsScreen(
                         Spacer(Modifier.height(8.dp))
                     }
 
+                    // A TextField captures the D-pad: arrow keys become caret movement,
+                    // so on a television focus enters this field and can never leave -
+                    // every setting below it becomes unreachable. On TV the repository
+                    // is added by deep link instead, so the field is simply omitted.
+                    if (!metrics.isTv) {
                     OutlinedTextField(
                         value = repoDraft,
                         onValueChange = {
@@ -262,6 +273,39 @@ fun SettingsScreen(
                             },
                         )
                     }
+                    }
+                }
+            }
+
+            // ----------------------------------------------------- display
+            item(key = "display-label") {
+                SettingsGroupLabel(stringResource(R.string.settings_display))
+            }
+
+            item(key = "scale") {
+                SettingsCard {
+                    Text(
+                        text = stringResource(R.string.settings_scale_summary),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = tokens.colors.textMuted,
+                    )
+                    Spacer(Modifier.height(14.dp))
+
+                    ScaleSlider(
+                        label = stringResource(R.string.settings_ui_scale),
+                        value = settings.uiScale,
+                        range = UI_SCALE_MIN..UI_SCALE_MAX,
+                        onValueChange = viewModel::setUiScale,
+                    )
+
+                    Spacer(Modifier.height(10.dp))
+
+                    ScaleSlider(
+                        label = stringResource(R.string.settings_poster_scale),
+                        value = settings.posterScale,
+                        range = POSTER_SCALE_MIN..POSTER_SCALE_MAX,
+                        onValueChange = viewModel::setPosterScale,
+                    )
                 }
             }
 

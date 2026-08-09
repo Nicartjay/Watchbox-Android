@@ -72,6 +72,8 @@ fun HomeScreen(
     onOpenSaved: (WatchlistEntry) -> Unit,
     onBrowseSource: (sourceId: Long, sourceName: String) -> Unit,
     onInstallExtensions: () -> Unit,
+    /** Opens Settings, where repositories are managed. */
+    onOpenSettings: () -> Unit,
     navScrollState: WbNavBarScrollState,
     modifier: Modifier = Modifier,
 ) {
@@ -95,13 +97,26 @@ fun HomeScreen(
         // Nothing installed yet: the feed is empty by definition, so prompt
         // rather than showing an error.
         if (state.hasNoSources) {
-            WbEmptyState(
-                title = stringResource(R.string.empty_no_sources_title),
-                body = stringResource(R.string.empty_no_sources_body),
-                actionLabel = stringResource(R.string.action_browse_extensions),
-                onAction = onInstallExtensions,
-                modifier = Modifier.align(Alignment.Center),
-            )
+            // Two different dead ends. With no repository configured the extension
+            // list has nothing in it, so sending the user there leaves them stuck -
+            // they need to add a repository first, which lives in Settings.
+            if (state.hasNoRepos) {
+                WbEmptyState(
+                    title = stringResource(R.string.empty_no_repos_title),
+                    body = stringResource(R.string.empty_no_repos_body),
+                    actionLabel = stringResource(R.string.action_add_repository),
+                    onAction = onOpenSettings,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            } else {
+                WbEmptyState(
+                    title = stringResource(R.string.empty_no_sources_title),
+                    body = stringResource(R.string.empty_no_sources_body),
+                    actionLabel = stringResource(R.string.action_browse_extensions),
+                    onAction = onInstallExtensions,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
             return@BoxWithConstraints
         }
 

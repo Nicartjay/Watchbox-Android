@@ -42,6 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.R
+import space.nicart.watchbox.core.ui.LocalPosterScale
 import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.tvFocusable
 import space.nicart.watchbox.core.ui.wb
@@ -73,7 +74,10 @@ fun TvSourceListScreen(
     val tokens = MaterialTheme.wb
 
     LazyVerticalGrid(
-        columns = GridCells.Fixed(TILE_COLUMNS),
+        columns = GridCells.Fixed(
+            // Fewer, larger tiles as the poster scale rises.
+            (TILE_COLUMNS / LocalPosterScale.current).toInt().coerceAtLeast(2),
+        ),
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = TV_CONTENT_START, end = 48.dp, top = 40.dp, bottom = 48.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -249,7 +253,9 @@ fun TvSourceBrowseScreen(
 
             else -> LazyVerticalGrid(
                 state = gridState,
-                columns = GridCells.Fixed(POSTER_COLUMNS),
+                columns = GridCells.Fixed(
+                    (POSTER_COLUMNS / LocalPosterScale.current).toInt().coerceAtLeast(2),
+                ),
                 contentPadding = PaddingValues(
                     start = TV_CONTENT_START,
                     end = 48.dp,

@@ -107,6 +107,10 @@ private fun wbTypography(): Typography {
 fun WatchBoxTheme(
     appTheme: AppTheme = AppTheme.Default,
     amoled: Boolean = false,
+    /** Multiplier for text and spacing; see [LocalPosterScale] for posters. */
+    uiScale: Float = 1f,
+    /** Multiplier for poster and card sizes only. */
+    posterScale: Float = 1f,
     content: @Composable () -> Unit,
 ) {
     val tokens = remember(appTheme, amoled) { wbThemeTokens(appTheme, amoled) }
@@ -135,15 +139,28 @@ fun WatchBoxTheme(
     }
 
     val density = LocalDensity.current
-    val fixedDensity = remember(density.density) {
-        Density(density = density.density, fontScale = 1f)
+
+    // Applied through density rather than by scaling each dimension. Every dp in the
+    // app then scales together - text, padding, icons, corner radii - which is the
+    // only way to make this coherent without touching every screen.
+    //
+    // fontScale stays pinned at 1: the system font setting is deliberately ignored
+    // (see below), and honouring it here as well would compound the two multipliers.
+    val fixedDensity = remember(density.density, uiScale) {
+        Density(density = density.density * uiScale, fontScale = 1f)
     }
 
     // Provided at the theme root so every screen and shared component reads the same
     // metrics. Resolved from the configuration rather than passed in, so a fold or a
     // window resize is picked up without threading it through every call site.
     val context = LocalContext.current
-    val widthDp = LocalConfiguration.current.screenWidthDp
+
+    // Divided by the scale: raising the scale makes every dp physically larger, so the
+    // window holds proportionally fewer of them. Using the unscaled width would keep
+    // showing seven columns on a screen that now only fits four.
+    val rawWidthDp = LocalConfiguration.current.screenWidthDp
+    val widthDp = (rawWidthDp / uiScale).toInt()
+
     val layoutMetrics = remember(widthDp) {
         layoutMetricsFor(detectFormFactor(context, widthDp), widthDp)
     }
@@ -152,6 +169,7 @@ fun WatchBoxTheme(
         LocalWbTokens provides tokens,
         LocalWbTypeScale provides typeScale,
         LocalLayoutMetrics provides layoutMetrics,
+        LocalPosterScale provides posterScale,
         LocalDensity provides fixedDensity,
         LocalRippleConfiguration provides RippleConfiguration(color = Color.Black),
     ) {

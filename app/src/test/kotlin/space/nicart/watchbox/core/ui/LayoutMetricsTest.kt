@@ -22,12 +22,21 @@ class LayoutMetricsTest {
     // ------------------------------------------------------------------- tv
 
     @Test
-    fun `tv padding clears the overscan region`() {
-        // Televisions crop several percent of each edge; content flush to the edge can
-        // be physically cut off.
+    fun `tv padding clears both the rail and the overscan region`() {
+        // Two constraints at once. Televisions crop several percent of each edge, and
+        // the navigation rail overlays the content at 72dp - screens that use this as
+        // their left inset would otherwise draw underneath it, which is exactly how
+        // Library and Settings ended up overlapping the menu.
         val tv = layoutMetricsFor(FormFactor.TV, widthDp = 960)
-        assertEquals(48, tv.screenPadding.value.toInt())
+
+        assertTrue(
+            tv.screenPadding.value >= TV_RAIL_WIDTH_DP,
+            "TV padding ${tv.screenPadding} must clear the ${TV_RAIL_WIDTH_DP}dp rail",
+        )
     }
+
+    /** The collapsed navigation rail's width, which content must start beyond. */
+    private val TV_RAIL_WIDTH_DP = 72f
 
     @Test
     fun `tv uses fewer columns than a tablet of similar width`() {

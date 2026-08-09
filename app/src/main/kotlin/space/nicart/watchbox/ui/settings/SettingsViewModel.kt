@@ -145,6 +145,14 @@ class SettingsViewModel(
         viewModelScope.launch { store.setSubtitleBackgroundOpacity(opacity) }
     }
 
+    fun setUiScale(scale: Float) {
+        viewModelScope.launch { store.setUiScale(scale) }
+    }
+
+    fun setPosterScale(scale: Float) {
+        viewModelScope.launch { store.setPosterScale(scale) }
+    }
+
     fun setSubtitleEdgeWidth(width: SubtitleEdgeWidth) {
         viewModelScope.launch { store.setSubtitleEdgeWidth(width) }
     }

@@ -12,6 +12,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import space.nicart.watchbox.core.ui.LocalLayoutMetrics
+import space.nicart.watchbox.core.ui.LocalPosterScale
 import space.nicart.watchbox.core.ui.adaptiveFocus
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -78,11 +80,22 @@ object PosterMetrics {
 }
 
 /** Section horizontal padding by width (`HomeSectionLayout.kt:6-12`). */
-fun sectionHorizontalPadding(maxWidth: Dp): Dp = when {
-    maxWidth >= 1440.dp -> 32.dp
-    maxWidth >= 1024.dp -> 28.dp
-    maxWidth >= 768.dp -> 24.dp
-    else -> 16.dp
+@Composable
+fun sectionHorizontalPadding(maxWidth: Dp): Dp {
+    // On TV the navigation rail overlays the content, so screens have to start beyond
+    // it. Width alone cannot express that: a 960dp television and a 960dp tablet want
+    // very different left insets, and the widest tablet value here (32dp) is nowhere
+    // near the rail's 72dp. Screens shared with the phone build read their padding
+    // from here, so this is the one place that fixes all of them.
+    val metrics = LocalLayoutMetrics.current
+    if (metrics.isTv) return metrics.screenPadding
+
+    return when {
+        maxWidth >= 1440.dp -> 32.dp
+        maxWidth >= 1024.dp -> 28.dp
+        maxWidth >= 768.dp -> 24.dp
+        else -> 16.dp
+    }
 }
 
 /**
@@ -195,12 +208,17 @@ fun WbPosterCard(
     // Shared with adaptiveFocus so the focus state and the indicator cannot disagree.
     val interaction = remember { MutableInteractionSource() }
 
+    // Applied to the explicit width only. A card in a grid passes width = null and
+    // fills its cell, so scaling it here as well would fight the grid's own sizing.
+    val posterScale = LocalPosterScale.current
+    val scaledWidth = width?.let { it * posterScale }
+
     val tokens = MaterialTheme.wb
 
     Column(
         // A null width means "fill whatever the parent gives us", which is what
         // the search/library grids need.
-        modifier = if (width != null) modifier.width(width) else modifier,
+        modifier = if (scaledWidth != null) modifier.width(scaledWidth) else modifier,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(

@@ -62,11 +62,12 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
         modifier = modifier,
     ) {
         composable<Routes.Tabs> {
-            TvTabShell(container = container) { tab ->
+            TvTabShell(container = container) { tab, selectTab ->
                 TvTabContent(
                     tab = tab,
                     container = container,
                     navController = navController,
+                    onSelectTab = selectTab,
                 )
             }
         }
@@ -175,6 +176,7 @@ private fun TvTabContent(
     tab: AppTab,
     container: AppContainer,
     navController: NavHostController,
+    onSelectTab: (AppTab) -> Unit,
 ) {
     val openAnime: (AnimeCard) -> Unit = { navController.openAnime(it) }
 
@@ -196,6 +198,9 @@ private fun TvTabContent(
                 viewModel = viewModel,
                 artworkViewModel = artwork,
                 onOpenAnime = openAnime,
+                // Switches tab rather than navigating: repositories live in the
+                // Settings tab, which is not a nav destination.
+                onOpenSettings = { onSelectTab(AppTab.SETTINGS) },
             )
         }
 

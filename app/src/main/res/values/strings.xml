@@ -56,6 +56,10 @@
     <string name="extensions_filter_reset">Clear filters</string>
     <string name="extensions_updates_available">%1$d extension updates available</string>
     <string name="settings_nsfw">Show 18+ extensions</string>
+    <string name="settings_display">Display</string>
+    <string name="settings_scale_summary">Interface scales text and spacing together. Posters scale on their own, so you can trade size for how many fit on screen.</string>
+    <string name="settings_ui_scale">Interface scale</string>
+    <string name="settings_poster_scale">Poster size</string>
     <string name="settings_subtitles">Subtitles</string>
     <string name="settings_subtitle_size">Text size</string>
     <string name="settings_subtitle_background">Background style</string>
@@ -83,6 +87,9 @@
     <string name="tv_search_hint">Press to search by voice</string>
     <string name="search_all_sources">All sources</string>
     <string name="empty_search_title">Nothing found</string>
+    <string name="empty_no_repos_title">No extension repository</string>
+    <string name="empty_no_repos_body">WatchBox ships with none, so nothing can be browsed yet. Add a repository to see the extensions it offers.</string>
+    <string name="action_add_repository">Add a repository</string>
     <string name="empty_no_sources_title">No sources installed</string>
     <string name="empty_no_sources_body">Add an extension repository in Settings, then install an extension.</string>
     <string name="action_browse_extensions">Browse extensions</string>

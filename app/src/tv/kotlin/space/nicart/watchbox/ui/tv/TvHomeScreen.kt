@@ -39,10 +39,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import space.nicart.watchbox.core.ui.LocalPosterScale
 import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.tvFocusable
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.domain.AnimeCard
+import androidx.compose.ui.res.stringResource
+import space.nicart.watchbox.R
+import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbAsyncImage
 import space.nicart.watchbox.ui.home.HomeViewModel
 
@@ -63,6 +67,7 @@ fun TvHomeScreen(
     viewModel: HomeViewModel,
     artworkViewModel: TvArtworkViewModel,
     onOpenAnime: (AnimeCard) -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -77,6 +82,44 @@ fun TvHomeScreen(
     // already enriched, so this needs no lookup.
     val hero = state.feed?.hero?.firstOrNull()
     val backdrop = focused ?: hero
+
+    // Otherwise the TV home is simply empty, with nothing to focus and no indication
+    // of what is missing - the worst possible first-run state on a device where the
+    // only input is a remote.
+    if (state.hasNoSources) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(start = TV_CONTENT_START, end = 48.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            WbEmptyState(
+                title = stringResource(
+                    if (state.hasNoRepos) {
+                        R.string.empty_no_repos_title
+                    } else {
+                        R.string.empty_no_sources_title
+                    },
+                ),
+                body = stringResource(
+                    if (state.hasNoRepos) {
+                        R.string.empty_no_repos_body
+                    } else {
+                        R.string.empty_no_sources_body
+                    },
+                ),
+                actionLabel = stringResource(
+                    if (state.hasNoRepos) {
+                        R.string.action_add_repository
+                    } else {
+                        R.string.action_browse_extensions
+                    },
+                ),
+                onAction = onOpenSettings,
+            )
+        }
+        return
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
         TvBackdrop(card = backdrop)
@@ -284,8 +327,12 @@ fun TvLandscapeCard(
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
 
+    // TV cards size themselves rather than filling a grid cell, so the poster scale has
+    // to be applied here - the shared WbPosterCard path never runs on this screen.
+    val cardWidth = CARD_WIDTH * LocalPosterScale.current
+
     Column(
-        modifier = Modifier.width(CARD_WIDTH),
+        modifier = Modifier.width(cardWidth),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Box(

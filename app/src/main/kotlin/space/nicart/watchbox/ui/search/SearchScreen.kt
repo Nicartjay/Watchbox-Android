@@ -31,6 +31,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.LocalLayoutMetrics
+import space.nicart.watchbox.core.ui.gridColumnsScaled
+import space.nicart.watchbox.core.ui.LocalPosterScale
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.ui.components.NavOverlayPadding
@@ -63,7 +65,8 @@ fun SearchScreen(
         val padding = sectionHorizontalPadding(maxWidth)
         // One definition of the column ladder, in LayoutMetrics. Four copies of this
         // `when` had already drifted - Search computed it and never used it.
-        val columns = LocalLayoutMetrics.current.gridColumns
+        val columns = LocalLayoutMetrics.current
+            .gridColumnsScaled(LocalPosterScale.current)
 
         Column(modifier = Modifier.fillMaxSize()) {
             Column(

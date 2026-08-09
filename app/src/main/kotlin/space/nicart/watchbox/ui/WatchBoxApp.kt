@@ -318,6 +318,9 @@ private fun TabShell(
                         onOpenSaved = openSaved,
                         onBrowseSource = onOpenSource,
                         onInstallExtensions = onOpenExtensions,
+                        // Switches tab rather than navigating: repositories live in
+                        // Settings, and the tabs are not nav destinations.
+                        onOpenSettings = { selectedTab = AppTab.SETTINGS },
                         navScrollState = navScrollState,
                     )
                 }

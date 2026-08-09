@@ -40,6 +40,8 @@ class MainActivity : ComponentActivity() {
             WatchBoxTheme(
                 appTheme = settings.theme,
                 amoled = settings.amoled,
+                uiScale = settings.uiScale,
+                posterScale = settings.posterScale,
             ) {
                 // Resolved per flavor: WatchBoxApp on phones, TvApp on television.
                 AppRoot(container = container)

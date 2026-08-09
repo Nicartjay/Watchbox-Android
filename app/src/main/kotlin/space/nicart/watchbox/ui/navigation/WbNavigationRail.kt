@@ -62,15 +62,6 @@ fun WbNavigationRail(
     onSelect: (AppTab) -> Unit,
     modifier: Modifier = Modifier,
     expanded: Boolean = false,
-    /**
-     * True while the rail should own focus.
-     *
-     * Selecting a tab replaces the content subtree, which recomposes the rail and
-     * drops focus - leaving nothing focused and the remote dead. Re-requesting from
-     * the shell does not work because the requester is transiently detached too, so
-     * the selected item re-claims focus itself.
-     */
-    holdFocus: Boolean = false,
 ) {
     val tokens = MaterialTheme.wb
 
@@ -110,9 +101,6 @@ fun WbNavigationRail(
                 tab = tab,
                 selected = tab == selected,
                 showLabel = expanded,
-                // Kept so the item that was activated can re-claim focus after the
-                // content swap disposes whatever held it.
-                shouldHoldFocus = tab == selected && holdFocus,
                 onClick = { onSelect(tab) },
             )
         }
@@ -124,27 +112,10 @@ private fun RailItem(
     tab: AppTab,
     selected: Boolean,
     showLabel: Boolean,
-    shouldHoldFocus: Boolean,
     onClick: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
-    // Focus is claimed once, only if this item has never been focused and is the
-    // initial selection. Re-claiming on every loss pins focus to this item and makes
-    // the rail immovable, which is worse than the problem it solves.
-    val requester = remember { FocusRequester() }
-    var everFocused by remember { mutableStateOf(false) }
-    val isFocused by interaction.collectIsFocusedAsState()
-
-    LaunchedEffect(isFocused) {
-        if (isFocused) everFocused = true
-    }
-
-    LaunchedEffect(shouldHoldFocus) {
-        if (shouldHoldFocus && !everFocused) {
-            runCatching { requester.requestFocus() }
-        }
-    }
 
     val background by animateColorAsState(
         targetValue = if (selected) tokens.colors.accent else Color.Transparent,
@@ -157,7 +128,6 @@ private fun RailItem(
             .fillMaxWidthOrIcon(showLabel)
             .clip(RoundedCornerShape(12.dp))
             .background(background)
-            .focusRequester(requester)
             .tvFocusOutline(interaction, RoundedCornerShape(12.dp))
             // clickable only - no separate focusable(). clickable already makes the
             // node focusable, and adding focusable() *before* it inserts a focus
