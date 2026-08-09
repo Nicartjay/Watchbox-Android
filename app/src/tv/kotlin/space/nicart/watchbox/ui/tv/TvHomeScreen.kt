@@ -10,6 +10,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -54,6 +55,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.R
@@ -131,7 +133,9 @@ fun TvHomeScreen(
     val seed = state.firstCard()
     val backdrop = focused ?: seed?.let { artwork[it.key] ?: it }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val topInset = rowsTopInset(maxHeight)
+
         TvBackdrop(card = backdrop, fade = scrollProgress)
 
         // Title block sits in the upper-left third, clear of both the rail and the rows.
@@ -143,8 +147,9 @@ fun TvHomeScreen(
             state = state,
             artwork = artwork,
             gridState = gridState,
+            topInset = topInset,
             onFocus = artworkViewModel::onFocus,
-            onRowVisible = artworkViewModel::onRowVisible,
+            onPrefetch = artworkViewModel::onRowVisible,
             onOpenAnime = onOpenAnime,
             onLoadMore = viewModel::loadMoreLatest,
         )
@@ -196,6 +201,34 @@ private fun TvHomeEmpty(onOpenSettings: () -> Unit, modifier: Modifier = Modifie
         )
     }
 }
+
+/**
+ * Height of the Popular row: label, spacing, poster, and its title.
+ *
+ * Computed rather than measured so it can be used to derive the top inset before the row
+ * has been laid out.
+ */
+@Composable
+private fun popularRowHeight(): Dp {
+    val posterHeight = (POSTER_WIDTH * LocalPosterScale.current) / POSTER_ASPECT
+    return POPULAR_LABEL_HEIGHT + POPULAR_LABEL_GAP + (POPULAR_ROW_VERTICAL_PADDING * 2) +
+        posterHeight + POPULAR_CARD_LABEL_HEIGHT
+}
+
+/**
+ * Top inset that rests the Popular row on the bottom edge of [viewportHeight].
+ *
+ * Takes the viewport height as measured by the caller rather than reading it from the
+ * configuration: the theme installs a scaled density for the UI scale setting, so the
+ * configuration's screen height is in unscaled dp and does not match the dp the layout
+ * is actually working in.
+ *
+ * Floored so a large poster scale cannot push the row off-screen and out of reach.
+ */
+@Composable
+private fun rowsTopInset(viewportHeight: Dp): Dp =
+    (viewportHeight - popularRowHeight() - POPULAR_BOTTOM_GAP)
+        .coerceAtLeast(MIN_ROWS_TOP_INSET)
 
 /**
  * Full-bleed backdrop for the focused title.
@@ -319,8 +352,9 @@ private fun TvHomeRows(
     state: TvHomeState,
     artwork: Map<String, AnimeCard>,
     gridState: LazyGridState,
+    topInset: Dp,
     onFocus: (AnimeCard) -> Unit,
-    onRowVisible: (String, List<AnimeCard>) -> Unit,
+    onPrefetch: (String, List<AnimeCard>) -> Unit,
     onOpenAnime: (AnimeCard) -> Unit,
     onLoadMore: () -> Unit,
 ) {
@@ -342,13 +376,17 @@ private fun TvHomeRows(
         columns = GridCells.Fixed(LATEST_COLUMNS),
         modifier = Modifier.fillMaxSize(),
         // The top inset is what places the Popular row at the bottom edge, leaving
-        // everything above it as visible backdrop.
+        // everything above it as visible backdrop. Derived from the row's own height
+        // against the screen, not a fixed number: a constant that happened to look right
+        // at one poster scale left the row overflowing the screen at another, and an
+        // overflowing row forces a scroll the moment it takes focus - which dragged the
+        // backdrop away exactly when the user was trying to look at it.
         contentPadding = PaddingValues(
             // Clears the navigation rail, which overlays the content. Without this the
             // grid's first column drew underneath it.
             start = TV_CONTENT_START,
             end = 48.dp,
-            top = ROWS_TOP_INSET,
+            top = topInset,
             bottom = 48.dp,
         ),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -357,7 +395,7 @@ private fun TvHomeRows(
         if (state.popular.isNotEmpty()) {
             item(key = "popular-row", span = { GridItemSpan(maxLineSpan) }) {
                 LaunchedEffect(state.selected?.id) {
-                    onRowVisible("tv-popular-${state.selected?.id}", state.popular)
+                    onPrefetch("tv-popular-${state.selected?.id}", state.popular)
                 }
 
                 TvPortraitRow(
@@ -372,6 +410,13 @@ private fun TvHomeRows(
 
         if (state.latest.isNotEmpty()) {
             item(key = "latest-label", span = { GridItemSpan(maxLineSpan) }) {
+                // Keyed by size so each appended page is enriched as it arrives. Latest
+                // cards do not report focus, so this is the only thing that fetches their
+                // posters.
+                LaunchedEffect(state.latest.size) {
+                    onPrefetch("tv-latest-${state.latest.size}", state.latest)
+                }
+
                 Text(
                     text = stringResource(R.string.tv_row_latest),
                     style = MaterialTheme.typography.titleLarge,
@@ -384,11 +429,8 @@ private fun TvHomeRows(
             }
 
             items(items = state.latest, key = { it.key }) { card ->
-                // Padded per item rather than on the grid, so the label above can align
-                // with the first column while the grid keeps even spacing.
                 TvGridPortraitCard(
                     card = artwork[card.key] ?: card,
-                    onFocus = { onFocus(card) },
                     onClick = { onOpenAnime(card) },
                 )
             }
@@ -420,7 +462,6 @@ private fun TvHomeRows(
 @Composable
 private fun TvGridPortraitCard(
     card: AnimeCard,
-    onFocus: () -> Unit,
     onClick: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
@@ -461,7 +502,6 @@ private fun TvGridPortraitCard(
         )
     }
 
-    TvFocusReporter(interaction = interaction, onFocused = onFocus)
 }
 
 /** A row of portrait posters. */
@@ -737,7 +777,20 @@ private val HERO_LOGO_HEIGHT = 96.dp
  * Deliberately a fixed value rather than a fraction of the viewport: it is measured
  * against the row's own height, which does not scale with the screen.
  */
-private val ROWS_TOP_INSET = 330.dp
+/**
+ * Smallest allowed top inset, for when the poster scale is large enough that the row
+ * cannot fit under the backdrop.
+ */
+private val MIN_ROWS_TOP_INSET = 120.dp
+
+/** Pieces of the Popular row's height, kept beside the row that uses them. */
+private val POPULAR_LABEL_HEIGHT = 28.dp
+private val POPULAR_LABEL_GAP = 10.dp
+private val POPULAR_ROW_VERTICAL_PADDING = 8.dp
+private val POPULAR_CARD_LABEL_HEIGHT = 28.dp
+
+/** Gap between the Popular row and the bottom edge. */
+private val POPULAR_BOTTOM_GAP = 24.dp
 
 /** Columns in the Latest grid. Fewer than a phone: a D-pad crosses one per press. */
 private const val LATEST_COLUMNS = 6
