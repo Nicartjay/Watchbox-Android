@@ -99,6 +99,8 @@ kotlinx-serialization-json-okio = { module = "org.jetbrains.kotlinx:kotlinx-seri
 quickjs = { module = "app.cash.quickjs:quickjs-android", version.ref = "quickjs" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinx-coroutines" }
 
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

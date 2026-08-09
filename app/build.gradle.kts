@@ -144,6 +144,10 @@ android {
         kotlin.srcDir("src/main/kotlin")
     }
 
+    sourceSets.getByName("test") {
+        kotlin.srcDir("src/test/kotlin")
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -202,6 +206,10 @@ dependencies {
     implementation(libs.ktor.client.content.negotiation)
     implementation(libs.ktor.serialization.json)
     implementation(libs.ktor.client.logging)
+
+    // Unit tests for the pure logic that is expensive to verify on a device:
+    // HLS manifest rewriting and version comparison.
+    testImplementation(libs.kotlin.test)
 
     implementation(libs.kotlinx.serialization.json)
     // These four are not our choices: they are the "common" dependency bundle
