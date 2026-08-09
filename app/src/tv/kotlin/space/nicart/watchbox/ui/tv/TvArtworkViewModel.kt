@@ -85,7 +85,7 @@ class TvArtworkViewModel(
                         // Only published when something was actually found, so a
                         // miss leaves the card on its original poster rather than
                         // replacing it with an identical copy.
-                        if (enriched.cardBackdropUrl != null || enriched.logoUrl != null) {
+                        if (enriched.hasArtwork()) {
                             _artwork.value = _artwork.value + (card.key to enriched)
                         }
                     }
@@ -113,7 +113,7 @@ class TvArtworkViewModel(
             delay(FOCUS_DEBOUNCE_MS)
 
             val enriched = repository.artworkFor(card)
-            if (enriched.cardBackdropUrl != null || enriched.logoUrl != null) {
+            if (enriched.hasArtwork()) {
                 _artwork.value = _artwork.value + (card.key to enriched)
             }
 
@@ -142,3 +142,13 @@ class TvArtworkViewModel(
             }
     }
 }
+
+/**
+ * Whether a lookup produced anything worth publishing.
+ *
+ * Includes the portrait poster: the TV cards prefer it over the source's own artwork, so
+ * a title that matched on poster alone still has something to show. Checking only the
+ * backdrop and logo would silently drop those.
+ */
+private fun AnimeCard.hasArtwork(): Boolean =
+    cardBackdropUrl != null || logoUrl != null || tmdbPosterUrl != null

@@ -44,7 +44,9 @@ jobs:
         run: ./gradlew :app:assembleMobileDebug :app:assembleTvDebug --stacktrace
 
       - name: Unit tests
-        run: ./gradlew :app:testMobileDebugUnitTest --stacktrace
+        # Both flavors: TV-only tests live in their own source set and would otherwise
+        # never run.
+        run: ./gradlew :app:testMobileDebugUnitTest :app:testTvDebugUnitTest --stacktrace
 
       - name: Verify extension ABI (compiled classes)
         run: python3 tools/verify-extension-abi.py

@@ -1,8 +1,13 @@
 package space.nicart.watchbox.ui.tv
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,13 +19,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.UnfoldMore
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,141 +42,124 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.LocalPosterScale
 import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.tvFocusable
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.domain.AnimeCard
-import androidx.compose.ui.res.stringResource
-import space.nicart.watchbox.R
-import space.nicart.watchbox.ui.components.WbEmptyState
+import space.nicart.watchbox.ui.browse.SourceEntry
 import space.nicart.watchbox.ui.components.WbAsyncImage
-import space.nicart.watchbox.ui.home.HomeViewModel
+import space.nicart.watchbox.ui.components.WbEmptyState
+import space.nicart.watchbox.ui.extensions.ExtensionIconSlot
 
 /**
- * TV home: a backdrop that follows focus, over rows of posters.
+ * TV home: a full-screen backdrop with one row of posters along the bottom.
  *
- * The layout inverts the phone's. On a phone the hero is a card you scroll past; on a
- * television it is the background, and it changes to match whatever the D-pad is
- * currently on. That gives the screen a sense of place that a scrolling list cannot,
- * and it is the pattern every leanback interface uses - including NuvioTV - because
- * at three metres a large image is the only reliable way to convey what is selected.
+ * The backdrop is the screen, not a banner. Rows sit at the bottom edge so the artwork
+ * for the focused title stays almost entirely visible, and scrolling down brings the
+ * next row up over it - which is how every leanback interface handles the trade between
+ * showing artwork and showing a catalogue.
  *
- * Text sizes are not the phone's scaled up. They are chosen for legibility at
- * distance, where anything below roughly 18sp on a 1080p panel becomes unreadable.
+ * Posters are portrait. A landscape card shows more of a backdrop, but a row of them
+ * fits half as many titles and reads as a list of screenshots; the portrait poster is
+ * what people recognise a title by.
  */
 @Composable
 fun TvHomeScreen(
-    viewModel: HomeViewModel,
+    viewModel: TvHomeViewModel,
     artworkViewModel: TvArtworkViewModel,
     onOpenAnime: (AnimeCard) -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val tokens = MaterialTheme.wb
-
-    // Whatever the D-pad last landed on, with TMDB artwork attached once it resolves.
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val focused by artworkViewModel.focused.collectAsStateWithLifecycle()
     val artwork by artworkViewModel.artwork.collectAsStateWithLifecycle()
+    val tokens = MaterialTheme.wb
 
-    // Seeded from the hero list so the backdrop is populated before the D-pad has
-    // touched anything - otherwise the screen opens on flat black. Hero cards are
-    // already enriched, so this needs no lookup.
-    val hero = state.feed?.hero?.firstOrNull()
-    val backdrop = focused ?: hero
+    var pickerOpen by remember { mutableStateOf(false) }
 
-    // Otherwise the TV home is simply empty, with nothing to focus and no indication
-    // of what is missing - the worst possible first-run state on a device where the
-    // only input is a remote.
     if (state.hasNoSources) {
-        Box(
-            modifier = modifier
-                .fillMaxSize()
-                .padding(start = TV_CONTENT_START, end = 48.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            WbEmptyState(
-                title = stringResource(
-                    if (state.hasNoRepos) {
-                        R.string.empty_no_repos_title
-                    } else {
-                        R.string.empty_no_sources_title
-                    },
-                ),
-                body = stringResource(
-                    if (state.hasNoRepos) {
-                        R.string.empty_no_repos_body
-                    } else {
-                        R.string.empty_no_sources_body
-                    },
-                ),
-                actionLabel = stringResource(
-                    if (state.hasNoRepos) {
-                        R.string.action_add_repository
-                    } else {
-                        R.string.action_browse_extensions
-                    },
-                ),
-                onAction = onOpenSettings,
-            )
-        }
+        TvHomeEmpty(onOpenSettings = onOpenSettings, modifier = modifier)
         return
     }
+
+    // Seeded from the first card so the backdrop is populated before the D-pad has
+    // touched anything, rather than opening on flat black.
+    val backdrop = focused ?: state.firstCard()
 
     Box(modifier = modifier.fillMaxSize()) {
         TvBackdrop(card = backdrop)
 
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                // Overscan-safe: a television can crop up to about 5% of each edge.
-                start = TV_CONTENT_START,
-                end = 48.dp,
-                top = 40.dp,
-                bottom = 48.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(28.dp),
-        ) {
-            // Details for the focused title sit above the rows, in the space the
-            // backdrop occupies, so the eye does not travel to a corner.
-            item(key = "focused-detail") {
-                TvFocusedDetail(card = backdrop)
-            }
+        // Title block sits in the upper-left third, clear of both the rail and the rows.
+        // Rows first, so the title block and picker draw over them. The rows fill the
+        // screen - their top inset is what pushes the first row to the bottom edge - so
+        // composing them last would put a transparent sheet over the whole upper area
+        // and hide everything beneath it.
+        TvHomeRows(
+            state = state,
+            artwork = artwork,
+            onFocus = artworkViewModel::onFocus,
+            onRowVisible = artworkViewModel::onRowVisible,
+            onOpenAnime = onOpenAnime,
+        )
 
-            state.feed?.rows.orEmpty().forEach { row ->
-                val rowKey = "row-${row.sourceId}-${row.title}"
+        TvBackdropDetail(
+            card = backdrop,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = TV_CONTENT_START, top = 80.dp, end = 48.dp),
+        )
 
-                item(key = rowKey) {
-                    // Requested as the row composes rather than up front: rows below
-                    // the fold are often never reached, and fetching them first would
-                    // delay the artwork for the row being looked at.
-                    LaunchedEffect(rowKey) {
-                        artworkViewModel.onRowVisible(rowKey, row.items)
-                    }
+        SourcePicker(
+            selected = state.selected,
+            onClick = { pickerOpen = true },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 40.dp, end = 48.dp),
+        )
 
-                    TvPosterRow(
-                        title = row.title,
-                        items = row.items,
-                        artwork = artwork,
-                        onFocus = artworkViewModel::onFocus,
-                        onClick = onOpenAnime,
-                    )
-                }
-            }
-        }
+        SourcePickerPanel(
+            sources = state.sources,
+            selected = state.selected,
+            visible = pickerOpen,
+            onSelect = { source ->
+                viewModel.select(source)
+                pickerOpen = false
+            },
+            onDismiss = { pickerOpen = false },
+        )
+    }
+}
+
+@Composable
+private fun TvHomeEmpty(onOpenSettings: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(start = TV_CONTENT_START, end = 48.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        WbEmptyState(
+            title = stringResource(R.string.empty_no_repos_title),
+            body = stringResource(R.string.empty_no_repos_body),
+            actionLabel = stringResource(R.string.action_add_repository),
+            onAction = onOpenSettings,
+        )
     }
 }
 
 /**
  * Full-bleed backdrop for the focused title.
  *
- * Scrimmed heavily on the left and bottom because the rows and text sit there;
- * without it, poster art with a bright edge makes white text vanish.
+ * Uses the wide TMDB backdrop, not the portrait poster the cards show: a poster cropped
+ * to 16:9 loses most of the frame, usually including the subject.
  */
 @Composable
 private fun TvBackdrop(card: AnimeCard?) {
@@ -177,24 +167,20 @@ private fun TvBackdrop(card: AnimeCard?) {
 
     Box(modifier = Modifier.fillMaxSize()) {
         WbAsyncImage(
-            // Backdrop first: it is 16:9 and composed for this use. A portrait
-            // poster cropped to fill a widescreen panel loses most of the frame,
-            // usually including the subject.
             url = card?.backdropUrl ?: card?.posterUrl,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
         )
 
-        // Two gradients rather than one: a single diagonal scrim either over-darkens
-        // the image or under-protects the text, depending on the artwork.
+        // Left gradient protects the title block; the bottom one carries the row.
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.horizontalGradient(
-                        0f to tokens.colors.background.copy(alpha = 0.96f),
-                        0.55f to tokens.colors.background.copy(alpha = 0.60f),
+                        0f to tokens.colors.background.copy(alpha = 0.92f),
+                        0.5f to tokens.colors.background.copy(alpha = 0.45f),
                         1f to Color.Transparent,
                     ),
                 ),
@@ -204,8 +190,9 @@ private fun TvBackdrop(card: AnimeCard?) {
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        0.45f to tokens.colors.background.copy(alpha = 0.55f),
+                        0f to tokens.colors.background.copy(alpha = 0.35f),
+                        0.35f to Color.Transparent,
+                        0.72f to tokens.colors.background.copy(alpha = 0.72f),
                         1f to tokens.colors.background,
                     ),
                 ),
@@ -213,36 +200,28 @@ private fun TvBackdrop(card: AnimeCard?) {
     }
 }
 
-/** Title and metadata for whatever currently has focus. */
+/** Title logo or text, plus a metadata line, for the focused card. */
 @Composable
-private fun TvFocusedDetail(card: AnimeCard?) {
+private fun TvBackdropDetail(card: AnimeCard?, modifier: Modifier = Modifier) {
     val tokens = MaterialTheme.wb
+    if (card == null) return
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth(0.55f)
-            .height(220.dp),
-        verticalArrangement = Arrangement.Bottom,
-    ) {
-        // TMDB's logo is the official wordmark, already set in the title's own
-        // typeface. Where one exists it is strictly better than re-typesetting the
-        // name, which is what the phone hero does too.
-        val logo = card?.logoUrl
-
-        if (logo != null) {
+    Column(modifier = modifier.fillMaxWidth(0.5f)) {
+        if (card.logoUrl != null) {
             WbAsyncImage(
-                url = logo,
+                url = card.logoUrl,
                 contentDescription = card.title,
-                // Fit, never Crop: a logo is mostly transparent and cropping it
-                // cuts the wordmark.
                 contentScale = ContentScale.Fit,
+                // Left, not the default centre: Fit letterboxes, and a centred logo
+                // reads as an indent beside left-aligned text.
+                alignment = Alignment.CenterStart,
                 modifier = Modifier
-                    .fillMaxWidth(0.62f)
-                    .height(LOGO_HEIGHT),
+                    .fillMaxWidth(0.92f)
+                    .height(HERO_LOGO_HEIGHT),
             )
         } else {
             Text(
-                text = card?.title.orEmpty(),
+                text = card.title,
                 style = MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.Bold,
                 color = tokens.colors.textPrimary,
@@ -251,15 +230,12 @@ private fun TvFocusedDetail(card: AnimeCard?) {
             )
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(12.dp))
 
-        // Built from whatever TMDB returned; a card with no match still shows its
-        // source, so the line is never empty.
         val meta = listOfNotNull(
-            card?.year?.takeIf { it.isNotBlank() },
-            card?.genres?.take(2)?.joinToString(" · ")?.takeIf { it.isNotBlank() },
-            card?.sourceName?.takeIf { it.isNotBlank() },
-        ).joinToString("  ·  ")
+            card.year?.takeIf { it.isNotBlank() },
+            card.genres.take(2).joinToString(" · ").takeIf { it.isNotBlank() },
+        ).joinToString("   ·   ")
 
         if (meta.isNotEmpty()) {
             Text(
@@ -274,14 +250,45 @@ private fun TvFocusedDetail(card: AnimeCard?) {
 }
 
 /**
- * One horizontal rail of posters.
+ * The rows, anchored at the bottom of the screen.
  *
- * `onFocus` fires as the D-pad crosses each card, which is what drives the backdrop.
- * It is deliberately separate from `onClick`: on a TV, moving over an item is a
- * meaningful event in its own right, unlike on a touchscreen where the two collapse.
+ * Only the first row is on screen at rest. Scrolling reveals the rest, which is what
+ * keeps the backdrop visible while still giving access to the whole feed.
  */
 @Composable
-fun TvPosterRow(
+private fun TvHomeRows(
+    state: TvHomeState,
+    artwork: Map<String, AnimeCard>,
+    onFocus: (AnimeCard) -> Unit,
+    onRowVisible: (String, List<AnimeCard>) -> Unit,
+    onOpenAnime: (AnimeCard) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        // The top padding is the mechanism: it places the first row at the bottom edge
+        // while leaving everything above it as visible backdrop.
+        contentPadding = PaddingValues(top = ROWS_TOP_INSET, bottom = 40.dp),
+        verticalArrangement = Arrangement.spacedBy(28.dp),
+    ) {
+        items(items = state.rows, key = { "${it.sourceId}-${it.title}" }) { row ->
+            val rowKey = "tv-home-${row.sourceId}-${row.title}"
+
+            LaunchedEffect(rowKey) { onRowVisible(rowKey, row.items) }
+
+            TvPortraitRow(
+                title = row.title,
+                items = row.items,
+                artwork = artwork,
+                onFocus = onFocus,
+                onClick = onOpenAnime,
+            )
+        }
+    }
+}
+
+/** A row of portrait posters. */
+@Composable
+fun TvPortraitRow(
     title: String,
     items: List<AnimeCard>,
     onClick: (AnimeCard) -> Unit,
@@ -290,26 +297,28 @@ fun TvPosterRow(
 ) {
     val tokens = MaterialTheme.wb
 
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             text = title,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
             color = tokens.colors.textPrimary,
+            modifier = Modifier.padding(start = TV_CONTENT_START),
         )
 
         LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            // Room for the focused card to scale up without being clipped by the row.
-            contentPadding = PaddingValues(vertical = 10.dp, horizontal = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            // Room for the focused card to scale without being clipped by the row.
+            contentPadding = PaddingValues(
+                start = TV_CONTENT_START,
+                end = 48.dp,
+                top = 8.dp,
+                bottom = 8.dp,
+            ),
         ) {
             items(items = items, key = { it.key }) { card ->
-                // The enriched copy when it exists; the original otherwise, so a card
-                // is never blank while its artwork is in flight.
-                val resolved = artwork[card.key] ?: card
-
-                TvLandscapeCard(
-                    card = resolved,
+                TvPortraitCard(
+                    card = artwork[card.key] ?: card,
                     onFocus = { onFocus(card) },
                     onClick = { onClick(card) },
                 )
@@ -319,60 +328,48 @@ fun TvPosterRow(
 }
 
 @Composable
-fun TvLandscapeCard(
+private fun TvPortraitCard(
     card: AnimeCard,
     onFocus: () -> Unit,
     onClick: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
-
-    // TV cards size themselves rather than filling a grid cell, so the poster scale has
-    // to be applied here - the shared WbPosterCard path never runs on this screen.
-    val cardWidth = CARD_WIDTH * LocalPosterScale.current
+    val width = POSTER_WIDTH * LocalPosterScale.current
 
     Column(
-        modifier = Modifier.width(cardWidth),
+        modifier = Modifier.width(width),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(CARD_ASPECT)
+                .aspectRatio(POSTER_ASPECT)
                 .clip(RoundedCornerShape(10.dp))
                 .background(tokens.colors.surfaceCard)
                 .tvFocusable(interaction, RoundedCornerShape(10.dp))
                 .clickable(
                     interactionSource = interaction,
-                    // Compose's ripple is invisible at TV distance; the border and
-                    // scale from tvFocusable are the affordance instead.
+                    // The ripple is invisible at TV distance; the border and scale from
+                    // tvFocusable are the affordance.
                     indication = null,
                     onClick = onClick,
                 ),
         ) {
             WbAsyncImage(
-                // Backdrop first. Falling back to the portrait poster is deliberate
-                // rather than showing an empty card: cropped it is wrong, but a
-                // recognisable wrong image beats a grey box while TMDB resolves.
-                url = card.cardBackdropUrl ?: card.posterUrl,
+                // TMDB's portrait poster first: it is cleaner and consistently sized,
+                // where a source's own artwork varies wildly in crop and quality.
+                url = card.tmdbPosterUrl ?: card.posterUrl,
                 contentDescription = card.title,
                 contentScale = ContentScale.Crop,
                 fallbackLabel = card.title,
                 modifier = Modifier.fillMaxSize(),
             )
-
         }
 
-        // Always the title text, never the TMDB logo.
-        //
-        // A logo composited onto a card competes with the artwork behind it and needs a
-        // scrim to stay legible, which dulls the image the card exists to show. It is
-        // also inconsistent: only some titles have a logo, so a row ends up half
-        // wordmarks and half text at different optical sizes. The hero still uses the
-        // logo, where it is large enough to earn the space.
         Text(
             text = card.title,
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.bodyMedium,
             color = tokens.colors.textSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -380,6 +377,160 @@ fun TvLandscapeCard(
     }
 
     TvFocusReporter(interaction = interaction, onFocused = onFocus)
+}
+
+/** Source button, top-right: extension icon plus source name. */
+@Composable
+private fun SourcePicker(
+    selected: SourceEntry?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
+    if (selected == null) return
+
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(tokens.colors.surface.copy(alpha = 0.85f))
+            .tvFocusable(interaction, RoundedCornerShape(12.dp), focusedScale = 1.04f)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        ExtensionIconSlot(
+            drawable = selected.icon,
+            iconUrl = null,
+            modifier = Modifier.size(26.dp),
+        )
+        Text(
+            text = selected.name,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = tokens.colors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Icon(
+            imageVector = Icons.Rounded.UnfoldMore,
+            contentDescription = null,
+            tint = tokens.colors.textMuted,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+/**
+ * Source list, in the same right-edge drawer as the player and filter panels.
+ *
+ * Hidden entirely when only one source is installed: there is nothing to switch to, and
+ * a picker that opens onto a single row implies a choice that does not exist.
+ */
+@Composable
+private fun SourcePickerPanel(
+    sources: List<SourceEntry>,
+    selected: SourceEntry?,
+    visible: Boolean,
+    onSelect: (SourceEntry) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(200)),
+        exit = fadeOut(tween(160)),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.4f))
+                .clickable(onClick = onDismiss),
+        )
+    }
+
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = androidx.compose.animation.slideInHorizontally(tween(250)) { it },
+            exit = androidx.compose.animation.slideOutHorizontally(tween(200)) { it },
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(420.dp)
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
+                    .background(tokens.colors.surfaceElevated)
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.tv_source_picker_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = tokens.colors.textPrimary,
+                )
+                Spacer(Modifier.height(8.dp))
+
+                sources.forEach { source ->
+                    SourceRow(
+                        source = source,
+                        isSelected = source.id == selected?.id,
+                        onClick = { onSelect(source) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SourceRow(
+    source: SourceEntry,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (isSelected) tokens.colors.accent else tokens.colors.surface)
+            .tvFocusable(interaction, RoundedCornerShape(10.dp), focusedScale = 1.02f)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        ExtensionIconSlot(
+            drawable = source.icon,
+            iconUrl = null,
+            modifier = Modifier.size(30.dp),
+        )
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = source.name,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (isSelected) tokens.colors.onAccent else tokens.colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (source.lang.isNotBlank()) {
+                Text(
+                    text = source.lang.uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isSelected) {
+                        tokens.colors.onAccent.copy(alpha = 0.8f)
+                    } else {
+                        tokens.colors.textMuted
+                    },
+                )
+            }
+        }
+    }
 }
 
 /** Bridges focus on [interaction] to a callback, without a second focus modifier. */
@@ -395,18 +546,21 @@ private fun TvFocusReporter(
     }
 }
 
-/** Tall enough for a wide wordmark without dominating the screen. */
-private val LOGO_HEIGHT = 108.dp
+private val POSTER_WIDTH = 150.dp
+
+/** 2:3, the standard poster ratio. */
+private const val POSTER_ASPECT = 0.667f
+
+private val HERO_LOGO_HEIGHT = 96.dp
 
 /**
- * Landscape card metrics.
+ * How far down the first row starts.
  *
- * Wider than the portrait poster it replaces: at 16:9 a card of the same height would
- * be enormous, so the height comes down and the width goes up, which also puts more
- * cards on screen per row.
+ * Sized so the first row's posters end near the bottom edge, leaving the rest of the
+ * screen as backdrop. A 1080p panel is 540dp tall and the row block - title, poster,
+ * label - is about 190dp, so the row begins around 330dp down.
+ *
+ * Deliberately a fixed value rather than a fraction of the viewport: it is measured
+ * against the row's own height, which does not scale with the screen.
  */
-private val CARD_WIDTH = 300.dp
-
-/** 16:9, matching the backdrop it displays. */
-private const val CARD_ASPECT = 1.777f
-
+private val ROWS_TOP_INSET = 330.dp

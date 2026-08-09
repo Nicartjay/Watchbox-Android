@@ -51,9 +51,17 @@
           The activity is declared only to add the leanback category; every other
           attribute is inherited from the main manifest by the merger.
         -->
+        <!--
+          Locked to landscape. A television is physically fixed, and sensorLandscape
+          allows either orientation so a set-top box mounted upside down - or an
+          emulator reporting a rotated sensor - still shows the UI right way up.
+          Portrait is never valid on a TV, so it is excluded rather than left to the
+          sensor.
+        -->
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:screenOrientation="sensorLandscape">
 
             <!--
               LEANBACK_LAUNCHER is what puts the app in the TV launcher's app row.

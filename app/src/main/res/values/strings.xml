@@ -84,6 +84,7 @@
 
     <!-- Empty / error states -->
     <string name="empty_search_hint">Search movies and TV shows</string>
+    <string name="tv_source_picker_title">Choose a source</string>
     <string name="tv_search_hint">Press to search by voice</string>
     <string name="search_all_sources">All sources</string>
     <string name="empty_search_title">Nothing found</string>

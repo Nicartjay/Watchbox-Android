@@ -119,7 +119,7 @@ fun TvSearchScreen(
             }
 
             else -> items(items = state.results, key = { it.sourceId }) { row ->
-                TvPosterRow(
+                TvPortraitRow(
                     title = row.title,
                     items = row.items,
                     onClick = onOpenAnime,

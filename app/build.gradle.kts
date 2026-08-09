@@ -196,6 +196,13 @@ android {
         kotlin.srcDir("src/tv/kotlin")
     }
 
+    // TV-only tests. They cannot live in the shared `test` set: it is compiled for both
+    // flavors, so the mobile task would try to build them against classes that only
+    // exist in the tv source set.
+    sourceSets.getByName("testTv") {
+        kotlin.srcDir("src/testTv/kotlin")
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

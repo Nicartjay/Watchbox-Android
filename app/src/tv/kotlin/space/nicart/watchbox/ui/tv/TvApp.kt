@@ -22,7 +22,6 @@ import space.nicart.watchbox.ui.detail.DetailScreen
 import space.nicart.watchbox.ui.detail.DetailViewModel
 import space.nicart.watchbox.ui.extensions.ExtensionsScreen
 import space.nicart.watchbox.ui.extensions.ExtensionsViewModel
-import space.nicart.watchbox.ui.home.HomeViewModel
 import space.nicart.watchbox.ui.library.LibraryScreen
 import space.nicart.watchbox.ui.library.LibraryViewModel
 import space.nicart.watchbox.ui.navigation.AppTab
@@ -183,12 +182,11 @@ private fun TvTabContent(
 
     when (tab) {
         AppTab.HOME -> {
-            val viewModel: HomeViewModel = viewModel(
-                key = "home",
-                factory = HomeViewModel.factory(
+            val viewModel: TvHomeViewModel = viewModel(
+                key = "tv-home",
+                factory = TvHomeViewModel.factory(
                     container.repository,
                     container.extensionManager,
-                    container.store,
                 ),
             )
             val artwork: TvArtworkViewModel = viewModel(
