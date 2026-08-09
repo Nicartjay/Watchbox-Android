@@ -32,6 +32,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import space.nicart.watchbox.cast.CastManager
+import space.nicart.watchbox.cast.CastMedia
+import space.nicart.watchbox.cast.CastSubtitle
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.Player
@@ -62,6 +65,7 @@ private const val TAG = "WbPlayer"
 @Composable
 fun PlayerScreen(
     viewModel: PlayerViewModel,
+    castManager: CastManager,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -97,6 +101,14 @@ fun PlayerScreen(
     val streamHeaders = state.selectedStream?.headers.orEmpty()
     val exoPlayer = remember(streamHeaders) { PlayerFactory.create(context, streamHeaders) }
 
+    val castState by castManager.state.collectAsStateWithLifecycle()
+
+    // Local playback must stop while casting or audio plays from both the phone
+    // and the TV; it resumes when the session ends.
+    LaunchedEffect(castState.isCasting) {
+        if (castState.isCasting) exoPlayer.pause()
+    }
+
     // The PlayerView must be re-bound whenever the instance above is replaced.
     // AndroidView's factory runs only once, so binding there alone left video
     // attached to the discarded player while audio came from the new one -- the
@@ -113,6 +125,7 @@ fun PlayerScreen(
     var bufferedMs by remember { mutableLongStateOf(0L) }
     var controlsVisible by remember { mutableStateOf(true) }
     var openPanel by remember { mutableStateOf(PlayerPanel.NONE) }
+    var castPanelOpen by remember { mutableStateOf(false) }
     var playbackError by remember { mutableStateOf<String?>(null) }
 
     // --- player listener
@@ -231,6 +244,7 @@ fun PlayerScreen(
 
     BackHandler {
         when {
+            castPanelOpen -> castPanelOpen = false
             openPanel != PlayerPanel.NONE -> openPanel = PlayerPanel.NONE
             state.locked -> viewModel.setLocked(false)
             else -> {
@@ -365,6 +379,13 @@ fun PlayerScreen(
                 onToggleLock = { viewModel.setLocked(true) },
                 onCycleAspect = viewModel::cycleAspect,
                 onOpenPanel = { openPanel = it },
+                isCasting = castState.isCasting,
+                onOpenCast = {
+                    castPanelOpen = true
+                    // Rescan on open: renderers come and go, so a list cached
+                    // from a previous session is usually stale.
+                    castManager.discover()
+                },
             )
         }
 
@@ -377,6 +398,34 @@ fun PlayerScreen(
         }
 
         // --- side panels
+        CastPanel(
+            state = castState,
+            visible = castPanelOpen,
+            onSelectDevice = { device ->
+                castManager.castTo(
+                    device = device,
+                    media = state.toCastMedia(),
+                    positionMs = exoPlayer.currentPosition,
+                )
+                exoPlayer.pause()
+                castPanelOpen = false
+            },
+            onCastToChromecast = {
+                castManager.castToConnectedChromecast(
+                    media = state.toCastMedia(),
+                    positionMs = exoPlayer.currentPosition,
+                )
+                exoPlayer.pause()
+                castPanelOpen = false
+            },
+            onStopCasting = {
+                castManager.stopCasting()
+                castPanelOpen = false
+            },
+            onRescan = castManager::discover,
+            onDismiss = { castPanelOpen = false },
+        )
+
         PlayerPanels(
             panel = openPanel,
             state = state,
@@ -399,4 +448,31 @@ fun PlayerScreen(
             },
         )
     }
+}
+
+/**
+ * Builds the payload for a receiver from the current playback state.
+ *
+ * The upstream headers are carried through deliberately: [CastManager] uses them
+ * to decide whether the stream has to be relayed through the local proxy, since a
+ * receiver cannot send a `Referer` itself.
+ */
+private fun PlayerUiState.toCastMedia(): CastMedia {
+    val stream = selectedStream
+    return CastMedia(
+        url = stream?.url.orEmpty(),
+        headers = stream?.headers.orEmpty(),
+        mimeType = when {
+            stream?.isHls == true -> "application/vnd.apple.mpegurl"
+            else -> "video/mp4"
+        },
+        title = title,
+        subtitle = episodeLabel,
+        artworkUrl = detail?.posterUrl,
+        durationMs = 0L,
+        subtitles = subtitles.map {
+            CastSubtitle(url = it.url, label = it.label, language = it.language)
+        },
+        isMovie = episodes.size <= 1,
+    )
 }

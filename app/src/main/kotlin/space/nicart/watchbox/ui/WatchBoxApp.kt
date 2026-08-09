@@ -144,6 +144,7 @@ fun WatchBoxApp(
                 )
                 PlayerScreen(
                     viewModel = viewModel,
+                    castManager = container.castManager,
                     onBack = navController::popBackStack,
                 )
             }

@@ -44,14 +44,19 @@ interface CastTransport {
 }
 
 /**
- * A stream prepared for a receiver.
+ * A stream on its way to a receiver.
  *
- * [url] is already final: if the source needed headers, it points at the local
- * proxy rather than the CDN. Receivers cannot send headers themselves, which is
- * the whole reason the proxy exists.
+ * [headers] are the upstream request headers the extension supplied, usually a
+ * `Referer` the CDN checks. Receivers cannot send headers themselves, so
+ * [CastManager] uses this to decide whether the stream must be relayed through
+ * the local proxy: non-empty means proxy, empty means hand the URL over directly.
+ *
+ * After that decision [url] is final — it points either at the CDN or at the
+ * proxy — and the transports never look at [headers] again.
  */
 data class CastMedia(
     val url: String,
+    val headers: Map<String, String> = emptyMap(),
     val mimeType: String,
     val title: String,
     val subtitle: String? = null,

@@ -122,6 +122,8 @@ fun PlayerControlsOverlay(
     onToggleLock: () -> Unit,
     onCycleAspect: () -> Unit,
     onOpenPanel: (PlayerPanel) -> Unit,
+    isCasting: Boolean = false,
+    onOpenCast: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -159,6 +161,8 @@ fun PlayerControlsOverlay(
                 metrics = metrics,
                 onBack = onBack,
                 onToggleLock = onToggleLock,
+                isCasting = isCasting,
+                onOpenCast = onOpenCast,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .windowInsetsPadding(WindowInsets.statusBars)
@@ -200,6 +204,8 @@ private fun PlayerHeader(
     metrics: PlayerMetrics,
     onBack: () -> Unit,
     onToggleLock: () -> Unit,
+    isCasting: Boolean,
+    onOpenCast: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val type = MaterialTheme.wbType
@@ -249,6 +255,11 @@ private fun PlayerHeader(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            CastButton(
+                isCasting = isCasting,
+                size = metrics.headerIconSize,
+                onClick = onOpenCast,
+            )
             HeaderIconButton(
                 icon = if (state.locked) Icons.Filled.Lock else Icons.Filled.LockOpen,
                 size = metrics.headerIconSize,

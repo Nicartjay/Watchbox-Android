@@ -89,6 +89,17 @@
     <string name="settings_clear_list">Clear My List</string>
     <string name="settings_about">About</string>
 
+    <!-- Casting -->
+    <string name="cast_title">Cast to device</string>
+    <string name="cast_searching">Searching for devices…</string>
+    <string name="cast_none_found">No devices found on this network.</string>
+    <string name="cast_rescan">Search again</string>
+    <string name="cast_playing_on">Playing on %1$s</string>
+    <string name="cast_stop">Stop casting</string>
+    <string name="cast_button">Cast</string>
+    <string name="cast_chromecast_hint">Use the Cast button in your notification shade or Google Home to connect a Chromecast, then reopen this menu.</string>
+    <string name="cast_load_to_connected">Cast to connected Chromecast</string>
+
     <!-- Updates -->
     <string name="settings_updates">Updates</string>
     <string name="settings_auto_check_updates">Check for updates automatically</string>

@@ -9,6 +9,7 @@ import coil.request.CachePolicy
 import eu.kanade.tachiyomi.network.NetworkHelper
 import io.ktor.client.HttpClient
 import space.nicart.watchbox.core.network.HttpClientFactory
+import space.nicart.watchbox.cast.CastManager
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.data.remote.TmdbApi
 import space.nicart.watchbox.data.remote.UpdateChecker
@@ -43,6 +44,10 @@ class WatchBoxApplication : Application(), ImageLoaderFactory {
 
         container = AppContainer(this, networkHelper)
         container.extensionManager.init()
+
+        // Initialised eagerly so a Chromecast session started from the system UI
+        // is already visible the first time the player opens.
+        container.castManager.initialise()
     }
 
     /**
@@ -98,6 +103,15 @@ class AppContainer(
     )
 
     val repository = AnimeRepository(extensionManager, tmdbApi)
+
+    /**
+     * Casting. One per process because it owns the local proxy socket and the
+     * Cast SDK session, neither of which can be duplicated per screen.
+     *
+     * Reuses the extensions' OkHttp client so the proxy's upstream fetches carry
+     * the same cookie jar and connection pool the player already uses.
+     */
+    val castManager = CastManager(application, networkHelper.client)
 
     /**
      * In-app updates from GitHub Releases.
