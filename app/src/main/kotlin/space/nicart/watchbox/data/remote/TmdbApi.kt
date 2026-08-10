@@ -38,6 +38,30 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
     private val cache = ConcurrentHashMap<String, Any>()
 
     /**
+     * Exact lookup by TMDB id, for sources whose URLs already carry one.
+     *
+     * Some extensions are TMDB front-ends and encode the id in the entry URL
+     * (`/movie/1719380`, `/tv/94997`). Searching by title throws that away and
+     * guesses, which is how a card ends up with another title's artwork: several
+     * unrelated entries share a name, and the search endpoint returns them in
+     * relevance order that has nothing to do with which one the source meant.
+     * When the id is known, the answer is not a guess.
+     *
+     * Keyed separately from the title cache: the two can disagree, and the id is
+     * the trustworthy one.
+     */
+    suspend fun lookupById(tmdbId: Int, type: TmdbType): TmdbArtwork? {
+        if (apiKey.isBlank() || tmdbId <= 0) return null
+
+        val key = "id:${type.path}:$tmdbId"
+        cache[key]?.let { return it as? TmdbArtwork }
+
+        val artwork = details(tmdbId, type)
+        cache[key] = artwork ?: MISS
+        return artwork
+    }
+
+    /**
      * Best-effort match for [title].
      *
      * Anime titles are messy: extensions append season markers, "(Dub)",
@@ -45,6 +69,8 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
      * where TMDB uses the English one. So this tries the cleaned title first,
      * then the raw title, and searches TV before movies because the large
      * majority of extension content is episodic.
+     *
+     * A guess by nature. Prefer [lookupById] when the source supplies an id.
      */
     suspend fun lookup(title: String, preferMovie: Boolean = false): TmdbArtwork? {
         if (apiKey.isBlank() || title.isBlank()) return null
@@ -257,6 +283,40 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
             .trim()
             .trim('-', ':', '·', '–')
             .trim()
+
+        /**
+         * Reads a TMDB id out of a source entry URL, or null.
+         *
+         * TMDB front-end extensions build their URLs straight from the id, so the
+         * exact answer is already in hand and a title search is pure loss. The
+         * `/movie/` or `/tv/` segment also states the media type, which otherwise
+         * has to be inferred from the episode count.
+         *
+         * Deliberately strict. This runs against every source, and a loose match
+         * would read an unrelated path number as a TMDB id and confidently attach
+         * the wrong artwork - worse than the fuzzy title search it replaces,
+         * because a wrong id is never reconsidered. So the segment must be the
+         * whole path, optionally followed by a query or fragment: `/movie/123`
+         * matches, `/anime/movie/123` and `/movie/123/season/2` do not.
+         */
+        fun parseTmdbRef(url: String): Pair<Int, TmdbType>? {
+            val match = TMDB_URL.find(url.trim()) ?: return null
+            val type = when (match.groupValues[1].lowercase()) {
+                "movie" -> TmdbType.MOVIE
+                "tv" -> TmdbType.TV
+                else -> return null
+            }
+            // toIntOrNull rejects anything that would overflow, rather than
+            // truncating it into a valid-looking id for an unrelated entry.
+            val id = match.groupValues[2].toIntOrNull()?.takeIf { it > 0 } ?: return null
+            return id to type
+        }
+
+        /** `/movie/123`, `/tv/456`, with an optional leading host and trailing query. */
+        private val TMDB_URL = Regex(
+            """^(?:https?://[^/]+)?/(movie|tv)/(\d+)/?(?:[?#].*)?$""",
+            RegexOption.IGNORE_CASE,
+        )
     }
 }
 

@@ -12,6 +12,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import space.nicart.watchbox.data.remote.TmdbApi
+import space.nicart.watchbox.data.remote.TmdbArtwork
 import space.nicart.watchbox.data.remote.TmdbEpisodeArt
 import space.nicart.watchbox.data.remote.TmdbSuggestion
 import space.nicart.watchbox.data.remote.TmdbType
@@ -91,7 +92,7 @@ class AnimeRepository(
 
     /** Overlays TMDB artwork on a card, keeping the source fields intact. */
     private suspend fun AnimeCard.enriched(): AnimeCard {
-        val art = guarded("tmdb($title)") { tmdb.lookup(title) } ?: return this
+        val art = guarded("tmdb($title)") { tmdbArtwork(url, title) } ?: return this
         return copy(
             backdropUrl = art.backdropUrl,
             cardBackdropUrl = art.cardBackdropUrl,
@@ -101,6 +102,31 @@ class AnimeRepository(
             year = art.year,
             genres = art.genres,
         )
+    }
+
+    /**
+     * Resolves TMDB artwork for one entry, by id when the source gives one.
+     *
+     * TMDB front-end extensions encode the id in the entry URL, which is an exact
+     * answer; a title search only guesses, and picks the wrong entry whenever a
+     * name is shared. Sources that use their own URL scheme parse to null here and
+     * keep the title search unchanged, so this is additive rather than a
+     * replacement.
+     *
+     * [preferMovie] only applies to the title path: a URL that carries an id also
+     * states the type, which is strictly better than inferring it.
+     */
+    private suspend fun tmdbArtwork(
+        url: String,
+        title: String,
+        preferMovie: Boolean = false,
+    ): TmdbArtwork? {
+        TmdbApi.parseTmdbRef(url)?.let { (id, type) ->
+            // Falls through to the title search when the id resolves to nothing:
+            // an id can be stale, and no artwork at all is worse than a guess.
+            tmdb.lookupById(id, type)?.let { return it }
+        }
+        return tmdb.lookup(title, preferMovie = preferMovie)
     }
 
     private suspend fun AnimeCatalogueSource.popularRow(): AnimeRow? = guarded(
@@ -220,9 +246,11 @@ class AnimeRepository(
             val resolvedTitle = details.title.ifBlank { "Untitled" }
             val ordered = episodes.sortedEpisodes()
 
-            // One lookup per title, then one per season for stills.
+            // One lookup per title, then one per season for stills. Resolved by the
+            // URL's TMDB id when the source supplies one, so the detail page and the
+            // card it was opened from cannot disagree about which entry this is.
             val art = guarded("tmdb($resolvedTitle)") {
-                tmdb.lookup(resolvedTitle, preferMovie = ordered.size <= 1)
+                tmdbArtwork(url, resolvedTitle, preferMovie = ordered.size <= 1)
             }
 
             // Fetched per season, keyed by season. Season 1's episodes were previously
@@ -366,7 +394,8 @@ class AnimeRepository(
         animeUrl: String,
         title: String,
     ): List<AnimeCard> {
-        val art = guarded("tmdbLookup($title)") { tmdb.lookup(title) } ?: return emptyList()
+        val art = guarded("tmdbLookup($title)") { tmdbArtwork(animeUrl, title) }
+            ?: return emptyList()
 
         val recommended = guarded("tmdbRecs(${art.tmdbId})") {
             tmdb.recommendations(art.tmdbId, art.type)
