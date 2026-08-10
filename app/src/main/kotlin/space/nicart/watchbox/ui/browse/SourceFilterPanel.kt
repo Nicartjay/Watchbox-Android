@@ -1,5 +1,6 @@
 package space.nicart.watchbox.ui.browse
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -85,6 +86,19 @@ fun SourceFilterPanel(
     val panelFocus = remember { FocusRequester() }
     val applyFocus = remember { FocusRequester() }
 
+    // Closes the drawer instead of leaving the screen.
+    //
+    // Registered through the back dispatcher rather than as a key handler: the app sets
+    // `enableOnBackInvokedCallback`, and from API 33 the framework intercepts
+    // KEYCODE_BACK before it reaches the view tree, so a Back case in onPreviewKeyEvent
+    // never runs and NavHost's own callback pops the whole source page.
+    //
+    // Enabled only while open, so a closed panel does not swallow the press that should
+    // leave the screen. Registered before the drawer's own content, and the dispatcher
+    // invokes the most recently added enabled callback first, so this wins over
+    // NavHost while it is open.
+    BackHandler(enabled = visible, onBack = onDismiss)
+
     // Pull focus in when the drawer opens, so the first D-pad press acts on a filter
     // rather than the grid behind it.
     LaunchedEffect(visible) {
@@ -133,10 +147,13 @@ fun SourceFilterPanel(
                     // drawer leaves no way back into it.
                     .focusProperties { exit = { FocusRequester.Cancel } }
                     .focusGroup()
+                    // Escape only. Back is handled by the BackHandler above: the
+                    // framework consumes KEYCODE_BACK before the view tree sees it, so
+                    // a Back case here would never fire.
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
                         when (event.key) {
-                            Key.Back, Key.Escape -> {
+                            Key.Escape -> {
                                 onDismiss()
                                 true
                             }

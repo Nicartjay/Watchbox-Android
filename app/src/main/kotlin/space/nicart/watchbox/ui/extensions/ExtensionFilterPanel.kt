@@ -1,5 +1,6 @@
 package space.nicart.watchbox.ui.extensions
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -66,6 +67,11 @@ fun ExtensionFilterPanel(
     onDismiss: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
+
+    // Closes the drawer instead of leaving the Extensions screen. See the note in
+    // SourceFilterPanel: KEYCODE_BACK never reaches the view tree once
+    // `enableOnBackInvokedCallback` is set, so this has to go through the dispatcher.
+    BackHandler(enabled = visible, onBack = onDismiss)
 
     AnimatedVisibility(
         visible = visible,

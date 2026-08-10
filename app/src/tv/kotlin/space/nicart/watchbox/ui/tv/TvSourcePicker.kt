@@ -1,5 +1,6 @@
 package space.nicart.watchbox.ui.tv
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -112,6 +113,12 @@ fun TvSourcePickerPanel(
     onDismiss: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
+
+    // Closes the drawer instead of leaving the app. The picker opens from the rail on
+    // the root Tabs destination, where nothing is left to pop, so an unhandled Back
+    // here exits WatchBox entirely. See the note in SourceFilterPanel for why this
+    // cannot be a key handler.
+    BackHandler(enabled = visible, onBack = onDismiss)
 
     AnimatedVisibility(
         visible = visible,
