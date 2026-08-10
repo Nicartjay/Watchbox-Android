@@ -58,7 +58,8 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: watchbox-debug-${{ github.sha }}
-          path: app/build/outputs/apk/debug/*.apk
+          # Both flavors, each under its own directory since the mobile/tv split.
+          path: app/build/outputs/apk/*/debug/*.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -68,7 +69,7 @@ jobs:
         with:
           name: lint-report-${{ github.sha }}
           path: |
-            app/build/reports/lint-results-debug.html
-            app/build/reports/lint-results-debug.xml
+            app/build/reports/lint-results-mobileDebug.html
+            app/build/reports/lint-results-mobileDebug.xml
           if-no-files-found: ignore
           retention-days: 7
