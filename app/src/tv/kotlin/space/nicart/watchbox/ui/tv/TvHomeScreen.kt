@@ -1,9 +1,6 @@
 package space.nicart.watchbox.ui.tv
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -22,7 +19,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -31,21 +27,16 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.UnfoldMore
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,10 +55,8 @@ import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.tvFocusable
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.domain.AnimeCard
-import space.nicart.watchbox.ui.browse.SourceEntry
 import space.nicart.watchbox.ui.components.WbAsyncImage
 import space.nicart.watchbox.ui.components.WbEmptyState
-import space.nicart.watchbox.ui.extensions.ExtensionIconSlot
 
 /**
  * TV home: a full-screen backdrop with one row of posters along the bottom.
@@ -94,7 +83,6 @@ fun TvHomeScreen(
     val artwork by artworkViewModel.artwork.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
 
-    var pickerOpen by remember { mutableStateOf(false) }
     val gridState = rememberLazyGridState()
 
     /**
@@ -164,24 +152,6 @@ fun TvHomeScreen(
                 .padding(start = TV_CONTENT_START, top = 80.dp, end = 48.dp),
         )
 
-        SourcePicker(
-            selected = state.selected,
-            onClick = { pickerOpen = true },
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 40.dp, end = 48.dp),
-        )
-
-        SourcePickerPanel(
-            sources = state.sources,
-            selected = state.selected,
-            visible = pickerOpen,
-            onSelect = { source ->
-                viewModel.select(source)
-                pickerOpen = false
-            },
-            onDismiss = { pickerOpen = false },
-        )
     }
 }
 
@@ -593,159 +563,8 @@ private fun TvPortraitCard(
     TvFocusReporter(interaction = interaction, onFocused = onFocus)
 }
 
-/** Source button, top-right: extension icon plus source name. */
-@Composable
-private fun SourcePicker(
-    selected: SourceEntry?,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val tokens = MaterialTheme.wb
-    val interaction = rememberFocusInteraction()
-    if (selected == null) return
 
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(tokens.colors.surface.copy(alpha = 0.85f))
-            .tvFocusable(interaction, RoundedCornerShape(12.dp), focusedScale = 1.04f)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        ExtensionIconSlot(
-            drawable = selected.icon,
-            iconUrl = null,
-            modifier = Modifier.size(26.dp),
-        )
-        Text(
-            text = selected.name,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = tokens.colors.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Icon(
-            imageVector = Icons.Rounded.UnfoldMore,
-            contentDescription = null,
-            tint = tokens.colors.textMuted,
-            modifier = Modifier.size(18.dp),
-        )
-    }
-}
 
-/**
- * Source list, in the same right-edge drawer as the player and filter panels.
- *
- * Hidden entirely when only one source is installed: there is nothing to switch to, and
- * a picker that opens onto a single row implies a choice that does not exist.
- */
-@Composable
-private fun SourcePickerPanel(
-    sources: List<SourceEntry>,
-    selected: SourceEntry?,
-    visible: Boolean,
-    onSelect: (SourceEntry) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val tokens = MaterialTheme.wb
-
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(tween(200)),
-        exit = fadeOut(tween(160)),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.4f))
-                .clickable(onClick = onDismiss),
-        )
-    }
-
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
-        AnimatedVisibility(
-            visible = visible,
-            enter = androidx.compose.animation.slideInHorizontally(tween(250)) { it },
-            exit = androidx.compose.animation.slideOutHorizontally(tween(200)) { it },
-        ) {
-            Column(
-                modifier = Modifier
-                    .width(420.dp)
-                    .fillMaxSize()
-                    .clip(RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
-                    .background(tokens.colors.surfaceElevated)
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.tv_source_picker_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = tokens.colors.textPrimary,
-                )
-                Spacer(Modifier.height(8.dp))
-
-                sources.forEach { source ->
-                    SourceRow(
-                        source = source,
-                        isSelected = source.id == selected?.id,
-                        onClick = { onSelect(source) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SourceRow(
-    source: SourceEntry,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-) {
-    val tokens = MaterialTheme.wb
-    val interaction = rememberFocusInteraction()
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (isSelected) tokens.colors.accent else tokens.colors.surface)
-            .tvFocusable(interaction, RoundedCornerShape(10.dp), focusedScale = 1.02f)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        ExtensionIconSlot(
-            drawable = source.icon,
-            iconUrl = null,
-            modifier = Modifier.size(30.dp),
-        )
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = source.name,
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (isSelected) tokens.colors.onAccent else tokens.colors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (source.lang.isNotBlank()) {
-                Text(
-                    text = source.lang.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isSelected) {
-                        tokens.colors.onAccent.copy(alpha = 0.8f)
-                    } else {
-                        tokens.colors.textMuted
-                    },
-                )
-            }
-        }
-    }
-}
 
 /** Bridges focus on [interaction] to a callback, without a second focus modifier. */
 @Composable

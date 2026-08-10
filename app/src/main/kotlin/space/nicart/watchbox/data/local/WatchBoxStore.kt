@@ -68,6 +68,7 @@ class WatchBoxStore(context: Context) {
                 ),
                 subtitleLanguage = prefs[Keys.SUB_LANG] ?: "en",
                 lastServerId = prefs[Keys.LAST_SERVER],
+                tvSourceId = prefs[Keys.TV_SOURCE],
             )
         }
 
@@ -195,6 +196,11 @@ class WatchBoxStore(context: Context) {
         if (id == null) prefs.remove(Keys.LAST_SERVER) else prefs[Keys.LAST_SERVER] = id
     }
 
+    /** Records the source picked in the TV rail, shared by the home feed and search. */
+    suspend fun setTvSourceId(id: Long?) = store.edit { prefs ->
+        if (id == null) prefs.remove(Keys.TV_SOURCE) else prefs[Keys.TV_SOURCE] = id
+    }
+
     // -------------------------------------------------------------- history
 
     val history: Flow<List<WatchHistoryEntry>> = store.data
@@ -317,6 +323,7 @@ class WatchBoxStore(context: Context) {
         val POSTER_SCALE = floatPreferencesKey("poster_scale")
         val SUB_LANG = stringPreferencesKey("subtitle_language")
         val LAST_SERVER = stringPreferencesKey("last_server_id")
+        val TV_SOURCE = longPreferencesKey("tv_selected_source")
         val HISTORY = stringPreferencesKey("watch_history")
         val WATCHLIST = stringPreferencesKey("watchlist")
         val RECENT_SEARCHES = stringPreferencesKey("recent_searches")
@@ -347,6 +354,14 @@ data class AppSettings(
     val posterScale: Float = 1f,
     val subtitleLanguage: String = "en",
     val lastServerId: String? = null,
+    /**
+     * The source chosen in the TV navigation rail.
+     *
+     * Persisted so the choice survives a restart: on a television this is the closest
+     * thing the app has to a "channel", and re-picking it on every launch with a remote
+     * is far more tedious than on a phone.
+     */
+    val tvSourceId: Long? = null,
 ) {
 
     /** Repositories to actually fetch from. */

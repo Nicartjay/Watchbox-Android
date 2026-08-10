@@ -12,6 +12,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.remember
@@ -62,6 +64,16 @@ fun TvTabShell(
     content: @Composable (AppTab, (AppTab) -> Unit) -> Unit,
 ) {
     val tokens = MaterialTheme.wb
+
+    // Owned by the shell: the rail's source applies to both the home feed and search,
+    // so neither screen can be the one that holds it.
+    val sourceViewModel: TvSourceViewModel = viewModel(
+        key = "tv-source",
+        factory = TvSourceViewModel.factory(container.extensionManager, container.store),
+    )
+    val sources by sourceViewModel.sources.collectAsStateWithLifecycle()
+    val selectedSource by sourceViewModel.selected.collectAsStateWithLifecycle()
+    var pickerOpen by remember { mutableStateOf(false) }
 
     var selectedTab by remember { mutableStateOf(AppTab.HOME) }
     var railFocused by remember { mutableStateOf(false) }
@@ -154,8 +166,27 @@ fun TvTabShell(
                 selected = selectedTab,
                 onSelect = { selectedTab = it },
                 expanded = railFocused,
+                footer = { expanded ->
+                    TvRailSourceButton(
+                        source = selectedSource,
+                        expanded = expanded,
+                        onClick = { pickerOpen = true },
+                    )
+                },
             )
         }
+
+        // Above the rail, so the drawer covers it rather than sliding under.
+        TvSourcePickerPanel(
+            sources = sources,
+            selected = selectedSource,
+            visible = pickerOpen,
+            onSelect = { source ->
+                sourceViewModel.select(source)
+                pickerOpen = false
+            },
+            onDismiss = { pickerOpen = false },
+        )
     }
 }
 

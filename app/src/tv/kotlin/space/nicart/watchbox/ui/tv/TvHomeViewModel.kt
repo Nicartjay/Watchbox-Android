@@ -10,7 +10,10 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.extension.ExtensionManager
@@ -54,6 +57,7 @@ data class TvHomeState(
 class TvHomeViewModel(
     private val repository: AnimeRepository,
     private val extensions: ExtensionManager,
+    private val store: WatchBoxStore,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(TvHomeState())
@@ -62,6 +66,21 @@ class TvHomeViewModel(
     private var loadJob: Job? = null
 
     init {
+        // The rail owns the source now, so the feed follows the stored choice rather
+        // than holding its own. Observed, not read once: picking a source in the rail
+        // must reload the feed without the home screen being told directly.
+        viewModelScope.launch {
+            store.settings
+                .map { it.tvSourceId }
+                .distinctUntilChanged()
+                .collect { id ->
+                    val target = _state.value.sources.firstOrNull { it.id == id }
+                    if (target != null && target.id != _state.value.selected?.id) {
+                        select(target)
+                    }
+                }
+        }
+
         viewModelScope.launch {
             // Re-derived whenever extensions change, so installing one appears here
             // without leaving the screen.
@@ -82,9 +101,12 @@ class TvHomeViewModel(
                 }.sortedBy { it.name.lowercase() }
 
                 // The current selection is kept across reloads unless it disappeared,
-                // so installing a second extension does not move the user's feed.
-                val keep = _state.value.selected?.let { current ->
-                    sources.firstOrNull { it.id == current.id }
+                // so installing a second extension does not move the user's feed. On the
+                // first pass there is none, so the stored choice stands in - otherwise
+                // every launch would reset the feed to whichever source sorts first.
+                val remembered = store.currentSettings().tvSourceId
+                val keep = (_state.value.selected?.id ?: remembered)?.let { id ->
+                    sources.firstOrNull { it.id == id }
                 }
 
                 _state.value = _state.value.copy(sources = sources, selected = keep)
@@ -103,7 +125,12 @@ class TvHomeViewModel(
         }
     }
 
-    /** Switches the feed to [source]. */
+    /**
+     * Switches the feed to [source].
+     *
+     * Does not persist: the rail is what records the choice, and writing it back here
+     * would loop through the settings flow that drives this method.
+     */
     fun select(source: SourceEntry) {
         loadJob?.cancel()
 
@@ -188,10 +215,11 @@ class TvHomeViewModel(
         fun factory(
             repository: AnimeRepository,
             extensions: ExtensionManager,
+            store: WatchBoxStore,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                TvHomeViewModel(repository, extensions) as T
+                TvHomeViewModel(repository, extensions, store) as T
         }
     }
 }

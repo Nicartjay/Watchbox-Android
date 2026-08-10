@@ -47,6 +47,12 @@ import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.tvFocusable
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.domain.AnimeCard
+import androidx.compose.material.icons.rounded.FilterList
+import space.nicart.watchbox.core.ui.adaptiveFocus
+import space.nicart.watchbox.ui.browse.BrowseUiState
+import space.nicart.watchbox.ui.browse.SourceFilterPanel
+import space.nicart.watchbox.ui.components.WbChip
+import space.nicart.watchbox.ui.components.WbSearchField
 import space.nicart.watchbox.ui.browse.BrowseMode
 import space.nicart.watchbox.ui.browse.BrowseViewModel
 import space.nicart.watchbox.ui.browse.SourceEntry
@@ -216,6 +222,7 @@ fun TvSourceBrowseScreen(
     artworkViewModel: TvArtworkViewModel,
     onBack: () -> Unit,
     onOpenAnime: (AnimeCard) -> Unit,
+    supportsLatest: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -267,24 +274,15 @@ fun TvSourceBrowseScreen(
                 modifier = Modifier.fillMaxSize(),
             ) {
                 item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
-                    Column(modifier = Modifier.padding(bottom = 12.dp)) {
-                        Text(
-                            text = sourceName,
-                            style = MaterialTheme.typography.displaySmall,
-                            fontWeight = FontWeight.Bold,
-                            color = tokens.colors.textPrimary,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = when (state.mode) {
-                                BrowseMode.POPULAR -> stringResource(R.string.source_popular)
-                                BrowseMode.LATEST -> stringResource(R.string.source_latest)
-                                BrowseMode.SEARCH -> stringResource(R.string.title_search)
-                            },
-                            style = MaterialTheme.typography.titleMedium,
-                            color = tokens.colors.textMuted,
-                        )
-                    }
+                    TvBrowseHeader(
+                        sourceName = sourceName,
+                        state = state,
+                        supportsLatest = supportsLatest,
+                        onQueryChange = viewModel::onQueryChange,
+                        onSubmitQuery = viewModel::submitQuery,
+                        onSetMode = viewModel::setMode,
+                        onOpenFilters = { viewModel.setFilterPanelOpen(true) },
+                    )
                 }
 
                 items(items = state.items, key = { it.key }) { card ->
@@ -293,6 +291,120 @@ fun TvSourceBrowseScreen(
                         onClick = { onOpenAnime(card) },
                     )
                 }
+            }
+        }
+
+        SourceFilterPanel(
+            entries = state.filters,
+            visible = state.filterPanelOpen,
+            onChange = viewModel::onFilterChange,
+            onApply = viewModel::applyFilters,
+            onReset = viewModel::resetFilters,
+            onDismiss = { viewModel.setFilterPanelOpen(false) },
+        )
+    }
+}
+
+/**
+ * Browse header: title, search field, filters, and the Popular/Latest choice.
+ *
+ * The same controls as the phone screen, which previously had no equivalent here - the
+ * TV browse screen could only ever show a source's popular list, with no way to search
+ * it or apply its filters.
+ */
+@Composable
+private fun TvBrowseHeader(
+    sourceName: String,
+    state: BrowseUiState,
+    supportsLatest: Boolean,
+    onQueryChange: (String) -> Unit,
+    onSubmitQuery: () -> Unit,
+    onSetMode: (BrowseMode) -> Unit,
+    onOpenFilters: () -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+    val filterInteraction = rememberFocusInteraction()
+
+    Column(modifier = Modifier.padding(bottom = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = sourceName,
+                style = MaterialTheme.typography.displaySmall,
+                fontWeight = FontWeight.Bold,
+                color = tokens.colors.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
+
+            // Only offered when the source declares filters, so the button never opens
+            // an empty panel.
+            if (state.hasFilters) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (state.filtersActive) {
+                                tokens.colors.accent
+                            } else {
+                                tokens.colors.surface
+                            },
+                        )
+                        .adaptiveFocus(filterInteraction, RoundedCornerShape(12.dp), scale = false)
+                        .clickable(
+                            interactionSource = filterInteraction,
+                            indication = null,
+                            onClick = onOpenFilters,
+                        )
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.FilterList,
+                        contentDescription = null,
+                        tint = if (state.filtersActive) {
+                            tokens.colors.onAccent
+                        } else {
+                            tokens.colors.textSecondary
+                        },
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.source_filters),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = if (state.filtersActive) {
+                            tokens.colors.onAccent
+                        } else {
+                            tokens.colors.textSecondary
+                        },
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        WbSearchField(
+            value = state.query,
+            onValueChange = onQueryChange,
+            placeholder = stringResource(R.string.source_search_hint),
+            onSubmit = onSubmitQuery,
+        )
+
+        // Hidden while searching: neither mode applies to a query, and leaving them
+        // selectable implies they filter the results.
+        if (supportsLatest && state.mode != BrowseMode.SEARCH) {
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                WbChip(
+                    label = stringResource(R.string.source_popular),
+                    selected = state.mode == BrowseMode.POPULAR,
+                    onClick = { onSetMode(BrowseMode.POPULAR) },
+                )
+                WbChip(
+                    label = stringResource(R.string.source_latest),
+                    selected = state.mode == BrowseMode.LATEST,
+                    onClick = { onSetMode(BrowseMode.LATEST) },
+                )
             }
         }
     }
@@ -307,7 +419,7 @@ private fun TvGridPoster(card: AnimeCard, onClick: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(CARD_ASPECT)
+                .aspectRatio(POSTER_ASPECT)
                 .clip(RoundedCornerShape(12.dp))
                 .background(tokens.colors.surfaceCard)
                 .tvFocusable(interaction, RoundedCornerShape(12.dp))
@@ -315,9 +427,9 @@ private fun TvGridPoster(card: AnimeCard, onClick: () -> Unit) {
                 .clickable(interactionSource = interaction, indication = null, onClick = onClick),
         ) {
             WbAsyncImage(
-                // Backdrop when TMDB matched, poster otherwise: a wrong crop still
-                // reads better than an empty tile.
-                url = card.cardBackdropUrl ?: card.posterUrl,
+                // TMDB's portrait poster first, as on the home screen: a source's own
+                // artwork varies wildly in crop and quality.
+                url = card.tmdbPosterUrl ?: card.posterUrl,
                 contentDescription = card.title,
                 contentScale = ContentScale.Crop,
                 fallbackLabel = card.title,
@@ -336,8 +448,11 @@ private fun TvGridPoster(card: AnimeCard, onClick: () -> Unit) {
 
 /** Fewer columns than the phone grid: each D-pad press crosses one tile. */
 private const val TILE_COLUMNS = 5
-/** Fewer than the portrait grid: a 16:9 tile is far wider at the same height. */
-private const val POSTER_COLUMNS = 4
+/** Portrait posters, so the same count as the home screen's Latest grid. */
+private const val POSTER_COLUMNS = 6
 
 /** 16:9, matching the backdrop it displays. */
 private const val CARD_ASPECT = 1.777f
+
+/** 2:3, matching the portrait posters on the home screen. */
+private const val POSTER_ASPECT = 0.667f

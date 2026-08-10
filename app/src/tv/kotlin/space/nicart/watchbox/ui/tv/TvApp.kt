@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
@@ -148,6 +149,10 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
                 sourceName = route.sourceName,
                 viewModel = viewModel,
                 artworkViewModel = artwork,
+                supportsLatest = container.extensionManager
+                    .catalogueSourceById(route.sourceId)
+                    ?.let { runCatching { it.supportsLatest }.getOrDefault(false) }
+                    ?: false,
                 onBack = navController::popBackStack,
                 onOpenAnime = { navController.openAnime(it) },
             )
@@ -187,6 +192,7 @@ private fun TvTabContent(
                 factory = TvHomeViewModel.factory(
                     container.repository,
                     container.extensionManager,
+                    container.store,
                 ),
             )
             val artwork: TvArtworkViewModel = viewModel(
@@ -212,6 +218,18 @@ private fun TvTabContent(
                     container.extensionManager,
                 ),
             )
+            // Search follows the rail's source rather than querying everything: on a
+            // television one source is the chosen channel, and grouped multi-source
+            // results are a phone affordance that needs far more scrolling with a
+            // remote. Driven from the stored id so the two cannot disagree.
+            val settings by container.store.settings.collectAsStateWithLifecycle(
+                initialValue = null,
+            )
+            val tvSourceId = settings?.tvSourceId
+            LaunchedEffect(tvSourceId) {
+                if (tvSourceId != null) viewModel.onSelectSource(tvSourceId)
+            }
+
             TvSearchScreen(viewModel = viewModel, onOpenAnime = openAnime)
         }
 

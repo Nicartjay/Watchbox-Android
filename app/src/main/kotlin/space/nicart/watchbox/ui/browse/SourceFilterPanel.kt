@@ -7,6 +7,22 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.LocalIndication
+import space.nicart.watchbox.core.ui.adaptiveFocus
+import space.nicart.watchbox.core.ui.rememberFocusInteraction
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import kotlinx.coroutines.delay
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,6 +71,7 @@ import space.nicart.watchbox.ui.components.WbSearchField
  * would otherwise render as nothing at all, which looks like a missing feature
  * rather than an unsupported type.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun SourceFilterPanel(
     entries: List<FilterEntry>,
@@ -65,6 +82,20 @@ fun SourceFilterPanel(
     onDismiss: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
+    val panelFocus = remember { FocusRequester() }
+    val applyFocus = remember { FocusRequester() }
+
+    // Pull focus in when the drawer opens, so the first D-pad press acts on a filter
+    // rather than the grid behind it.
+    LaunchedEffect(visible) {
+        if (!visible) return@LaunchedEffect
+        // Retried because requestFocus reports success even when no focusable node is
+        // attached yet: the drawer is still animating in on the first frames.
+        repeat(20) {
+            runCatching { panelFocus.requestFocus() }
+            delay(25)
+        }
+    }
 
     AnimatedVisibility(
         visible = visible,
@@ -92,6 +123,27 @@ fun SourceFilterPanel(
                     .clip(RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
                     .background(tokens.colors.surfaceElevated)
                     .statusBarsPadding()
+                    // Keeps D-pad focus inside the drawer: the content behind is still
+                    // laid out and focusable, so without this Down scrolls the hidden
+                    // grid and the panel can never be reached with a remote. Back and
+                    // Escape close it, since focus can no longer leave by moving.
+                    .focusRequester(panelFocus)
+                    // Cancels focus exit outright: the grid behind stays focusable, and
+                    // a remote has no pointer to dismiss with, so focus escaping the
+                    // drawer leaves no way back into it.
+                    .focusProperties { exit = { FocusRequester.Cancel } }
+                    .focusGroup()
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
+                        when (event.key) {
+                            Key.Back, Key.Escape -> {
+                                onDismiss()
+                                true
+                            }
+
+                            else -> false
+                        }
+                    }
                     .padding(20.dp),
             ) {
                 Row(
@@ -124,7 +176,10 @@ fun SourceFilterPanel(
                     )
                 } else {
                     LazyColumn(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusProperties { down = applyFocus }
+                            .focusGroup(),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         items(
@@ -149,7 +204,7 @@ fun SourceFilterPanel(
                         label = stringResource(R.string.source_filters_apply),
                         filled = true,
                         onClick = onApply,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).focusRequester(applyFocus),
                     )
                 }
             }
@@ -165,11 +220,26 @@ private fun PanelButton(
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(if (filled) tokens.colors.accent else tokens.colors.surface)
-            .clickable(onClick = onClick)
+            .adaptiveFocus(
+                interaction,
+                RoundedCornerShape(12.dp),
+                scale = false,
+                borderColor = if (filled) {
+                    tokens.colors.surfaceElevated
+                } else {
+                    Color.White
+                },
+            )
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
             .padding(vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -270,11 +340,17 @@ private fun FilterRow(
 @Composable
 private fun ToggleRow(label: String, selected: Boolean, onClick: () -> Unit) {
     val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
+            .adaptiveFocus(interaction, RoundedCornerShape(10.dp), scale = false)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
             .padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -317,12 +393,18 @@ private fun TriStateRow(label: String, state: Int, onClick: () -> Unit) {
 
         else -> Triple(tokens.colors.surface, tokens.colors.textMuted, "")
     }
+    val triInteraction = rememberFocusInteraction()
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
+            .adaptiveFocus(triInteraction, RoundedCornerShape(10.dp), scale = false)
+            .clickable(
+                interactionSource = triInteraction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
             .padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -373,6 +455,7 @@ private fun SelectRow(
         )
         entries.forEachIndexed { index, entry ->
             val isSelected = index == selectedIndex
+            val optionInteraction = rememberFocusInteraction()
             Text(
                 text = entry,
                 style = MaterialTheme.typography.bodyMedium,
@@ -383,7 +466,11 @@ private fun SelectRow(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
                     .background(if (isSelected) tokens.colors.accent else tokens.colors.surface)
-                    .clickable { onSelect(index) }
+                    .adaptiveFocus(optionInteraction, RoundedCornerShape(8.dp), scale = false)
+                    .clickable(
+                        interactionSource = optionInteraction,
+                        indication = LocalIndication.current,
+                    ) { onSelect(index) }
                     .padding(horizontal = 10.dp, vertical = 8.dp),
             )
         }
@@ -410,12 +497,17 @@ private fun SortRow(
         )
         columns.forEachIndexed { index, column ->
             val isSelected = selection?.index == index
+            val sortInteraction = rememberFocusInteraction()
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
                     .background(if (isSelected) tokens.colors.accent else tokens.colors.surface)
-                    .clickable { onSelect(index) }
+                    .adaptiveFocus(sortInteraction, RoundedCornerShape(8.dp), scale = false)
+                    .clickable(
+                        interactionSource = sortInteraction,
+                        indication = LocalIndication.current,
+                    ) { onSelect(index) }
                     .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {

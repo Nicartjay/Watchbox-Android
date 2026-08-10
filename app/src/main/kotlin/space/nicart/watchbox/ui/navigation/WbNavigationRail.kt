@@ -62,6 +62,14 @@ fun WbNavigationRail(
     onSelect: (AppTab) -> Unit,
     modifier: Modifier = Modifier,
     expanded: Boolean = false,
+    /**
+     * Optional content pinned to the bottom of the rail.
+     *
+     * A slot rather than a source parameter: the rail is shared with the tablet layout,
+     * which has no such concept, and the TV source picker needs the rail's expanded
+     * state to decide whether to show its label.
+     */
+    footer: (@Composable (expanded: Boolean) -> Unit)? = null,
 ) {
     val tokens = MaterialTheme.wb
 
@@ -103,6 +111,12 @@ fun WbNavigationRail(
                 showLabel = expanded,
                 onClick = { onSelect(tab) },
             )
+        }
+
+        if (footer != null) {
+            // Pushes the footer to the bottom edge, keeping the tabs centred.
+            Spacer(Modifier.weight(1f))
+            footer(expanded)
         }
     }
 }
