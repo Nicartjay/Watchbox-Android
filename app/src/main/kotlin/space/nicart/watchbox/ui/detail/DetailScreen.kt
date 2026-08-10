@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -314,7 +315,30 @@ fun DetailScreen(
                     }
                 }
 
-                Box(modifier = Modifier.fillMaxSize().zIndex(2f)) {
+                // The overlay is decoration for a remote: it holds a back button and a
+                // watchlist toggle, both duplicated by hardware Back and by the action
+                // row. It is also full-screen, so its focusables sit *above* every row
+                // in the list geometrically. Leaving them focusable makes Up from the
+                // action buttons land on the back button, and from there the list is
+                // below a stack of overlay targets rather than beside them - focus never
+                // returns, which is the "stuck on Back" trap.
+                //
+                // canFocus is set on the container rather than on each button: it
+                // propagates to every focus target beneath it, so the overlay cannot
+                // reintroduce the trap by gaining a new control later. Touch and mouse
+                // are unaffected - clickable still works without focus.
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(
+                            if (isFocusDriven) {
+                                Modifier.focusProperties { canFocus = false }
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .zIndex(2f),
+                ) {
                     DetailFloatingHeader(
                         detail = detail,
                         progress = headerProgress,
