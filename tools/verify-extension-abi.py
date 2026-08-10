@@ -18,15 +18,30 @@ Two traps this guards against, both of which were hit while writing the ABI:
   * javap only lists *declared* members, so inherited ones must be resolved by
     walking the hierarchy in CHAIN below.
 
-Usage:  python3 tools/verify-extension-abi.py     (after :app:compileDebugKotlin)
+Usage:  python3 tools/verify-extension-abi.py     (after :app:compileMobileDebugKotlin)
 """
 import os
 import shutil
 import subprocess
 import sys
 
-CP = "app/build/tmp/kotlin-classes/debug"
 P = "eu.kanade.tachiyomi."
+
+# The extension ABI is flavor-independent, so any debug variant will do. Checked in
+# order rather than hardcoded: the mobile/tv split renamed the output directory from
+# "debug" to "<flavor>Debug", and the old name survives locally as a stale leftover
+# while a clean CI checkout only ever has the flavored ones - so hardcoding either
+# name passes on one machine and fails on the other.
+CP_CANDIDATES = (
+    "app/build/tmp/kotlin-classes/mobileDebug",
+    "app/build/tmp/kotlin-classes/tvDebug",
+    "app/build/tmp/kotlin-classes/debug",
+)
+
+
+def find_classes():
+    """First existing debug class directory, or None when nothing is compiled."""
+    return next((path for path in CP_CANDIDATES if os.path.isdir(path)), None)
 
 
 def works(candidate):
@@ -74,8 +89,14 @@ def find_javap():
 
 JAVAP = find_javap()
 
-if not os.path.isdir(CP):
-    sys.exit(f"{CP} not found. Run :app:compileDebugKotlin first.")
+CP = find_classes()
+
+if CP is None:
+    sys.exit(
+        "No compiled debug classes found. Tried:\n  "
+        + "\n  ".join(CP_CANDIDATES)
+        + "\nRun :app:compileMobileDebugKotlin first."
+    )
 
 # Explicit chains: javap prints generic wildcards as "<? extends X>", so parsing
 # the text for superclasses is unreliable. These are the real hierarchies.
