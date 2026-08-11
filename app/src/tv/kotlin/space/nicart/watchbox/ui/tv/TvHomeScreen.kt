@@ -34,7 +34,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -74,6 +73,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableStateOf
 
 /**
@@ -157,6 +157,27 @@ fun TvHomeScreen(
     val heroCard = heroItems.getOrNull(heroIndex)?.let { artwork[it.key] ?: it }
 
     /**
+     * Holds the grid at the top while the spotlight has focus.
+     *
+     * The hero is a full-viewport grid item, so focusing a button inside it triggers the
+     * lazy grid's own bring-into-view scroll: it dragged the hero up by around half the
+     * screen and faded the artwork the user was looking at to black. Nothing should scroll
+     * until focus actually leaves the hero.
+     *
+     * A continuous guard rather than a single corrective scroll: the bring-into-view runs
+     * *after* focus lands, so a one-shot check races it and usually loses. Not a fight with
+     * the user either - while focus is on the hero there is nothing below it to scroll to.
+     */
+    LaunchedEffect(heroFocused) {
+        if (!heroFocused) return@LaunchedEffect
+
+        snapshotFlow { gridState.firstVisibleItemScrollOffset to gridState.firstVisibleItemIndex }
+            .collect { (offset, index) ->
+                if (index != 0 || offset != 0) gridState.scrollToItem(0)
+            }
+    }
+
+    /**
      * Rotates the spotlight while the user is not interacting with it.
      *
      * Paused while the hero holds focus: advancing under a focused Play button would change
@@ -209,21 +230,23 @@ fun TvHomeScreen(
     val backdrop = focused ?: heroCard
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val topInset = rowsTopInset(maxHeight, hasContinueRow = continueWatching.isNotEmpty())
+        // The hero fills the viewport, so its height is measured here rather than derived
+        // from the rows below it.
+        val viewportHeight = maxHeight
 
         TvBackdrop(card = backdrop, fade = scrollProgress)
 
-        // Title block sits in the upper-left third, clear of both the rail and the rows.
-        // Rows first, so the title block and picker draw over them. The rows fill the
-        // screen - their top inset is what pushes the first row to the bottom edge - so
-        // composing them last would put a transparent sheet over the whole upper area
-        // and hide everything beneath it.
+        // The hero is the grid's first item rather than an overlay above it, which is what
+        // makes it genuinely full-screen: the rows start a whole viewport down and are
+        // reached by scrolling, and the same D-pad press that scrolls them into view is the
+        // one that moves focus into them. Overlaying instead meant the rows had to be
+        // pushed down by a computed inset, and any row taller than that inset predicted
+        // overflowed the screen.
         TvHomeRows(
             state = state,
             continueWatching = continueWatching,
             artwork = artwork,
             gridState = gridState,
-            topInset = topInset,
             onFocus = artworkViewModel::onFocus,
             onPrefetch = artworkViewModel::onRowVisible,
             // The row is recorded alongside the card so focus returns to the row it was
@@ -237,51 +260,32 @@ fun TvHomeScreen(
             onLoadMore = viewModel::loadMoreLatest,
             openedKey = lastOpened,
             onFocusRestored = artworkViewModel::onFocusRestored,
+            heroHeight = viewportHeight,
+            hero = {
+                TvHeroPage(
+                    card = heroCard,
+                    isPlayResolving = (playRequest as? TvPlayRequest.Resolving)
+                        ?.cardKey == heroCard?.key,
+                    onPlay = { heroCard?.let(viewModel::play) },
+                    onDetails = {
+                        heroCard?.let {
+                            artworkViewModel.onOpen(ROW_HERO, it)
+                            onOpenAnime(it)
+                        }
+                    },
+                    // Returning from a title opened via Details puts focus back on the
+                    // button it was opened from, the same as the rows do. Without this the
+                    // shell re-homed focus to the rail and the user was thrown to the top
+                    // of the screen having lost the spotlight they were looking at.
+                    isOpened = heroCard != null &&
+                        lastOpened == artworkViewModel.openedKey(ROW_HERO, heroCard),
+                    onFocusRestored = artworkViewModel::onFocusRestored,
+                    heroCount = heroItems.size,
+                    heroIndex = heroIndex,
+                    onFocusChanged = { heroFocused = it },
+                )
+            },
         )
-
-        // Faded out with the backdrop it sits on: text over a black background that no
-        // longer shows the artwork it describes is just clutter.
-        //
-        // Play acts on whatever this block is currently describing, which is the spotlight
-        // at rest and the focused card once the user is in the rows. The block is one unit -
-        // logo, metadata, buttons - so tying the button to the title beside it is the only
-        // reading that cannot be wrong. Gating the buttons on "nothing focused" instead was
-        // worse: `focused` never returns to null once a card has been focused, so the
-        // buttons disappeared on the first row press and could never be reached again.
-        val blockCard = backdrop
-
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .alpha(1f - scrollProgress)
-                .padding(start = TV_CONTENT_START, top = 80.dp, end = 48.dp)
-                .onFocusChanged { heroFocused = it.hasFocus },
-        ) {
-            TvBackdropDetail(
-                card = blockCard,
-                isPlayResolving = (playRequest as? TvPlayRequest.Resolving)
-                    ?.cardKey == blockCard?.key,
-                onPlay = { blockCard?.let(viewModel::play) },
-                onDetails = {
-                    blockCard?.let {
-                        artworkViewModel.onOpen(ROW_HERO, it)
-                        onOpenAnime(it)
-                    }
-                },
-                // Returning from a title opened via Details puts focus back on the button
-                // it was opened from, the same as the rows do. Without this the shell
-                // re-homed focus to the rail and the user was thrown to the top of the
-                // screen having lost the spotlight they were looking at.
-                isOpened = blockCard != null &&
-                    lastOpened == artworkViewModel.openedKey(ROW_HERO, blockCard),
-                onFocusRestored = artworkViewModel::onFocusRestored,
-                // Only for the spotlight: once focus is in a row the block is following
-                // that focus, and a carousel position for a rotation that has stopped
-                // would be reporting something the user cannot act on.
-                heroCount = if (focused == null) heroItems.size else 0,
-                heroIndex = heroIndex,
-            )
-        }
     }
 }
 
@@ -303,58 +307,13 @@ private fun TvHomeEmpty(onOpenSettings: () -> Unit, modifier: Modifier = Modifie
 }
 
 /**
- * Height of the Popular row: label, spacing, poster, and its title.
- *
- * Computed rather than measured so it can be used to derive the top inset before the row
- * has been laid out.
- */
-@Composable
-private fun popularRowHeight(): Dp {
-    val posterHeight = (POSTER_WIDTH * LocalPosterScale.current) / POSTER_ASPECT
-    return POPULAR_LABEL_HEIGHT + POPULAR_LABEL_GAP + (POPULAR_ROW_VERTICAL_PADDING * 2) +
-        posterHeight + POPULAR_CARD_LABEL_HEIGHT
-}
-
-/**
- * Height of the Continue Watching row, built from the same pieces as [popularRowHeight].
- *
- * Its cards are 16:9 rather than 2:3, so it is materially shorter than the Popular row -
- * which matters because whichever row comes first is what the top inset is measured
- * against.
- */
-@Composable
-private fun continueRowHeight(): Dp {
-    val cardHeight = (CONTINUE_CARD_WIDTH * LocalPosterScale.current) / CONTINUE_CARD_ASPECT
-    return POPULAR_LABEL_HEIGHT + POPULAR_LABEL_GAP + (POPULAR_ROW_VERTICAL_PADDING * 2) +
-        cardHeight + POPULAR_CARD_LABEL_HEIGHT
-}
-
-/**
- * Top inset that rests the first row on the bottom edge of [viewportHeight].
- *
- * Takes the viewport height as measured by the caller rather than reading it from the
- * configuration: the theme installs a scaled density for the UI scale setting, so the
- * configuration's screen height is in unscaled dp and does not match the dp the layout
- * is actually working in.
- *
- * Measured against whichever row is actually first: with history present that is the
- * shorter Continue Watching row, and using Popular's height regardless would leave it
- * hanging well above the bottom edge.
- *
- * Floored so a large poster scale cannot push the row off-screen and out of reach.
- */
-@Composable
-private fun rowsTopInset(viewportHeight: Dp, hasContinueRow: Boolean): Dp {
-    val firstRowHeight = if (hasContinueRow) continueRowHeight() else popularRowHeight()
-    return (viewportHeight - firstRowHeight - POPULAR_BOTTOM_GAP)
-        .coerceAtLeast(MIN_ROWS_TOP_INSET)
-}
-
-/**
  * Full-bleed backdrop for the focused title.
  *
  * Uses the wide TMDB backdrop, not the portrait poster the cards show: a poster cropped
  * to 16:9 loses most of the frame, usually including the subject.
+ *
+ * Asks for the full-resolution asset, not the w1280 one the phone hero uses: this fills
+ * the panel, and w1280 is narrower than even a 1080p screen, so it upscaled visibly.
  */
 @Composable
 private fun TvBackdrop(card: AnimeCard?, fade: Float) {
@@ -362,13 +321,14 @@ private fun TvBackdrop(card: AnimeCard?, fade: Float) {
 
     Box(modifier = Modifier.fillMaxSize()) {
         WbAsyncImage(
-            url = card?.backdropUrl ?: card?.posterUrl,
+            url = card?.fullBleedImage,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
         )
 
-        // Left gradient protects the title block; the bottom one carries the row.
+        // Left gradient protects the title block; the bottom one carries the rows and the
+        // buttons in the lower right.
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -408,28 +368,79 @@ private fun TvBackdrop(card: AnimeCard?, fade: Float) {
 }
 
 /**
- * Title logo or text, a metadata line, and the actions for whichever title is on the
- * backdrop.
+ * The full-screen spotlight page.
  *
- * One unit deliberately: the buttons act on the title named directly above them, so there
- * is no way for the user to misread which title they apply to.
+ * Occupies the whole viewport, so the backdrop is seen as a picture rather than as a strip
+ * behind a row of posters. The rows begin below it and are reached by scrolling down.
  *
- * [heroCount] of zero hides the carousel dots.
+ * The title block sits upper-left and the buttons lower-right, which is the diagonal a
+ * leanback interface reads along: the artwork's subject is usually centre-frame, and putting
+ * text and controls in opposite corners leaves it uncovered. It also puts the buttons
+ * nearest the rows below, so one press down from Play reaches the first row.
+ *
+ * Transparent: the backdrop is drawn behind the whole screen by [TvBackdrop], not by this,
+ * because the same image has to stay put while the rows scroll over it.
  */
 @Composable
-private fun TvBackdropDetail(
+private fun TvHeroPage(
     card: AnimeCard?,
+    isPlayResolving: Boolean,
+    onPlay: () -> Unit,
+    onDetails: () -> Unit,
+    isOpened: Boolean,
+    onFocusRestored: () -> Unit,
+    heroCount: Int,
+    heroIndex: Int,
+    onFocusChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
-    isPlayResolving: Boolean = false,
-    onPlay: () -> Unit = {},
-    onDetails: () -> Unit = {},
-    isOpened: Boolean = false,
-    onFocusRestored: () -> Unit = {},
-    heroCount: Int = 0,
-    heroIndex: Int = 0,
 ) {
-    val tokens = MaterialTheme.wb
     if (card == null) return
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .onFocusChanged { onFocusChanged(it.hasFocus) },
+    ) {
+        TvHeroTitle(
+            card = card,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(top = HERO_TITLE_TOP, end = 48.dp),
+        )
+
+        TvHeroActions(
+            isPlayResolving = isPlayResolving,
+            onPlay = onPlay,
+            onDetails = onDetails,
+            isOpened = isOpened,
+            onFocusRestored = onFocusRestored,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = HERO_ACTIONS_BOTTOM),
+        )
+
+        // Opposite corner from the buttons. They are a position readout, not a control, so
+        // the corner the user is not aiming at is the right place for them: beside Play they
+        // competed for attention with the primary action and crowded its focus ring.
+        //
+        // No horizontal inset on either of these: this page sits inside the grid's content
+        // padding, so the box edges already carry the rail clearance and the overscan
+        // margin. Adding padding here applied that inset twice - the dots landed at double
+        // the title's indent instead of lining up beneath it.
+        TvHeroDots(
+            count = heroCount,
+            current = heroIndex,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(bottom = HERO_DOTS_BOTTOM),
+        )
+    }
+}
+
+/** Title logo or text, plus a metadata line, for the spotlight title. */
+@Composable
+private fun TvHeroTitle(card: AnimeCard, modifier: Modifier = Modifier) {
+    val tokens = MaterialTheme.wb
 
     Column(modifier = modifier.fillMaxWidth(0.5f)) {
         if (card.logoUrl != null) {
@@ -471,31 +482,18 @@ private fun TvBackdropDetail(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-
-        Spacer(Modifier.height(20.dp))
-        TvHeroActions(
-            isPlayResolving = isPlayResolving,
-            onPlay = onPlay,
-            onDetails = onDetails,
-            isOpened = isOpened,
-            onFocusRestored = onFocusRestored,
-            heroCount = heroCount,
-            heroIndex = heroIndex,
-        )
     }
 }
 
 /**
- * Play and Details for the spotlight title, with the carousel position beside them.
+ * Play and Details for the spotlight title.
  *
  * Play is the filled one because it is the only reason to put a hero above the rows: the
  * whole point of a spotlight is to start watching without first walking into a detail page
  * and finding the episode list.
  *
- * The dots sit in this row rather than under it. Below the buttons is where the first row's
- * label already is - the block's height is what the rows' top inset is measured against, so
- * anything added under the buttons pushes into "Continue Watching" rather than moving it
- * down. There is ample width beside two buttons and none beneath them.
+ * Play sits on the right, nearest the screen edge, so it is the button the eye reaches
+ * first when scanning in from the corner and the one a press down from the rows returns to.
  */
 @Composable
 private fun TvHeroActions(
@@ -504,67 +502,17 @@ private fun TvHeroActions(
     onDetails: () -> Unit,
     isOpened: Boolean,
     onFocusRestored: () -> Unit,
-    heroCount: Int,
-    heroIndex: Int,
+    modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.wb
     val playInteraction = rememberFocusInteraction()
     val detailsInteraction = rememberFocusInteraction()
 
     Row(
+        modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier
-                .height(HERO_BUTTON_HEIGHT)
-                // Before clip, per tvFocusable's contract. Dark, not the usual white:
-                // this button is white, and the default theme's accent is #F5F5F5, so a
-                // white or accent stroke was invisible against it - the button scaled up
-                // on focus but showed no ring. Matches the detail page's play button.
-                .adaptiveFocus(
-                    playInteraction,
-                    RoundedCornerShape(HERO_BUTTON_HEIGHT / 2),
-                    borderColor = tokens.colors.background,
-                )
-                .clip(RoundedCornerShape(HERO_BUTTON_HEIGHT / 2))
-                .background(tokens.colors.textPrimary)
-                // Play, not Details, reclaims focus on the way back: it is the primary
-                // action, so landing there means the next press starts watching.
-                .restoreFocusIfOpened(isOpened, onFocusRestored)
-                .clickable(
-                    interactionSource = playInteraction,
-                    indication = null,
-                    onClick = onPlay,
-                )
-                .padding(horizontal = 26.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            // Swapped in place of the icon rather than shown beside it, so resolving does
-            // not change the button's width and shuffle the row beside it.
-            if (isPlayResolving) {
-                CircularProgressIndicator(
-                    color = tokens.colors.background,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(HERO_BUTTON_ICON),
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Filled.PlayArrow,
-                    contentDescription = null,
-                    tint = tokens.colors.background,
-                    modifier = Modifier.size(HERO_BUTTON_ICON),
-                )
-            }
-            Text(
-                text = stringResource(R.string.action_play),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = tokens.colors.background,
-            )
-        }
-
         Row(
             modifier = Modifier
                 .height(HERO_BUTTON_HEIGHT)
@@ -599,11 +547,55 @@ private fun TvHeroActions(
             )
         }
 
-        TvHeroDots(
-            count = heroCount,
-            current = heroIndex,
-            modifier = Modifier.padding(start = 10.dp),
-        )
+        Row(
+            modifier = Modifier
+                .height(HERO_BUTTON_HEIGHT)
+                // Before clip, per tvFocusable's contract. Dark, not the usual white:
+                // this button is white, and the default theme's accent is #F5F5F5, so a
+                // white or accent stroke was invisible against it - the button scaled up
+                // on focus but showed no ring. Matches the detail page's play button.
+                .adaptiveFocus(
+                    playInteraction,
+                    RoundedCornerShape(HERO_BUTTON_HEIGHT / 2),
+                    borderColor = tokens.colors.background,
+                )
+                .clip(RoundedCornerShape(HERO_BUTTON_HEIGHT / 2))
+                .background(tokens.colors.textPrimary)
+                // Play, not Details, reclaims focus on the way back: it is the primary
+                // action, so landing there means the next press starts watching.
+                .restoreFocusIfOpened(isOpened, onFocusRestored)
+                .clickable(
+                    interactionSource = playInteraction,
+                    indication = null,
+                    onClick = onPlay,
+                )
+                .padding(horizontal = 26.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // Swapped in place of the icon rather than shown beside it, so resolving
+            // does not change the button's width and shuffle the row beside it.
+            if (isPlayResolving) {
+                CircularProgressIndicator(
+                    color = tokens.colors.background,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(HERO_BUTTON_ICON),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    tint = tokens.colors.background,
+                    modifier = Modifier.size(HERO_BUTTON_ICON),
+                )
+            }
+            Text(
+                text = stringResource(R.string.action_play),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = tokens.colors.background,
+            )
+        }
     }
 }
 
@@ -659,7 +651,6 @@ private fun TvHomeRows(
     continueWatching: List<WatchHistoryEntry>,
     artwork: Map<String, AnimeCard>,
     gridState: LazyGridState,
-    topInset: Dp,
     onFocus: (AnimeCard) -> Unit,
     onPrefetch: (String, List<AnimeCard>) -> Unit,
     onOpenAnime: (String, AnimeCard) -> Unit,
@@ -668,6 +659,8 @@ private fun TvHomeRows(
     onLoadMore: () -> Unit,
     openedKey: String?,
     onFocusRestored: () -> Unit,
+    heroHeight: Dp,
+    hero: @Composable () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
 
@@ -686,23 +679,24 @@ private fun TvHomeRows(
         state = gridState,
         columns = GridCells.Fixed(LATEST_COLUMNS),
         modifier = Modifier.fillMaxSize(),
-        // The top inset is what places the Popular row at the bottom edge, leaving
-        // everything above it as visible backdrop. Derived from the row's own height
-        // against the screen, not a fixed number: a constant that happened to look right
-        // at one poster scale left the row overflowing the screen at another, and an
-        // overflowing row forces a scroll the moment it takes focus - which dragged the
-        // backdrop away exactly when the user was trying to look at it.
         contentPadding = PaddingValues(
             // Clears the navigation rail, which overlays the content. Without this the
             // grid's first column drew underneath it.
             start = TV_CONTENT_START,
             end = 48.dp,
-            top = topInset,
             bottom = 48.dp,
         ),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
+        // The spotlight is the first item and a full viewport tall, which is what puts the
+        // rows below the fold. Previously the rows were inset from the top by a computed
+        // height instead, which had to predict how tall the first row would be - and any
+        // row taller than the prediction overflowed the screen and forced a scroll the
+        // moment it took focus, dragging the backdrop away as the user tried to look at it.
+        item(key = "hero", span = { GridItemSpan(maxLineSpan) }) {
+            Box(modifier = Modifier.height(heroHeight)) { hero() }
+        }
         if (continueWatching.isNotEmpty()) {
             item(key = "continue-row", span = { GridItemSpan(maxLineSpan) }) {
                 // Keyed by the entry set so a title that appears after watching gets its
@@ -1185,30 +1179,6 @@ private const val POSTER_ASPECT = 0.667f
 private val HERO_LOGO_HEIGHT = 96.dp
 
 /**
- * How far down the first row starts.
- *
- * Sized so the first row's posters end near the bottom edge, leaving the rest of the
- * screen as backdrop. A 1080p panel is 540dp tall and the row block - title, poster,
- * label - is about 190dp, so the row begins around 330dp down.
- *
- * Deliberately a fixed value rather than a fraction of the viewport: it is measured
- * against the row's own height, which does not scale with the screen.
- */
-/**
- * Smallest allowed top inset, for when the poster scale is large enough that the row
- * cannot fit under the backdrop.
- */
-private val MIN_ROWS_TOP_INSET = 120.dp
-
-/** Pieces of the Popular row's height, kept beside the row that uses them. */
-private val POPULAR_LABEL_HEIGHT = 28.dp
-private val POPULAR_LABEL_GAP = 10.dp
-
-/** The row's vertical content padding, which is the focus slack it leaves. */
-private val POPULAR_ROW_VERTICAL_PADDING = FOCUS_BLEED
-private val POPULAR_CARD_LABEL_HEIGHT = 28.dp
-
-/**
  * Widens a row past its parent's padding by [FOCUS_BLEED] on both sides.
  *
  * Paired with matching content padding on the row itself, which puts the cards back
@@ -1227,9 +1197,6 @@ private fun Modifier.focusBleed(): Modifier = layout { measurable, constraints -
         placeable.place(-FOCUS_BLEED.roundToPx(), 0)
     }
 }
-
-/** Gap between the Popular row and the bottom edge. */
-private val POPULAR_BOTTOM_GAP = 24.dp
 
 /** Columns in the Latest grid. Fewer than a phone: a D-pad crosses one per press. */
 private const val LATEST_COLUMNS = 6
@@ -1272,6 +1239,34 @@ private const val HERO_ROTATE_MS = 9_000L
 private val HERO_BUTTON_HEIGHT = 48.dp
 private val HERO_BUTTON_ICON = 20.dp
 
+/**
+ * Where the spotlight's title block starts.
+ *
+ * Below the top overscan margin, and high enough that a two-line title still clears the
+ * buttons in the opposite corner.
+ */
+private val HERO_TITLE_TOP = 96.dp
+
+/**
+ * Gap between the buttons and the bottom edge.
+ *
+ * Clears the first row's label, which sits immediately below the fold, so the buttons do
+ * not read as belonging to that row.
+ */
+private val HERO_ACTIONS_BOTTOM = 72.dp
+
 /** Page dots: the active one is larger rather than merely brighter, to read at distance. */
 private val HERO_DOT = 8.dp
 private val HERO_DOT_ACTIVE = 11.dp
+
+/**
+ * Gap between the dots and the bottom edge.
+ *
+ * Set so the dots sit on the buttons' vertical centre in the opposite corner: the button
+ * inset plus half the button's height, less half a dot.
+ *
+ * Declared after the values it reads: top-level properties initialise in file order, so
+ * referencing one from above would silently read zero.
+ */
+private val HERO_DOTS_BOTTOM = HERO_ACTIONS_BOTTOM + (HERO_BUTTON_HEIGHT / 2) -
+    (HERO_DOT_ACTIVE / 2)

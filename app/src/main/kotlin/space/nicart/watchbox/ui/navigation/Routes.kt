@@ -3,9 +3,9 @@ package space.nicart.watchbox.ui.navigation
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.ui.graphics.vector.ImageVector
 import kotlinx.serialization.Serializable
@@ -76,5 +76,9 @@ enum class AppTab(
     SEARCH(R.string.nav_search, Icons.Rounded.Search),
     BROWSE(R.string.nav_browse, Icons.Rounded.Explore),
     LIBRARY(R.string.nav_library, Icons.Rounded.VideoLibrary),
-    SETTINGS(R.string.nav_settings, Icons.Outlined.Person),
+
+    // A gear, not a person: this tab is labelled Settings and opens settings. The person
+    // icon promised an account or profile, which the app has no concept of - there is no
+    // sign-in, so nothing behind it could ever match what it implied.
+    SETTINGS(R.string.nav_settings, Icons.Rounded.Settings),
 }

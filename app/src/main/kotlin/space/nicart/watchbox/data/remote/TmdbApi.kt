@@ -130,6 +130,9 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
             type = type,
             title = dto.displayTitle,
             backdropUrl = image(dto.backdropPath, BACKDROP_SIZE),
+            // Full resolution, for the TV home's full-screen hero. w1280 is narrower
+            // than the panel it fills there, so it visibly upscales.
+            heroBackdropUrl = image(dto.backdropPath, HERO_BACKDROP_SIZE),
             // Same image, smaller transform: used by landscape cards, where the
             // hero-sized asset would be wasted bandwidth.
             cardBackdropUrl = image(dto.backdropPath, CARD_BACKDROP_SIZE),
@@ -248,6 +251,21 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
         private const val BACKDROP_SIZE = "w1280"
 
         /**
+         * Backdrop size for a full-bleed hero.
+         *
+         * TMDB's backdrop transforms stop at w1280, which is *below* a 1080p panel and
+         * far below a 4K one - so the TV home's full-screen hero was upscaling every
+         * backdrop and the softness is obvious at that size. `original` is the only
+         * option above w1280.
+         *
+         * Deliberately a separate field rather than raising [BACKDROP_SIZE]: the phone
+         * hero and the detail pages draw the same image at a fraction of the size, and
+         * an original-resolution asset is several times the bytes for no visible gain
+         * there. Building the URL costs nothing until something actually loads it.
+         */
+        private const val HERO_BACKDROP_SIZE = "original"
+
+        /**
          * Backdrop size for landscape cards.
          *
          * The full-bleed hero backdrop is w1280, but a card is a fraction of the
@@ -331,6 +349,8 @@ data class TmdbArtwork(
     val type: TmdbType,
     val title: String,
     val backdropUrl: String?,
+    /** The same backdrop at full resolution, for a full-bleed hero. */
+    val heroBackdropUrl: String?,
     /** The same backdrop at card size. */
     val cardBackdropUrl: String?,
     val posterUrl: String?,

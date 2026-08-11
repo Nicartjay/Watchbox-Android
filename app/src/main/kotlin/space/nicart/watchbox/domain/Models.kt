@@ -30,6 +30,13 @@ data class AnimeCard(
     val sourceName: String = "",
     /** Wide TMDB backdrop, for the hero. Null when no match was found. */
     val backdropUrl: String? = null,
+    /**
+     * The same backdrop at full resolution, for a full-bleed hero.
+     *
+     * Separate from [backdropUrl] because that one is w1280 - narrower than the panel a
+     * full-screen hero fills, so it upscales visibly. Only the TV home asks for this.
+     */
+    val heroBackdropUrl: String? = null,
     /** The same backdrop at card size, for landscape cards on TV. */
     val cardBackdropUrl: String? = null,
     /** Transparent TMDB title logo, for the hero. */
@@ -48,6 +55,15 @@ data class AnimeCard(
 
     /** Hero background: a wide backdrop if we have one, else the poster. */
     val heroImage: String? get() = backdropUrl ?: tmdbPosterUrl ?: posterUrl
+
+    /**
+     * Background for a full-bleed hero: the highest resolution available.
+     *
+     * Falls back through the smaller transforms so a card whose lookup predates the
+     * full-resolution field still shows something rather than nothing.
+     */
+    val fullBleedImage: String?
+        get() = heroBackdropUrl ?: backdropUrl ?: tmdbPosterUrl ?: posterUrl
 
     /** `2024 · Action`, matching Nuvio's hero meta line. */
     val metaLine: String

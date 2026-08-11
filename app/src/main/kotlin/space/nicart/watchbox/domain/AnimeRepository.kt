@@ -95,6 +95,7 @@ class AnimeRepository(
         val art = guarded("tmdb($title)") { tmdbArtwork(url, title) } ?: return this
         return copy(
             backdropUrl = art.backdropUrl,
+            heroBackdropUrl = art.heroBackdropUrl,
             cardBackdropUrl = art.cardBackdropUrl,
             logoUrl = art.logoUrl,
             tmdbPosterUrl = art.posterUrl,
