@@ -33,6 +33,22 @@ class TvSourceViewModel(
     private val _selected = MutableStateFlow<SourceEntry?>(null)
     val selected: StateFlow<SourceEntry?> = _selected.asStateFlow()
 
+    /**
+     * Whether the source picker drawer is open.
+     *
+     * Lives here because the drawer and the home screen are siblings under the shell, so
+     * neither can see the other's local state. The home screen needs it to hold the hero
+     * carousel still while the drawer covers it - inferring that from focus instead was
+     * wrong: focus also leaves the screen for the nav rail, where the hero is fully visible
+     * and should keep moving.
+     */
+    private val _pickerOpen = MutableStateFlow(false)
+    val pickerOpen: StateFlow<Boolean> = _pickerOpen.asStateFlow()
+
+    fun setPickerOpen(open: Boolean) {
+        _pickerOpen.value = open
+    }
+
     init {
         viewModelScope.launch {
             // Re-derived whenever extensions change, so installing one appears in the

@@ -73,7 +73,10 @@ fun TvTabShell(
     )
     val sources by sourceViewModel.sources.collectAsStateWithLifecycle()
     val selectedSource by sourceViewModel.selected.collectAsStateWithLifecycle()
-    var pickerOpen by remember { mutableStateOf(false) }
+    // Mirrored onto the view model, not kept purely local: the home screen has to know the
+    // drawer is covering it so the hero carousel can hold still, and it is a sibling that
+    // cannot see this state.
+    val pickerOpen by sourceViewModel.pickerOpen.collectAsStateWithLifecycle()
 
     var selectedTab by remember { mutableStateOf(AppTab.HOME) }
     var railFocused by remember { mutableStateOf(false) }
@@ -170,7 +173,7 @@ fun TvTabShell(
                     TvRailSourceButton(
                         source = selectedSource,
                         expanded = expanded,
-                        onClick = { pickerOpen = true },
+                        onClick = { sourceViewModel.setPickerOpen(true) },
                     )
                 },
             )
@@ -183,9 +186,9 @@ fun TvTabShell(
             visible = pickerOpen,
             onSelect = { source ->
                 sourceViewModel.select(source)
-                pickerOpen = false
+                sourceViewModel.setPickerOpen(false)
             },
-            onDismiss = { pickerOpen = false },
+            onDismiss = { sourceViewModel.setPickerOpen(false) },
         )
     }
 }

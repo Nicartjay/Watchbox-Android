@@ -95,13 +95,15 @@ import androidx.compose.runtime.mutableStateOf
  *
  * The upper-left block - logo, metadata, Play, Details - describes whatever is on the
  * backdrop. At rest that is the spotlight, which rotates through a handful of Popular
- * titles; once focus is in a row it follows that focus instead, and the rotation stops.
+ * titles; once focus is in a row the backdrop follows that focus instead.
  *
  * The block is one unit deliberately: the buttons act on the title named directly above
  * them, so there is no reading in which Play starts something other than what the user is
- * looking at. It is also why the carousel does not advance while the block holds focus -
- * rotating under a focused Play button would change what that button does between the user
- * deciding to press it and pressing it.
+ * looking at. The carousel keeps advancing on its timer whether or not the buttons hold
+ * focus, but any input on them restarts the interval, so the title under Play cannot change
+ * in the moment between the user deciding to press it and pressing it.
+ *
+ * [pickerOpen] holds the carousel still while the source drawer covers the hero.
  */
 @Composable
 fun TvHomeScreen(
@@ -111,6 +113,7 @@ fun TvHomeScreen(
     onResume: (WatchHistoryEntry) -> Unit,
     onOpenSettings: () -> Unit,
     onPlay: (TvPlayRequest.Ready) -> Unit = {},
+    pickerOpen: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -169,15 +172,6 @@ fun TvHomeScreen(
     var heroInteraction by remember { mutableIntStateOf(0) }
 
     /**
-     * Whether focus is anywhere on this screen.
-     *
-     * Goes false when the source picker or an expanded nav rail takes focus, which is the
-     * only signal this screen gets that something is covering it - the picker is a sibling
-     * owned by the shell, so its open state is not visible here.
-     */
-    var screenFocused by remember { mutableStateOf(false) }
-
-    /**
      * Holds the grid at the top while the spotlight has focus.
      *
      * The hero is a full-viewport grid item, so focusing a button inside it triggers the
@@ -199,31 +193,28 @@ fun TvHomeScreen(
     }
 
     /**
-     * Rotates the spotlight while the user is not interacting with it.
+     * Rotates the spotlight, on a timer, regardless of what has focus.
      *
-     * Keeps rotating when the buttons merely hold focus. Focus lands on Details as soon as
-     * the screen opens, so pausing on focus alone meant the carousel almost never advanced:
-     * the common case is a user looking at the hero without having touched anything, which
-     * is exactly when it should be cycling.
+     * Focus is deliberately not a condition. Focus lands on a hero button the moment the
+     * screen opens and stays there until the user moves into the rows, so gating on it left
+     * the carousel motionless in the one state where it should obviously be cycling: someone
+     * looking at the home screen having touched nothing.
      *
-     * Four things stop it:
+     * Only two things stop it, and neither is about focus:
      *
-     * - Recent interaction, via [heroInteraction]. Rotating under a button the user is
-     *   actively working would change what that button does between them deciding to press
-     *   it and pressing it, and they would start the wrong title. Any press or focus move on
-     *   the hero restarts this effect and so restarts the delay, which gives a full interval
-     *   of a stable target after every input.
-     * - A press being resolved. Advancing mid-flight would leave the spinner on a title the
-     *   user is no longer looking at and open the player on the previous one.
-     * - Focus in the rows, where the backdrop follows the focused card instead. Rotating
-     *   there would fight the user's own navigation.
-     * - Focus having left this screen entirely, via [screenFocused] - which is what the
-     *   source picker and the nav rail do when they open. The hero was still cycling behind
-     *   the open drawer, so the spotlight the user came back to was not the one they left,
-     *   and the artwork changed underneath a panel they were reading.
+     * - The picker drawer being open, which covers the hero. Rotating there changes artwork
+     *   under a panel the user is reading, and the spotlight they come back to is not the one
+     *   they left.
+     * - A play request in flight. Advancing mid-resolve would leave the spinner on one title
+     *   and open the player on another.
+     *
+     * A press or focus move on the hero does not stop the rotation, but it does restart the
+     * interval via [heroInteraction]: the user gets a full period of a stable target after
+     * every input, so the title under Play cannot change in the instant between deciding to
+     * press it and pressing it.
      */
-    LaunchedEffect(heroItems.size, focused != null, playRequest, heroInteraction, screenFocused) {
-        if (heroItems.size <= 1 || focused != null || !screenFocused) return@LaunchedEffect
+    LaunchedEffect(heroItems.size, playRequest, heroInteraction, pickerOpen) {
+        if (heroItems.size <= 1 || pickerOpen) return@LaunchedEffect
         if (playRequest !is TvPlayRequest.Idle) return@LaunchedEffect
 
         while (true) {
@@ -267,11 +258,7 @@ fun TvHomeScreen(
     // though the logo had already been fetched.
     val backdrop = focused ?: heroCard
 
-    BoxWithConstraints(
-        modifier = modifier
-            .fillMaxSize()
-            .onFocusChanged { screenFocused = it.hasFocus },
-    ) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         // The hero fills the viewport, so its height is measured here rather than derived
         // from the rows below it.
         val viewportHeight = maxHeight

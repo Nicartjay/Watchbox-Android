@@ -199,6 +199,18 @@ private fun TvTabContent(
                 key = "tv-artwork",
                 factory = TvArtworkViewModel.factory(container.repository),
             )
+
+            // The same instance the shell owns - resolved by key, not created here - so the
+            // hero can see when the source drawer is covering it.
+            val sourceViewModel: TvSourceViewModel = viewModel(
+                key = "tv-source",
+                factory = TvSourceViewModel.factory(
+                    container.extensionManager,
+                    container.store,
+                ),
+            )
+            val pickerOpen by sourceViewModel.pickerOpen.collectAsStateWithLifecycle()
+
             TvHomeScreen(
                 viewModel = viewModel,
                 artworkViewModel = artwork,
@@ -207,6 +219,7 @@ private fun TvTabContent(
                 // Switches tab rather than navigating: repositories live in the
                 // Settings tab, which is not a nav destination.
                 onOpenSettings = { onSelectTab(AppTab.SETTINGS) },
+                pickerOpen = pickerOpen,
                 onPlay = { request ->
                     navController.navigate(
                         Routes.Player(
