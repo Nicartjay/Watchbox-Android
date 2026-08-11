@@ -59,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import space.nicart.watchbox.R
+import space.nicart.watchbox.core.ui.LocalLayoutMetrics
 import space.nicart.watchbox.core.ui.adaptiveFocus
 import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.wbType
@@ -293,11 +294,18 @@ private fun PlayerHeader(
                 size = metrics.headerIconSize,
                 onClick = onOpenCast,
             )
-            HeaderIconButton(
-                icon = if (state.locked) Icons.Filled.Lock else Icons.Filled.LockOpen,
-                size = metrics.headerIconSize,
-                onClick = onToggleLock,
-            )
+            // Lock is a touch-only affordance: it exists to stop a pocketed phone
+            // from scrubbing. A remote cannot generate stray input, and on TV the
+            // button is actively harmful -- D-pad RIGHT along the header lands on
+            // it, and once locked every key except unlock is swallowed
+            // (`PlayerKeys.kt:60`), so the user appears to be stuck.
+            if (!LocalLayoutMetrics.current.isFocusDriven) {
+                HeaderIconButton(
+                    icon = if (state.locked) Icons.Filled.Lock else Icons.Filled.LockOpen,
+                    size = metrics.headerIconSize,
+                    onClick = onToggleLock,
+                )
+            }
             HeaderIconButton(
                 icon = Icons.AutoMirrored.Rounded.VolumeUp,
                 size = metrics.headerIconSize,
@@ -325,9 +333,9 @@ private fun HeaderIconButton(
     Box(
         modifier = Modifier
             .size(size + 16.dp)
+            .adaptiveFocus(interaction, CircleShape)
             .clip(CircleShape)
             .background(Color.Black.copy(alpha = 0.35f))
-            .adaptiveFocus(interaction, CircleShape)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
@@ -366,8 +374,8 @@ private fun CenterControls(
 
         Box(
             modifier = Modifier
-                .clip(CircleShape)
                 .adaptiveFocus(backInteraction, CircleShape)
+                .clip(CircleShape)
                 .clickable(
                     interactionSource = backInteraction,
                     indication = LocalIndication.current,
@@ -417,8 +425,8 @@ private fun CenterControls(
 
         Box(
             modifier = Modifier
-                .clip(CircleShape)
                 .adaptiveFocus(forwardInteraction, CircleShape)
+                .clip(CircleShape)
                 .clickable(
                     interactionSource = forwardInteraction,
                     indication = LocalIndication.current,
@@ -561,10 +569,13 @@ private fun ActionPill(
     val interaction = rememberFocusInteraction()
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(22.dp))
+            // Before clip: clipping first would cut the outline off at the pill's edge,
+            // leaving the pill focusable but with nothing to show it.
+            //
             // No scale: these sit in a fixed-width pill row, so growing one shifts
             // its neighbours sideways.
             .adaptiveFocus(interaction, RoundedCornerShape(22.dp), scale = false)
+            .clip(RoundedCornerShape(22.dp))
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,

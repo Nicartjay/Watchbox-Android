@@ -220,12 +220,19 @@ fun PlayerScreen(
     // hide, focus returns to the surface, which is what keeps the reveal-first key
     // handling working.
     //
+    // A panel takes precedence over both. It covers the controls and is the only thing
+    // the user can act on, so it claims focus itself - sending focus back to the video
+    // surface here would leave the panel unreachable, since the surface is not adjacent
+    // to it in any direction the D-pad can travel.
+    //
     // The retry mirrors tvInitialFocus, including why it watches playHasFocus rather
     // than the call: AnimatedVisibility composes the controls over the frames after
     // this runs, and requestFocus reports success even when its target has no node yet,
     // so trusting the return value exits the loop having moved nothing.
     LaunchedEffect(controlsVisible, openPanel, state.locked, state.isResolving) {
         if (!metricsForFocus.isFocusDriven) return@LaunchedEffect
+
+        if (openPanel != PlayerPanel.NONE) return@LaunchedEffect
 
         if (!controlsOwnFocus) {
             runCatching { playerFocusRequester.requestFocus() }
