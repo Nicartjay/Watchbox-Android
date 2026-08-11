@@ -57,6 +57,39 @@ data class TvHomeState(
     val isEmpty: Boolean get() = popular.isEmpty() && latest.isEmpty()
 }
 
+/**
+ * State of the hero's Play button.
+ *
+ * The hero shows a card, not a title's episode list, so "play" cannot navigate straight
+ * to the player: the episode to open is only known after fetching the detail. That is a
+ * network round-trip, so the button has to report progress rather than appear inert, and
+ * the resolved route has to survive as state until the screen has consumed it.
+ */
+sealed interface TvPlayRequest {
+
+    data object Idle : TvPlayRequest
+
+    /** Fetching the episode list. Carries the card key so only that hero shows a spinner. */
+    data class Resolving(val cardKey: String) : TvPlayRequest
+
+    /** Resolved: the screen navigates to the player and consumes this. */
+    data class Ready(
+        val sourceId: Long,
+        val animeUrl: String,
+        val episodeUrl: String,
+        val resumeMs: Long,
+    ) : TvPlayRequest
+
+    /**
+     * Nothing playable was found.
+     *
+     * Carries the card so the screen can fall back to opening the detail page. Silently
+     * doing nothing would read as the button being broken, and the detail page is where
+     * the user can see for themselves that there are no episodes.
+     */
+    data class Unavailable(val card: AnimeCard) : TvPlayRequest
+}
+
 class TvHomeViewModel(
     private val repository: AnimeRepository,
     private val extensions: ExtensionManager,
@@ -65,6 +98,38 @@ class TvHomeViewModel(
 
     private val _state = MutableStateFlow(TvHomeState())
     val state: StateFlow<TvHomeState> = _state.asStateFlow()
+
+    private val _playRequest = MutableStateFlow<TvPlayRequest>(TvPlayRequest.Idle)
+    val playRequest: StateFlow<TvPlayRequest> = _playRequest.asStateFlow()
+
+    /**
+     * Which spotlight title the hero is showing.
+     *
+     * Held here rather than remembered in the composition because pushing Detail disposes
+     * the home subtree: a remembered index came back as 0, so the spotlight silently reset
+     * to the first title while the user was away. That also broke focus restoration - the
+     * card the hero was showing no longer matched the card that had been opened, so nothing
+     * claimed focus and the shell dropped the user on the navigation rail.
+     */
+    private val _heroIndex = MutableStateFlow(0)
+    val heroIndex: StateFlow<Int> = _heroIndex.asStateFlow()
+
+    /** Moves the spotlight on, wrapping. [count] is the current item count. */
+    fun advanceHero(count: Int) {
+        if (count <= 0) return
+        _heroIndex.value = (_heroIndex.value + 1) % count
+    }
+
+    /**
+     * Clamps the spotlight into range.
+     *
+     * Switching source replaces the shortlist, and an index left pointing past the new end
+     * would read off the end of the list.
+     */
+    fun clampHero(count: Int) {
+        if (count <= 0 || _heroIndex.value < count) return
+        _heroIndex.value = 0
+    }
 
     /**
      * Continue Watching, kept separate from [state].
@@ -91,9 +156,67 @@ class TvHomeViewModel(
         )
 
     private var loadJob: Job? = null
+    private var playJob: Job? = null
 
     fun removeFromHistory(key: String) {
         viewModelScope.launch { store.removeHistory(key) }
+    }
+
+    /**
+     * Resolves what the hero's Play button should open.
+     *
+     * Resumes where the user left off when there is unfinished history for this title,
+     * otherwise starts at the first episode - the same rule the detail page's play button
+     * follows, so the two never disagree about what "play" means.
+     *
+     * History is consulted before the network: an entry already names the episode, so a
+     * resume needs the detail only to confirm the episode still exists in the catalogue.
+     *
+     * Re-entrant presses cancel the previous attempt rather than queueing. Holding OK on a
+     * remote repeats the key, and without this every repeat would start another fetch and
+     * the last one to land would win.
+     */
+    fun play(card: AnimeCard) {
+        playJob?.cancel()
+        _playRequest.value = TvPlayRequest.Resolving(card.key)
+
+        playJob = viewModelScope.launch {
+            val history = store.historyFor(card.sourceId, card.url)
+                ?.takeIf { !it.isFinished && it.positionMs > MIN_RESUME_MS }
+
+            val episodes = repository.detail(card.sourceId, card.url)
+                .getOrNull()
+                ?.episodes
+                .orEmpty()
+
+            // Matched by url rather than trusting the stored episode outright: a source can
+            // renumber or drop episodes between sessions, and resuming into a url that is
+            // no longer in the list strands the player on an unresolvable episode.
+            val resume = history?.let { entry ->
+                episodes.firstOrNull { it.url == entry.episodeUrl }?.let { it to entry.positionMs }
+            }
+            val target = resume ?: episodes.firstOrNull()?.let { it to 0L }
+
+            _playRequest.value = when {
+                target == null -> TvPlayRequest.Unavailable(card)
+                else -> TvPlayRequest.Ready(
+                    sourceId = card.sourceId,
+                    animeUrl = card.url,
+                    episodeUrl = target.first.url,
+                    resumeMs = target.second,
+                )
+            }
+        }
+    }
+
+    /**
+     * Clears a resolved request once the screen has acted on it.
+     *
+     * Without this the stored route would fire again every time the home screen came back
+     * into composition, sending the user into the player instead of back to the rows.
+     */
+    fun onPlayHandled() {
+        _playRequest.value = TvPlayRequest.Idle
     }
 
     init {
@@ -243,6 +366,15 @@ class TvHomeViewModel(
     }
 
     companion object {
+        /**
+         * Below this, a stored position is treated as never started.
+         *
+         * Matches the detail page's resume threshold: a few seconds in is where the user
+         * was still deciding whether to watch, and resuming there is indistinguishable
+         * from starting over while looking like the button ignored them.
+         */
+        private const val MIN_RESUME_MS = 5_000L
+
         fun factory(
             repository: AnimeRepository,
             extensions: ExtensionManager,
@@ -256,10 +388,23 @@ class TvHomeViewModel(
 }
 
 /**
- * First card, used to seed the backdrop before focus lands.
+ * The titles the hero carousel pages through.
  *
- * Popular first, matching the on-screen order, so the backdrop shows what the user is
- * looking at rather than something further down.
+ * Taken from Popular, which is already the shortlist the row presents, and capped: a
+ * carousel is only useful while the user can believe they might see all of it, and a
+ * spotlight of thirty titles is just Popular again with one item visible at a time.
+ *
+ * Falls back to Latest so a source with no Popular feed still gets a hero rather than an
+ * empty band above the rows. The first entry is also what seeds the backdrop before the
+ * D-pad has touched anything, so the order matches what is on screen at rest.
  */
-fun TvHomeState.firstCard(): AnimeCard? =
-    popular.firstOrNull() ?: latest.firstOrNull()
+fun TvHomeState.heroItems(): List<AnimeCard> =
+    (popular.takeIf { it.isNotEmpty() } ?: latest).take(HERO_ITEM_COUNT)
+
+/**
+ * How many titles the hero rotates through.
+ *
+ * Five is enough to feel like a curated spotlight and few enough that the dots stay
+ * countable at a glance from across a room.
+ */
+const val HERO_ITEM_COUNT = 5

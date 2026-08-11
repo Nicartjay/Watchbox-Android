@@ -4,7 +4,6 @@ import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.ui.browse.SourceEntry
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -53,26 +52,47 @@ class TvHomeStateTest {
         assertTrue(!TvHomeState(latest = listOf(card("B"))).isEmpty)
     }
 
-    // -------------------------------------------------------- backdrop seeding
+    // ------------------------------------------------------ hero / backdrop seeding
 
     @Test
-    fun `popular seeds the backdrop`() {
-        // Popular is the row on screen at rest, so the backdrop should match it rather
+    fun `popular seeds the hero`() {
+        // Popular is the row on screen at rest, so the spotlight should match it rather
         // than something further down the grid.
         val state = TvHomeState(popular = listOf(card("A")), latest = listOf(card("B")))
-        assertEquals("A", state.firstCard()?.title)
+        assertEquals("A", state.heroItems().first().title)
     }
 
     @Test
-    fun `latest seeds the backdrop when popular is empty`() {
-        // A source can return an empty Popular while Latest has content.
+    fun `latest seeds the hero when popular is empty`() {
+        // A source can return an empty Popular while Latest has content. Falling through
+        // matters because the hero is the backdrop: without it the screen opens on black.
         val state = TvHomeState(latest = listOf(card("B")))
-        assertEquals("B", state.firstCard()?.title)
+        assertEquals("B", state.heroItems().first().title)
     }
 
     @Test
-    fun `no content means no seed card`() {
-        assertNull(TvHomeState().firstCard())
+    fun `no content means no hero`() {
+        // The screen has to cope with this: both feeds are empty for the whole first load.
+        assertTrue(TvHomeState().heroItems().isEmpty())
+    }
+
+    @Test
+    fun `the hero is capped`() {
+        // Uncapped, the spotlight becomes Popular again with one item visible at a time,
+        // and the dots stop being countable at a glance.
+        val many = (1..30).map { card("T$it") }
+        assertEquals(HERO_ITEM_COUNT, TvHomeState(popular = many).heroItems().size)
+    }
+
+    @Test
+    fun `a short popular feed is not padded from latest`() {
+        // Mixing the two would put a Latest title in the spotlight under a Popular
+        // heading, and the same title would then appear twice on screen.
+        val state = TvHomeState(
+            popular = listOf(card("A"), card("B")),
+            latest = (1..10).map { card("L$it") },
+        )
+        assertEquals(listOf("A", "B"), state.heroItems().map { it.title })
     }
 
     // ---------------------------------------------------------------- paging

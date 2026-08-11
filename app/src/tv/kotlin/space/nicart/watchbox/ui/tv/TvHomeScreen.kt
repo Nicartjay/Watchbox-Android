@@ -28,6 +28,10 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.draw.alpha
@@ -54,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.LocalPosterScale
+import space.nicart.watchbox.core.ui.adaptiveFocus
 import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.tvFocusable
 import space.nicart.watchbox.core.ui.wb
@@ -72,7 +77,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 
 /**
- * TV home: a full-screen backdrop with one row of posters along the bottom.
+ * TV home: a full-screen backdrop with a spotlight carousel over rows of posters.
  *
  * The backdrop is the screen, not a banner. Rows sit at the bottom edge so the artwork
  * for the focused title stays almost entirely visible, and scrolling down brings the
@@ -82,6 +87,18 @@ import androidx.compose.runtime.mutableStateOf
  * Posters are portrait. A landscape card shows more of a backdrop, but a row of them
  * fits half as many titles and reads as a list of screenshots; the portrait poster is
  * what people recognise a title by.
+ *
+ * ## The carousel
+ *
+ * The upper-left block - logo, metadata, Play, Details - describes whatever is on the
+ * backdrop. At rest that is the spotlight, which rotates through a handful of Popular
+ * titles; once focus is in a row it follows that focus instead, and the rotation stops.
+ *
+ * The block is one unit deliberately: the buttons act on the title named directly above
+ * them, so there is no reading in which Play starts something other than what the user is
+ * looking at. It is also why the carousel does not advance while the block holds focus -
+ * rotating under a focused Play button would change what that button does between the user
+ * deciding to press it and pressing it.
  */
 @Composable
 fun TvHomeScreen(
@@ -90,6 +107,7 @@ fun TvHomeScreen(
     onOpenAnime: (AnimeCard) -> Unit,
     onResume: (WatchHistoryEntry) -> Unit,
     onOpenSettings: () -> Unit,
+    onPlay: (TvPlayRequest.Ready) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -97,7 +115,7 @@ fun TvHomeScreen(
     val focused by artworkViewModel.focused.collectAsStateWithLifecycle()
     val artwork by artworkViewModel.artwork.collectAsStateWithLifecycle()
     val lastOpened by artworkViewModel.lastOpened.collectAsStateWithLifecycle()
-    val tokens = MaterialTheme.wb
+    val playRequest by viewModel.playRequest.collectAsStateWithLifecycle()
 
     val gridState = rememberLazyGridState()
 
@@ -127,15 +145,68 @@ fun TvHomeScreen(
         return
     }
 
-    // Seeded from the first card so the backdrop is populated before the D-pad has
-    // touched anything, rather than opening on flat black.
+    val heroItems = remember(state.popular, state.latest) { state.heroItems() }
+
+    // Kept in the view model, which survives navigation: a remembered index came back as 0
+    // after visiting a detail page, resetting the spotlight and leaving focus restoration
+    // with no matching card to return to.
+    val heroIndex by viewModel.heroIndex.collectAsStateWithLifecycle()
+    LaunchedEffect(heroItems.size) { viewModel.clampHero(heroItems.size) }
+
+    var heroFocused by remember { mutableStateOf(false) }
+    val heroCard = heroItems.getOrNull(heroIndex)?.let { artwork[it.key] ?: it }
+
+    /**
+     * Rotates the spotlight while the user is not interacting with it.
+     *
+     * Paused while the hero holds focus: advancing under a focused Play button would change
+     * what that button does between the user deciding to press it and pressing it. Also
+     * paused once the rows have focus, where the block below follows focus instead and
+     * rotating it would fight the user's own navigation.
+     */
+    LaunchedEffect(heroItems.size, heroFocused, focused != null) {
+        if (heroItems.size <= 1 || heroFocused || focused != null) return@LaunchedEffect
+
+        while (true) {
+            delay(HERO_ROTATE_MS)
+            viewModel.advanceHero(heroItems.size)
+        }
+    }
+
+    // Prefetches artwork for the spotlight, which is not in any row's request: the hero
+    // needs a wide backdrop and a logo, and without this it showed the source's portrait
+    // poster stretched across the screen until the user focused the matching card.
+    LaunchedEffect(heroItems) {
+        if (heroItems.isNotEmpty()) artworkViewModel.onRowVisible("tv-hero", heroItems)
+    }
+
+    // Navigating out of a composable is a side effect of state, not of the click: the
+    // request is resolved asynchronously, so the press that started it is long over by the
+    // time there is a route to follow.
+    LaunchedEffect(playRequest) {
+        when (val request = playRequest) {
+            is TvPlayRequest.Ready -> {
+                onPlay(request)
+                viewModel.onPlayHandled()
+            }
+            // No episodes resolved. The detail page is where the user can see why, which
+            // is better than a button that visibly does nothing.
+            is TvPlayRequest.Unavailable -> {
+                onOpenAnime(request.card)
+                viewModel.onPlayHandled()
+            }
+            else -> Unit
+        }
+    }
+
+    // Seeded from the hero so the backdrop is populated before the D-pad has touched
+    // anything, rather than opening on flat black.
     //
     // Resolved through the artwork map, not taken raw: the state's cards carry only what
     // the source returned, and the TMDB logo and backdrop live in that map. Using the
     // raw card meant the hero showed a typeset title until the user moved focus, even
     // though the logo had already been fetched.
-    val seed = state.firstCard()
-    val backdrop = focused ?: seed?.let { artwork[it.key] ?: it }
+    val backdrop = focused ?: heroCard
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val topInset = rowsTopInset(maxHeight, hasContinueRow = continueWatching.isNotEmpty())
@@ -170,14 +241,47 @@ fun TvHomeScreen(
 
         // Faded out with the backdrop it sits on: text over a black background that no
         // longer shows the artwork it describes is just clutter.
-        TvBackdropDetail(
-            card = backdrop,
+        //
+        // Play acts on whatever this block is currently describing, which is the spotlight
+        // at rest and the focused card once the user is in the rows. The block is one unit -
+        // logo, metadata, buttons - so tying the button to the title beside it is the only
+        // reading that cannot be wrong. Gating the buttons on "nothing focused" instead was
+        // worse: `focused` never returns to null once a card has been focused, so the
+        // buttons disappeared on the first row press and could never be reached again.
+        val blockCard = backdrop
+
+        Column(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .alpha(1f - scrollProgress)
-                .padding(start = TV_CONTENT_START, top = 80.dp, end = 48.dp),
-        )
-
+                .padding(start = TV_CONTENT_START, top = 80.dp, end = 48.dp)
+                .onFocusChanged { heroFocused = it.hasFocus },
+        ) {
+            TvBackdropDetail(
+                card = blockCard,
+                isPlayResolving = (playRequest as? TvPlayRequest.Resolving)
+                    ?.cardKey == blockCard?.key,
+                onPlay = { blockCard?.let(viewModel::play) },
+                onDetails = {
+                    blockCard?.let {
+                        artworkViewModel.onOpen(ROW_HERO, it)
+                        onOpenAnime(it)
+                    }
+                },
+                // Returning from a title opened via Details puts focus back on the button
+                // it was opened from, the same as the rows do. Without this the shell
+                // re-homed focus to the rail and the user was thrown to the top of the
+                // screen having lost the spotlight they were looking at.
+                isOpened = blockCard != null &&
+                    lastOpened == artworkViewModel.openedKey(ROW_HERO, blockCard),
+                onFocusRestored = artworkViewModel::onFocusRestored,
+                // Only for the spotlight: once focus is in a row the block is following
+                // that focus, and a carousel position for a rotation that has stopped
+                // would be reporting something the user cannot act on.
+                heroCount = if (focused == null) heroItems.size else 0,
+                heroIndex = heroIndex,
+            )
+        }
     }
 }
 
@@ -303,9 +407,27 @@ private fun TvBackdrop(card: AnimeCard?, fade: Float) {
     }
 }
 
-/** Title logo or text, plus a metadata line, for the focused card. */
+/**
+ * Title logo or text, a metadata line, and the actions for whichever title is on the
+ * backdrop.
+ *
+ * One unit deliberately: the buttons act on the title named directly above them, so there
+ * is no way for the user to misread which title they apply to.
+ *
+ * [heroCount] of zero hides the carousel dots.
+ */
 @Composable
-private fun TvBackdropDetail(card: AnimeCard?, modifier: Modifier = Modifier) {
+private fun TvBackdropDetail(
+    card: AnimeCard?,
+    modifier: Modifier = Modifier,
+    isPlayResolving: Boolean = false,
+    onPlay: () -> Unit = {},
+    onDetails: () -> Unit = {},
+    isOpened: Boolean = false,
+    onFocusRestored: () -> Unit = {},
+    heroCount: Int = 0,
+    heroIndex: Int = 0,
+) {
     val tokens = MaterialTheme.wb
     if (card == null) return
 
@@ -347,6 +469,174 @@ private fun TvBackdropDetail(card: AnimeCard?, modifier: Modifier = Modifier) {
                 color = tokens.colors.textMuted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+        TvHeroActions(
+            isPlayResolving = isPlayResolving,
+            onPlay = onPlay,
+            onDetails = onDetails,
+            isOpened = isOpened,
+            onFocusRestored = onFocusRestored,
+            heroCount = heroCount,
+            heroIndex = heroIndex,
+        )
+    }
+}
+
+/**
+ * Play and Details for the spotlight title, with the carousel position beside them.
+ *
+ * Play is the filled one because it is the only reason to put a hero above the rows: the
+ * whole point of a spotlight is to start watching without first walking into a detail page
+ * and finding the episode list.
+ *
+ * The dots sit in this row rather than under it. Below the buttons is where the first row's
+ * label already is - the block's height is what the rows' top inset is measured against, so
+ * anything added under the buttons pushes into "Continue Watching" rather than moving it
+ * down. There is ample width beside two buttons and none beneath them.
+ */
+@Composable
+private fun TvHeroActions(
+    isPlayResolving: Boolean,
+    onPlay: () -> Unit,
+    onDetails: () -> Unit,
+    isOpened: Boolean,
+    onFocusRestored: () -> Unit,
+    heroCount: Int,
+    heroIndex: Int,
+) {
+    val tokens = MaterialTheme.wb
+    val playInteraction = rememberFocusInteraction()
+    val detailsInteraction = rememberFocusInteraction()
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier
+                .height(HERO_BUTTON_HEIGHT)
+                // Before clip, per tvFocusable's contract. Dark, not the usual white:
+                // this button is white, and the default theme's accent is #F5F5F5, so a
+                // white or accent stroke was invisible against it - the button scaled up
+                // on focus but showed no ring. Matches the detail page's play button.
+                .adaptiveFocus(
+                    playInteraction,
+                    RoundedCornerShape(HERO_BUTTON_HEIGHT / 2),
+                    borderColor = tokens.colors.background,
+                )
+                .clip(RoundedCornerShape(HERO_BUTTON_HEIGHT / 2))
+                .background(tokens.colors.textPrimary)
+                // Play, not Details, reclaims focus on the way back: it is the primary
+                // action, so landing there means the next press starts watching.
+                .restoreFocusIfOpened(isOpened, onFocusRestored)
+                .clickable(
+                    interactionSource = playInteraction,
+                    indication = null,
+                    onClick = onPlay,
+                )
+                .padding(horizontal = 26.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // Swapped in place of the icon rather than shown beside it, so resolving does
+            // not change the button's width and shuffle the row beside it.
+            if (isPlayResolving) {
+                CircularProgressIndicator(
+                    color = tokens.colors.background,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(HERO_BUTTON_ICON),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    tint = tokens.colors.background,
+                    modifier = Modifier.size(HERO_BUTTON_ICON),
+                )
+            }
+            Text(
+                text = stringResource(R.string.action_play),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = tokens.colors.background,
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .height(HERO_BUTTON_HEIGHT)
+                .adaptiveFocus(
+                    detailsInteraction,
+                    RoundedCornerShape(HERO_BUTTON_HEIGHT / 2),
+                )
+                .clip(RoundedCornerShape(HERO_BUTTON_HEIGHT / 2))
+                // Translucent rather than a solid surface: it sits on artwork, and a
+                // filled panel here would read as a second, competing primary action.
+                .background(Color.White.copy(alpha = 0.18f))
+                .clickable(
+                    interactionSource = detailsInteraction,
+                    indication = null,
+                    onClick = onDetails,
+                )
+                .padding(horizontal = 26.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Info,
+                contentDescription = null,
+                tint = tokens.colors.textPrimary,
+                modifier = Modifier.size(HERO_BUTTON_ICON),
+            )
+            Text(
+                text = stringResource(R.string.tv_hero_details),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = tokens.colors.textPrimary,
+            )
+        }
+
+        TvHeroDots(
+            count = heroCount,
+            current = heroIndex,
+            modifier = Modifier.padding(start = 10.dp),
+        )
+    }
+}
+
+/**
+ * Page indicator for the hero carousel.
+ *
+ * Dots rather than arrows: the carousel is driven by the D-pad, so on-screen arrows would
+ * be focusable targets competing with Play for the user's presses. These are purely a
+ * position readout.
+ */
+@Composable
+private fun TvHeroDots(count: Int, current: Int, modifier: Modifier = Modifier) {
+    val tokens = MaterialTheme.wb
+    if (count <= 1) return
+
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        repeat(count) { index ->
+            val active = index == current
+            Box(
+                modifier = Modifier
+                    .size(if (active) HERO_DOT_ACTIVE else HERO_DOT)
+                    .clip(RoundedCornerShape(50))
+                    .background(
+                        if (active) {
+                            tokens.colors.textPrimary
+                        } else {
+                            tokens.colors.textPrimary.copy(alpha = 0.35f)
+                        },
+                    ),
             )
         }
     }
@@ -967,3 +1257,21 @@ private const val RESTORE_FOCUS_RETRY_MS = 40L
  */
 private const val ROW_POPULAR = "popular"
 private const val ROW_LATEST = "latest"
+
+/** The hero carousel, which restores focus like any other row. */
+private const val ROW_HERO = "hero"
+
+/**
+ * How long each spotlight title is shown.
+ *
+ * Long enough to read the title, the metadata and decide - a carousel that turns over
+ * faster than a person can act on it is just motion.
+ */
+private const val HERO_ROTATE_MS = 9_000L
+
+private val HERO_BUTTON_HEIGHT = 48.dp
+private val HERO_BUTTON_ICON = 20.dp
+
+/** Page dots: the active one is larger rather than merely brighter, to read at distance. */
+private val HERO_DOT = 8.dp
+private val HERO_DOT_ACTIVE = 11.dp

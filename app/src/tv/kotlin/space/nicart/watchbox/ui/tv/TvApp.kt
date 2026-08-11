@@ -207,6 +207,16 @@ private fun TvTabContent(
                 // Switches tab rather than navigating: repositories live in the
                 // Settings tab, which is not a nav destination.
                 onOpenSettings = { onSelectTab(AppTab.SETTINGS) },
+                onPlay = { request ->
+                    navController.navigate(
+                        Routes.Player(
+                            sourceId = request.sourceId,
+                            animeUrl = request.animeUrl,
+                            episodeUrl = request.episodeUrl,
+                            resumeMs = request.resumeMs,
+                        ),
+                    )
+                },
             )
         }
 

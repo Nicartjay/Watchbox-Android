@@ -86,6 +86,7 @@
     <string name="empty_search_hint">Search movies and TV shows</string>
     <string name="tv_row_popular">Popular</string>
     <string name="tv_row_latest">Latest</string>
+    <string name="tv_hero_details">Details</string>
     <string name="tv_source_picker_title">Choose a source</string>
     <string name="search_all_sources">All sources</string>
     <string name="empty_search_title">Nothing found</string>
