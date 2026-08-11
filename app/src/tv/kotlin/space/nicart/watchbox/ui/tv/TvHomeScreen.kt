@@ -3,6 +3,7 @@ package space.nicart.watchbox.ui.tv
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -54,9 +56,11 @@ import space.nicart.watchbox.core.ui.LocalPosterScale
 import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.tvFocusable
 import space.nicart.watchbox.core.ui.wb
+import space.nicart.watchbox.data.local.WatchHistoryEntry
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.ui.components.WbAsyncImage
 import space.nicart.watchbox.ui.components.WbEmptyState
+import space.nicart.watchbox.ui.components.WbProgressBar
 
 /**
  * TV home: a full-screen backdrop with one row of posters along the bottom.
@@ -75,10 +79,12 @@ fun TvHomeScreen(
     viewModel: TvHomeViewModel,
     artworkViewModel: TvArtworkViewModel,
     onOpenAnime: (AnimeCard) -> Unit,
+    onResume: (WatchHistoryEntry) -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val continueWatching by viewModel.continueWatching.collectAsStateWithLifecycle()
     val focused by artworkViewModel.focused.collectAsStateWithLifecycle()
     val artwork by artworkViewModel.artwork.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
@@ -122,7 +128,7 @@ fun TvHomeScreen(
     val backdrop = focused ?: seed?.let { artwork[it.key] ?: it }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val topInset = rowsTopInset(maxHeight)
+        val topInset = rowsTopInset(maxHeight, hasContinueRow = continueWatching.isNotEmpty())
 
         TvBackdrop(card = backdrop, fade = scrollProgress)
 
@@ -133,12 +139,15 @@ fun TvHomeScreen(
         // and hide everything beneath it.
         TvHomeRows(
             state = state,
+            continueWatching = continueWatching,
             artwork = artwork,
             gridState = gridState,
             topInset = topInset,
             onFocus = artworkViewModel::onFocus,
             onPrefetch = artworkViewModel::onRowVisible,
             onOpenAnime = onOpenAnime,
+            onResume = onResume,
+            onRemove = { viewModel.removeFromHistory(it.key) },
             onLoadMore = viewModel::loadMoreLatest,
         )
 
@@ -186,19 +195,39 @@ private fun popularRowHeight(): Dp {
 }
 
 /**
- * Top inset that rests the Popular row on the bottom edge of [viewportHeight].
+ * Height of the Continue Watching row, built from the same pieces as [popularRowHeight].
+ *
+ * Its cards are 16:9 rather than 2:3, so it is materially shorter than the Popular row -
+ * which matters because whichever row comes first is what the top inset is measured
+ * against.
+ */
+@Composable
+private fun continueRowHeight(): Dp {
+    val cardHeight = (CONTINUE_CARD_WIDTH * LocalPosterScale.current) / CONTINUE_CARD_ASPECT
+    return POPULAR_LABEL_HEIGHT + POPULAR_LABEL_GAP + (POPULAR_ROW_VERTICAL_PADDING * 2) +
+        cardHeight + POPULAR_CARD_LABEL_HEIGHT
+}
+
+/**
+ * Top inset that rests the first row on the bottom edge of [viewportHeight].
  *
  * Takes the viewport height as measured by the caller rather than reading it from the
  * configuration: the theme installs a scaled density for the UI scale setting, so the
  * configuration's screen height is in unscaled dp and does not match the dp the layout
  * is actually working in.
  *
+ * Measured against whichever row is actually first: with history present that is the
+ * shorter Continue Watching row, and using Popular's height regardless would leave it
+ * hanging well above the bottom edge.
+ *
  * Floored so a large poster scale cannot push the row off-screen and out of reach.
  */
 @Composable
-private fun rowsTopInset(viewportHeight: Dp): Dp =
-    (viewportHeight - popularRowHeight() - POPULAR_BOTTOM_GAP)
+private fun rowsTopInset(viewportHeight: Dp, hasContinueRow: Boolean): Dp {
+    val firstRowHeight = if (hasContinueRow) continueRowHeight() else popularRowHeight()
+    return (viewportHeight - firstRowHeight - POPULAR_BOTTOM_GAP)
         .coerceAtLeast(MIN_ROWS_TOP_INSET)
+}
 
 /**
  * Full-bleed backdrop for the focused title.
@@ -320,12 +349,15 @@ private fun TvBackdropDetail(card: AnimeCard?, modifier: Modifier = Modifier) {
 @Composable
 private fun TvHomeRows(
     state: TvHomeState,
+    continueWatching: List<WatchHistoryEntry>,
     artwork: Map<String, AnimeCard>,
     gridState: LazyGridState,
     topInset: Dp,
     onFocus: (AnimeCard) -> Unit,
     onPrefetch: (String, List<AnimeCard>) -> Unit,
     onOpenAnime: (AnimeCard) -> Unit,
+    onResume: (WatchHistoryEntry) -> Unit,
+    onRemove: (WatchHistoryEntry) -> Unit,
     onLoadMore: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
@@ -362,6 +394,27 @@ private fun TvHomeRows(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
+        if (continueWatching.isNotEmpty()) {
+            item(key = "continue-row", span = { GridItemSpan(maxLineSpan) }) {
+                // Keyed by the entry set so a title that appears after watching gets its
+                // backdrop fetched. These cards do not report focus - the hero stays on
+                // the catalogue rows - so this is the only thing that enriches them.
+                LaunchedEffect(continueWatching.size) {
+                    onPrefetch(
+                        "tv-continue-${continueWatching.size}",
+                        continueWatching.map { it.toCard() },
+                    )
+                }
+
+                TvContinueRow(
+                    entries = continueWatching,
+                    artwork = artwork,
+                    onResume = onResume,
+                    onRemove = onRemove,
+                )
+            }
+        }
+
         if (state.popular.isNotEmpty()) {
             item(key = "popular-row", span = { GridItemSpan(maxLineSpan) }) {
                 LaunchedEffect(state.selected?.id) {
@@ -445,9 +498,10 @@ private fun TvGridPortraitCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(POSTER_ASPECT)
+                // Before clip: clipping first would cut the scaled edge and the outline.
+                .tvFocusable(interaction, RoundedCornerShape(10.dp))
                 .clip(RoundedCornerShape(10.dp))
                 .background(tokens.colors.surfaceCard)
-                .tvFocusable(interaction, RoundedCornerShape(10.dp))
                 .clickable(
                     interactionSource = interaction,
                     indication = null,
@@ -578,6 +632,157 @@ private fun TvFocusReporter(
         if (isFocused) onFocused()
     }
 }
+
+/**
+ * Continue Watching as a row of landscape cards.
+ *
+ * Landscape, unlike every other row on this screen, and deliberately: a resume card is
+ * about the episode you were part-way through, so it carries a progress bar and an
+ * episode label, and that furniture needs horizontal room. The different shape also
+ * marks the row as "yours" rather than another slice of the catalogue.
+ */
+@Composable
+private fun TvContinueRow(
+    entries: List<WatchHistoryEntry>,
+    artwork: Map<String, AnimeCard>,
+    onResume: (WatchHistoryEntry) -> Unit,
+    onRemove: (WatchHistoryEntry) -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            text = stringResource(R.string.section_continue_watching),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = tokens.colors.textPrimary,
+        )
+
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            // Room for the focused card to scale without the row clipping it.
+            contentPadding = PaddingValues(vertical = 8.dp),
+        ) {
+            items(items = entries, key = { it.key }) { entry ->
+                TvContinueCard(
+                    entry = entry,
+                    // History stores only the source's own poster. The artwork map is
+                    // keyed the same way as the card rows, so a resolved backdrop for
+                    // this title is reused here rather than fetched again.
+                    artwork = artwork[entry.key],
+                    onClick = { onResume(entry) },
+                    onLongClick = { onRemove(entry) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvContinueCard(
+    entry: WatchHistoryEntry,
+    artwork: AnimeCard?,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
+    val width = CONTINUE_CARD_WIDTH * LocalPosterScale.current
+
+    Column(
+        modifier = Modifier.width(width),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(CONTINUE_CARD_ASPECT)
+                // Before clip: clipping first would cut the scaled edge and the outline.
+                .tvFocusable(interaction, RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(10.dp))
+                .background(tokens.colors.surfaceCard)
+                .combinedClickable(
+                    interactionSource = interaction,
+                    // Matches the poster cards: at TV distance the border and scale from
+                    // tvFocusable are the affordance, and a ripple is invisible.
+                    indication = null,
+                    onClick = onClick,
+                    onLongClick = onLongClick,
+                ),
+        ) {
+            WbAsyncImage(
+                // Backdrop first here, unlike the portrait rows: this card is 16:9, and
+                // a portrait poster cropped to it loses most of the frame. Falls back to
+                // the poster stored with the history entry until artwork resolves.
+                url = artwork?.cardBackdropUrl ?: artwork?.backdropUrl ?: entry.posterUrl,
+                contentDescription = entry.title,
+                contentScale = ContentScale.Crop,
+                fallbackLabel = entry.title,
+                modifier = Modifier.fillMaxSize(),
+            )
+
+            // Scrim under the label and progress bar, so both stay legible over a bright
+            // frame.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.5f)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)),
+                        ),
+                    ),
+            )
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                entry.episodeLabel.takeIf { it.isNotBlank() }?.let { label ->
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White.copy(alpha = 0.9f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                WbProgressBar(progress = entry.progress, modifier = Modifier.fillMaxWidth())
+            }
+        }
+
+        Text(
+            text = entry.title,
+            style = MaterialTheme.typography.bodyMedium,
+            color = tokens.colors.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * Continue Watching card width.
+ *
+ * Wider than a poster so the 16:9 frame ends up a similar height to the portrait cards,
+ * keeping the row's overall block consistent with the rest of the screen.
+ */
+private fun WatchHistoryEntry.toCard(): AnimeCard = AnimeCard(
+    sourceId = sourceId,
+    url = animeUrl,
+    title = title,
+    posterUrl = posterUrl,
+    sourceName = sourceName,
+)
+
+private val CONTINUE_CARD_WIDTH = 220.dp
+
+/** 16:9, expressed the way [aspectRatio] wants it. */
+private const val CONTINUE_CARD_ASPECT = 1.777f
 
 private val POSTER_WIDTH = 150.dp
 

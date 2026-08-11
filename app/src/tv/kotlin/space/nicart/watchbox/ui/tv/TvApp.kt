@@ -203,6 +203,7 @@ private fun TvTabContent(
                 viewModel = viewModel,
                 artworkViewModel = artwork,
                 onOpenAnime = openAnime,
+                onResume = { entry -> navController.openPlayer(entry) },
                 // Switches tab rather than navigating: repositories live in the
                 // Settings tab, which is not a nav destination.
                 onOpenSettings = { onSelectTab(AppTab.SETTINGS) },

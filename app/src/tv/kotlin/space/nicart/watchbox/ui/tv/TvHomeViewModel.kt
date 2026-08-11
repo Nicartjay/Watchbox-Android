@@ -8,12 +8,15 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import space.nicart.watchbox.data.local.WatchBoxStore
+import space.nicart.watchbox.data.local.WatchHistoryEntry
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.extension.ExtensionManager
@@ -63,7 +66,35 @@ class TvHomeViewModel(
     private val _state = MutableStateFlow(TvHomeState())
     val state: StateFlow<TvHomeState> = _state.asStateFlow()
 
+    /**
+     * Continue Watching, kept separate from [state].
+     *
+     * Its own flow because it comes from persisted history rather than the selected
+     * source's catalogue: folding it into [state] would rebuild the row every time a
+     * feed request completed, and clear it on every source switch even though watch
+     * history spans all sources.
+     *
+     * Filtered exactly as the phone home does - finished titles are resume candidates
+     * for nobody, and an entry barely started is noise.
+     */
+    val continueWatching: StateFlow<List<WatchHistoryEntry>> = store.history
+        .map { history ->
+            history
+                .filterNot { it.isFinished }
+                .filter { it.progress > 0.005f }
+                .sortedByDescending { it.updatedAt }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList(),
+        )
+
     private var loadJob: Job? = null
+
+    fun removeFromHistory(key: String) {
+        viewModelScope.launch { store.removeHistory(key) }
+    }
 
     init {
         // The rail owns the source now, so the feed follows the stored choice rather
