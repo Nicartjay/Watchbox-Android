@@ -151,13 +151,16 @@ fun NetflixDetailHero(
 
             MetaRow(detail = detail)
 
-            detail.description.takeIf { it.isNotBlank() }?.let { description ->
+            // Gated on the extracted summary, not the raw description: a
+            // metadata-only description yields nothing to show, and an empty Text
+            // would still take the spacer above it.
+            detail.description.firstParagraph().takeIf { it.isNotBlank() }?.let { summary ->
                 Spacer(Modifier.height(14.dp))
                 Text(
                     // Source descriptions frequently carry markdown and embedded
                     // images; the hero shows a plain summary and leaves the full text
                     // to the body below.
-                    text = description.firstParagraph(),
+                    text = summary,
                     style = MaterialTheme.typography.bodyLarge,
                     color = tokens.colors.textSecondary,
                     maxLines = 3,
@@ -246,6 +249,10 @@ private fun MetaRow(detail: AnimeDetail) {
  * Source descriptions often begin with markdown metadata blocks and embedded images.
  * Taking everything up to the first blank line yields the human-written summary without
  * needing to parse the markdown.
+ *
+ * Returns empty rather than falling back to the whole string when every paragraph is
+ * markdown: a description that is only metadata has no summary to show, and printing
+ * the raw `**Type:** ...` block reads as broken text.
  */
 private fun String.firstParagraph(): String =
     split("\n\n", "\\n\\n")
@@ -253,7 +260,6 @@ private fun String.firstParagraph(): String =
         ?.replace("\\n", " ")
         ?.trim()
         .orEmpty()
-        .ifBlank { trim() }
 
 private val TEXT_COLUMN_WIDTH = 620.dp
 private val LOGO_HEIGHT = 120.dp

@@ -292,8 +292,7 @@ class AnimeRepository(
                 tmdbId = art?.tmdbId,
                 year = art?.year,
                 rating = art?.rating ?: 0.0,
-                description = details.description
-                    ?.takeIf { it.isNotBlank() }
+                description = details.description?.takeIf { it.hasSummary() }
                     ?: art?.overview.orEmpty(),
                 author = details.author?.takeIf { it.isNotBlank() },
                 artist = details.artist?.takeIf { it.isNotBlank() },
@@ -548,6 +547,7 @@ class AnimeRepository(
     /** Last failure per source, so the UI can explain an empty feed. */
     val sourceErrors: MutableMap<Long, String> = java.util.concurrent.ConcurrentHashMap()
 
+
     /**
      * Turns a raw throwable into something a user can act on.
      *
@@ -596,4 +596,22 @@ class AnimeRepository(
         const val MAX_ROWS = 12
         const val MAX_HERO = 6
     }
+}
+
+/**
+ * Whether a source description contains prose, not just scraped metadata.
+ *
+ * Several sources build a description out of markdown metadata blocks - AniDB emits
+ * `**Type:** TV | **Rating:** 7.4`, then `**Alternative Titles:**` and `**Links:**` -
+ * and append the synopsis only if the page had one. A plain `isNotBlank` check
+ * therefore reports a description for an entry that has no summary at all, which both
+ * suppresses the TMDB overview fallback and puts raw markdown on the detail page.
+ *
+ * A paragraph counts as prose when it does not open with a markdown marker. Cheaper
+ * and more robust than enumerating each source's labels, which differ per source and
+ * change with any extension update.
+ */
+internal fun String.hasSummary(): Boolean = split("\n\n", "\\n\\n").any { paragraph ->
+    val text = paragraph.trimStart()
+    text.isNotBlank() && !text.startsWith("*") && !text.startsWith("#")
 }
