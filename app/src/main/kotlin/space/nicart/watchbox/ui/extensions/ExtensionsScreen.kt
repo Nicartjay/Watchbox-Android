@@ -133,9 +133,9 @@ fun ExtensionsScreen(
                     Box(
                         modifier = Modifier
                             .size(40.dp)
+                            .adaptiveFocus(refreshInteraction, RoundedCornerShape(16.dp), scale = false)
                             .clip(RoundedCornerShape(16.dp))
                             .background(tokens.colors.surface)
-                            .adaptiveFocus(refreshInteraction, RoundedCornerShape(16.dp), scale = false)
                             .clickable(
                                 interactionSource = refreshInteraction,
                                 indication = LocalIndication.current,
@@ -472,9 +472,9 @@ private fun ActionButton(
     Box(
         modifier = Modifier
             .size(36.dp)
+            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
             .clip(RoundedCornerShape(12.dp))
             .background(tokens.colors.surface)
-            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,

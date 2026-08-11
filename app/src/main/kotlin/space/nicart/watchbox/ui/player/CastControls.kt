@@ -73,9 +73,9 @@ fun CastButton(
     Box(
         modifier = Modifier
             .size(size + 16.dp)
+            .adaptiveFocus(interaction, androidx.compose.foundation.shape.CircleShape)
             .clip(androidx.compose.foundation.shape.CircleShape)
             .background(Color.Black.copy(alpha = 0.35f))
-            .adaptiveFocus(interaction, androidx.compose.foundation.shape.CircleShape)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,

@@ -140,9 +140,9 @@ private fun RailItem(
     Row(
         modifier = Modifier
             .fillMaxWidthOrIcon(showLabel)
+            .tvFocusOutline(interaction, RoundedCornerShape(12.dp))
             .clip(RoundedCornerShape(12.dp))
             .background(background)
-            .tvFocusOutline(interaction, RoundedCornerShape(12.dp))
             // clickable only - no separate focusable(). clickable already makes the
             // node focusable, and adding focusable() *before* it inserts a focus
             // target that consumes the D-pad centre key before clickable can act on

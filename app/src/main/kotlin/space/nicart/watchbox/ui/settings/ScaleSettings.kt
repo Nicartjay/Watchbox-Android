@@ -161,9 +161,9 @@ private fun StepButton(
     Box(
         modifier = Modifier
             .size(44.dp)
+            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
             .clip(RoundedCornerShape(12.dp))
             .background(tokens.colors.surface)
-            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,

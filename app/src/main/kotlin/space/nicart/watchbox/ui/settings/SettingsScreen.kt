@@ -557,9 +557,9 @@ private fun SettingsToggleRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .adaptiveFocus(interaction, RoundedCornerShape(16.dp), scale = false)
             .clip(RoundedCornerShape(16.dp))
             .background(tokens.colors.surfaceCard)
-            .adaptiveFocus(interaction, RoundedCornerShape(16.dp), scale = false)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
@@ -596,9 +596,9 @@ private fun SettingsActionRow(title: String, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .adaptiveFocus(interaction, RoundedCornerShape(16.dp), scale = false)
             .clip(RoundedCornerShape(16.dp))
             .background(tokens.colors.surfaceCard)
-            .adaptiveFocus(interaction, RoundedCornerShape(16.dp), scale = false)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
@@ -621,9 +621,9 @@ private fun SettingsTextAction(label: String, onClick: () -> Unit) {
     val tokens = MaterialTheme.wb
     Box(
         modifier = Modifier
+            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
             .clip(RoundedCornerShape(12.dp))
             .background(tokens.colors.surface)
-            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
@@ -653,9 +653,9 @@ private fun ThemeSwatch(
     Box(
         modifier = Modifier
             .size(36.dp)
+            .adaptiveFocus(interaction, RoundedCornerShape(999.dp), scale = false)
             .clip(CircleShape)
             .background(accent)
-            .adaptiveFocus(interaction, RoundedCornerShape(999.dp), scale = false)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
@@ -838,8 +838,8 @@ private fun RepoRow(
         Box(
             modifier = Modifier
                 .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
                 .adaptiveFocus(removeInteraction, RoundedCornerShape(10.dp), scale = false)
+                .clip(RoundedCornerShape(10.dp))
                 .clickable(
                     interactionSource = removeInteraction,
                     indication = LocalIndication.current,

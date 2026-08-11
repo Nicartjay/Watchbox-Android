@@ -225,9 +225,9 @@ fun WbPosterCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(aspectRatio)
+                .adaptiveFocus(interaction, RoundedCornerShape(PosterMetrics.CornerRadius))
                 .clip(RoundedCornerShape(PosterMetrics.CornerRadius))
                 .background(tokens.colors.surface)
-                .adaptiveFocus(interaction, RoundedCornerShape(PosterMetrics.CornerRadius))
                 .combinedClickable(
                     interactionSource = interaction,
                     indication = LocalIndication.current,

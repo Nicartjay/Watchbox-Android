@@ -202,9 +202,9 @@ private fun WbSearchFieldButton(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
             .clip(RoundedCornerShape(12.dp))
             .background(tokens.colors.surfaceCard)
-            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,

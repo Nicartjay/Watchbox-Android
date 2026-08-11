@@ -306,11 +306,11 @@ fun WbChip(
     val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
+            .adaptiveFocus(interaction, RoundedCornerShape(20.dp), scale = false)
             .clip(RoundedCornerShape(20.dp))
             .background(if (selected) tokens.colors.accent else tokens.colors.surfaceCard)
             // Outline, not scale: chips sit in rows whose height is fixed by their
             // neighbours, so scaling would push adjacent chips around.
-            .adaptiveFocus(interaction, RoundedCornerShape(20.dp), scale = false)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,

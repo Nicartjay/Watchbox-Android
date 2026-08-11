@@ -2,7 +2,6 @@ package space.nicart.watchbox.core.ui
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -136,6 +135,12 @@ private fun Modifier.focusOutlineOnTop(
  *
  * For items inside a scrolling container whose height is fixed by its neighbours -
  * list rows, nav items - where scaling would push adjacent content around.
+ *
+ * Draws over the content for the same reason [tvFocusable] does: `Modifier.border` draws
+ * behind children, so anything with a filled background of its own - a player pill, a
+ * settings row - hid the outline completely and the item looked unfocusable.
+ *
+ * **Apply this before `clip`,** or the outline is clipped away at the item's edge.
  */
 fun Modifier.tvFocusOutline(
     interactionSource: MutableInteractionSource,
@@ -145,10 +150,11 @@ fun Modifier.tvFocusOutline(
 ): Modifier = composed {
     val isFocused by interactionSource.collectIsFocusedAsState()
 
-    border(
-        width = if (isFocused) borderWidth else 0.dp,
-        color = if (isFocused) borderColor else Color.Transparent,
+    focusOutlineOnTop(
+        visible = isFocused,
         shape = shape,
+        borderColor = borderColor,
+        borderWidth = borderWidth,
     )
 }
 

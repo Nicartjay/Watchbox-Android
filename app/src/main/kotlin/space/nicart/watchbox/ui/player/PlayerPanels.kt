@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -38,7 +39,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -53,6 +61,7 @@ import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.core.ui.wbType
 import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.domain.StreamOption
+import kotlinx.coroutines.delay
 
 /**
  * Player side panels + skip button.
@@ -78,6 +87,25 @@ fun PlayerPanels(
     onSetSubtitleColor: (Int) -> Unit,
 ) {
     val visible = panel != PlayerPanel.NONE
+    val panelFocus = remember { FocusRequester() }
+
+    // Pull focus into the panel when it opens, so the D-pad acts on it rather than the
+    // controls behind it, which stay laid out and focusable. Without this the panel could
+    // be opened but never used with a remote: it is not adjacent to the controls in any
+    // direction, so focus had no way to travel into it.
+    //
+    // Keyed on the panel, not just visibility, so switching straight from one panel to
+    // another re-homes focus instead of leaving it on the row that was just replaced.
+    // Retried because requestFocus reports success even when its target has no node yet,
+    // which it does while the panel is still animating in.
+    LaunchedEffect(panel) {
+        if (!visible) return@LaunchedEffect
+        repeat(PANEL_FOCUS_ATTEMPTS) {
+            withFrameNanos { }
+            runCatching { panelFocus.requestFocus() }
+            delay(PANEL_FOCUS_RETRY_MS)
+        }
+    }
 
     AnimatedVisibility(
         visible = visible,
@@ -98,7 +126,7 @@ fun PlayerPanels(
         exit = slideOutHorizontally(tween(200)) { it },
     ) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
-            PlayerPanelSurface {
+            PlayerPanelSurface(panelFocus = panelFocus) {
                 when (panel) {
                     PlayerPanel.QUALITY -> PanelList(
                         title = stringResource(R.string.player_quality),
@@ -159,8 +187,12 @@ fun PlayerPanels(
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
-private fun PlayerPanelSurface(content: @Composable () -> Unit) {
+private fun PlayerPanelSurface(
+    panelFocus: FocusRequester,
+    content: @Composable () -> Unit,
+) {
     val tokens = MaterialTheme.wb
     Box(
         modifier = Modifier
@@ -168,6 +200,12 @@ private fun PlayerPanelSurface(content: @Composable () -> Unit) {
             .fillMaxHeight()
             .clip(RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
             .background(tokens.colors.surfaceElevated)
+            // Keeps D-pad focus inside the panel. The controls behind it are still laid
+            // out and focusable, and a remote has no pointer to dismiss with, so focus
+            // escaping the panel would leave no way back into it. Back closes it.
+            .focusRequester(panelFocus)
+            .focusProperties { exit = { FocusRequester.Cancel } }
+            .focusGroup()
             .padding(24.dp),
     ) {
         content()
@@ -205,9 +243,9 @@ private fun PanelList(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
                         .clip(RoundedCornerShape(12.dp))
                         .background(if (selected) tokens.colors.accent else Color.Transparent)
-                        .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
                         .clickable(
                             interactionSource = interaction,
                             indication = LocalIndication.current,
@@ -270,11 +308,11 @@ private fun EpisodePanel(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
                         .clip(RoundedCornerShape(12.dp))
                         .background(
                             if (selected) tokens.colors.accent else tokens.colors.surfaceCard,
                         )
-                        .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
                         .clickable(
                             interactionSource = interaction,
                             indication = LocalIndication.current,
@@ -324,9 +362,9 @@ private fun PanelActionRow(label: String, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
             .clip(RoundedCornerShape(12.dp))
             .background(tokens.colors.surfaceCard)
-            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
@@ -436,9 +474,9 @@ private fun PanelChoiceRow(label: String, selected: Boolean, onClick: () -> Unit
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .adaptiveFocus(interaction, RoundedCornerShape(10.dp), scale = false)
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected) tokens.colors.accent else tokens.colors.surface)
-            .adaptiveFocus(interaction, RoundedCornerShape(10.dp), scale = false)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
@@ -463,3 +501,12 @@ private fun PanelChoiceRow(label: String, selected: Boolean, onClick: () -> Unit
         }
     }
 }
+
+/**
+ * Retry budget for handing focus to a newly opened panel.
+ *
+ * Matches the controls' own budget: the panel slides in over several frames and has no
+ * focusable node until it has composed, so a single attempt lands nowhere.
+ */
+private const val PANEL_FOCUS_ATTEMPTS = 12
+private const val PANEL_FOCUS_RETRY_MS = 60L

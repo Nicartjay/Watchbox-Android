@@ -491,9 +491,9 @@ private fun DetailCircleButton(
     Box(
         modifier = modifier
             .size(40.dp)
+            .adaptiveFocus(interaction, CircleShape, scale = false)
             .clip(CircleShape)
             .background(if (active) tokens.colors.textPrimary else Color.Transparent)
-            .adaptiveFocus(interaction, CircleShape, scale = false)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,

@@ -69,9 +69,9 @@ fun TvRailSourceButton(
     Row(
         modifier = Modifier
             .then(if (expanded) Modifier.fillMaxWidth() else Modifier.size(48.dp))
+            .tvFocusOutline(interaction, RoundedCornerShape(12.dp))
             .clip(RoundedCornerShape(12.dp))
             .background(tokens.colors.surface.copy(alpha = 0.85f))
-            .tvFocusOutline(interaction, RoundedCornerShape(12.dp))
             // clickable only, and after the outline: a separate focusable() placed
             // before it swallows the D-pad centre key, so the button would highlight
             // but never open.

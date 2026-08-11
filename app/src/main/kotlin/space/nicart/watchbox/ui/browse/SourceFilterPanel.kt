@@ -240,8 +240,6 @@ private fun PanelButton(
     val interaction = rememberFocusInteraction()
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (filled) tokens.colors.accent else tokens.colors.surface)
             .adaptiveFocus(
                 interaction,
                 RoundedCornerShape(12.dp),
@@ -252,6 +250,8 @@ private fun PanelButton(
                     Color.White
                 },
             )
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (filled) tokens.colors.accent else tokens.colors.surface)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
@@ -361,8 +361,8 @@ private fun ToggleRow(label: String, selected: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
             .adaptiveFocus(interaction, RoundedCornerShape(10.dp), scale = false)
+            .clip(RoundedCornerShape(10.dp))
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
@@ -415,8 +415,8 @@ private fun TriStateRow(label: String, state: Int, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
             .adaptiveFocus(triInteraction, RoundedCornerShape(10.dp), scale = false)
+            .clip(RoundedCornerShape(10.dp))
             .clickable(
                 interactionSource = triInteraction,
                 indication = LocalIndication.current,
@@ -481,9 +481,9 @@ private fun SelectRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .adaptiveFocus(optionInteraction, RoundedCornerShape(8.dp), scale = false)
                     .clip(RoundedCornerShape(8.dp))
                     .background(if (isSelected) tokens.colors.accent else tokens.colors.surface)
-                    .adaptiveFocus(optionInteraction, RoundedCornerShape(8.dp), scale = false)
                     .clickable(
                         interactionSource = optionInteraction,
                         indication = LocalIndication.current,
@@ -518,9 +518,9 @@ private fun SortRow(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .adaptiveFocus(sortInteraction, RoundedCornerShape(8.dp), scale = false)
                     .clip(RoundedCornerShape(8.dp))
                     .background(if (isSelected) tokens.colors.accent else tokens.colors.surface)
-                    .adaptiveFocus(sortInteraction, RoundedCornerShape(8.dp), scale = false)
                     .clickable(
                         interactionSource = sortInteraction,
                         indication = LocalIndication.current,

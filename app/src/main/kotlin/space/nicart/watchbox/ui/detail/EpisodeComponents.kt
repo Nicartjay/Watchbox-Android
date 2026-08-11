@@ -184,9 +184,9 @@ private fun SeasonSelector(
     Box(modifier = Modifier.padding(horizontal = horizontalPadding)) {
         Row(
             modifier = Modifier
+                .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
                 .clip(RoundedCornerShape(12.dp))
                 .background(tokens.colors.surfaceCard)
-                .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
                 .clickable(
                     interactionSource = interaction,
                     indication = LocalIndication.current,
@@ -287,9 +287,9 @@ private fun EpisodeThumbnailCard(
         modifier = Modifier
             .width(CARD_WIDTH)
             .height(CARD_HEIGHT)
+            .adaptiveFocus(interaction, RoundedCornerShape(CARD_RADIUS), scale = false)
             .clip(RoundedCornerShape(CARD_RADIUS))
             .background(tokens.colors.surfaceCard.copy(alpha = 0.45f))
-            .adaptiveFocus(interaction, RoundedCornerShape(CARD_RADIUS), scale = false)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
