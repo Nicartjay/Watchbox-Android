@@ -41,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -61,6 +62,14 @@ import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.ui.components.WbAsyncImage
 import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbProgressBar
+import space.nicart.watchbox.core.ui.LocalLayoutMetrics
+import kotlinx.coroutines.delay
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 
 /**
  * TV home: a full-screen backdrop with one row of posters along the bottom.
@@ -87,6 +96,7 @@ fun TvHomeScreen(
     val continueWatching by viewModel.continueWatching.collectAsStateWithLifecycle()
     val focused by artworkViewModel.focused.collectAsStateWithLifecycle()
     val artwork by artworkViewModel.artwork.collectAsStateWithLifecycle()
+    val lastOpened by artworkViewModel.lastOpened.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
 
     val gridState = rememberLazyGridState()
@@ -145,10 +155,17 @@ fun TvHomeScreen(
             topInset = topInset,
             onFocus = artworkViewModel::onFocus,
             onPrefetch = artworkViewModel::onRowVisible,
-            onOpenAnime = onOpenAnime,
+            // The row is recorded alongside the card so focus returns to the row it was
+            // opened from, not to the other row that happens to list the same title.
+            onOpenAnime = { row, card ->
+                artworkViewModel.onOpen(row, card)
+                onOpenAnime(card)
+            },
             onResume = onResume,
             onRemove = { viewModel.removeFromHistory(it.key) },
             onLoadMore = viewModel::loadMoreLatest,
+            openedKey = lastOpened,
+            onFocusRestored = artworkViewModel::onFocusRestored,
         )
 
         // Faded out with the backdrop it sits on: text over a black background that no
@@ -355,10 +372,12 @@ private fun TvHomeRows(
     topInset: Dp,
     onFocus: (AnimeCard) -> Unit,
     onPrefetch: (String, List<AnimeCard>) -> Unit,
-    onOpenAnime: (AnimeCard) -> Unit,
+    onOpenAnime: (String, AnimeCard) -> Unit,
     onResume: (WatchHistoryEntry) -> Unit,
     onRemove: (WatchHistoryEntry) -> Unit,
     onLoadMore: () -> Unit,
+    openedKey: String?,
+    onFocusRestored: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
 
@@ -426,7 +445,10 @@ private fun TvHomeRows(
                     items = state.popular,
                     artwork = artwork,
                     onFocus = onFocus,
-                    onClick = onOpenAnime,
+                    onClick = { onOpenAnime(ROW_POPULAR, it) },
+                    rowKey = ROW_POPULAR,
+                    openedKey = openedKey,
+                    onFocusRestored = onFocusRestored,
                 )
             }
         }
@@ -454,7 +476,9 @@ private fun TvHomeRows(
             items(items = state.latest, key = { it.key }) { card ->
                 TvGridPortraitCard(
                     card = artwork[card.key] ?: card,
-                    onClick = { onOpenAnime(card) },
+                    onClick = { onOpenAnime(ROW_LATEST, card) },
+                    isOpened = openedKey == "$ROW_LATEST::${card.key}",
+                    onFocusRestored = onFocusRestored,
                 )
             }
         }
@@ -482,10 +506,58 @@ private fun TvHomeRows(
  * Fills its column rather than taking a fixed width, so the grid controls the size and
  * the poster scale reaches it through the column count.
  */
+/**
+ * Reclaims focus for the card the user opened, once, after returning from Detail.
+ *
+ * Pushing Detail disposes the home subtree, so nothing here remembers what was focused;
+ * on the way back the shell re-homes focus to the navigation rail and the user is dumped
+ * at the top of the screen having lost their place. The opened card's key is kept in the
+ * artwork view model, which outlives the navigation, and whichever card matches it claims
+ * focus as it composes.
+ *
+ * [onRestored] clears the key so this happens exactly once. Without it the card would drag
+ * focus back every recomposition, including while the user was trying to move off it.
+ *
+ * The retry mirrors tvInitialFocus: the grid restores its scroll position over the frames
+ * after this runs, so the card may not have a focusable node yet, and requestFocus reports
+ * success even when it does not.
+ */
+@Composable
+private fun Modifier.restoreFocusIfOpened(
+    isOpened: Boolean,
+    onRestored: () -> Unit,
+): Modifier {
+    if (!LocalLayoutMetrics.current.isFocusDriven || !isOpened) return this
+
+    val requester = remember { FocusRequester() }
+    var hasFocus by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        repeat(RESTORE_FOCUS_ATTEMPTS) {
+            withFrameNanos { }
+            runCatching { requester.requestFocus() }
+            if (hasFocus) {
+                onRestored()
+                return@LaunchedEffect
+            }
+            delay(RESTORE_FOCUS_RETRY_MS)
+        }
+        // Given up on: the card scrolled out of the restored viewport, or the row it was
+        // in is gone. Cleared anyway so a stale key cannot steal focus later.
+        onRestored()
+    }
+
+    return this
+        .focusRequester(requester)
+        .onFocusChanged { hasFocus = it.isFocused }
+}
+
 @Composable
 private fun TvGridPortraitCard(
     card: AnimeCard,
     onClick: () -> Unit,
+    isOpened: Boolean = false,
+    onFocusRestored: () -> Unit = {},
 ) {
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
@@ -502,6 +574,7 @@ private fun TvGridPortraitCard(
                 .tvFocusable(interaction, RoundedCornerShape(10.dp))
                 .clip(RoundedCornerShape(10.dp))
                 .background(tokens.colors.surfaceCard)
+                .restoreFocusIfOpened(isOpened, onFocusRestored)
                 .clickable(
                     interactionSource = interaction,
                     indication = null,
@@ -536,6 +609,9 @@ fun TvPortraitRow(
     onClick: (AnimeCard) -> Unit,
     artwork: Map<String, AnimeCard> = emptyMap(),
     onFocus: (AnimeCard) -> Unit = {},
+    rowKey: String = "",
+    openedKey: String? = null,
+    onFocusRestored: () -> Unit = {},
 ) {
     val tokens = MaterialTheme.wb
 
@@ -548,17 +624,26 @@ fun TvPortraitRow(
         )
 
         LazyRow(
+            // Bled outward, then padded back in by the same amount. A LazyRow clips to
+            // its own bounds, and the grid's content padding puts those bounds exactly on
+            // the first card's edge - so the focus outline and the scaled-up edge of the
+            // first and last cards were cut off, while the cards between them were fine.
+            // Widening the row and insetting its content leaves the cards where they were
+            // and gives the outline somewhere to draw.
+            modifier = Modifier.focusBleed(),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
-            // Room for the focused card to scale without being clipped by the row.
-            // Vertical only: this row is a full-span item inside the grid, which already
-            // applies the horizontal inset.
-            contentPadding = PaddingValues(vertical = 8.dp),
+            contentPadding = PaddingValues(
+                horizontal = FOCUS_BLEED,
+                vertical = FOCUS_BLEED,
+            ),
         ) {
             items(items = items, key = { it.key }) { card ->
                 TvPortraitCard(
                     card = artwork[card.key] ?: card,
                     onFocus = { onFocus(card) },
                     onClick = { onClick(card) },
+                    isOpened = openedKey == "$rowKey::${card.key}",
+                    onFocusRestored = onFocusRestored,
                 )
             }
         }
@@ -570,6 +655,8 @@ private fun TvPortraitCard(
     card: AnimeCard,
     onFocus: () -> Unit,
     onClick: () -> Unit,
+    isOpened: Boolean = false,
+    onFocusRestored: () -> Unit = {},
 ) {
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
@@ -583,9 +670,11 @@ private fun TvPortraitCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(POSTER_ASPECT)
+                // Before clip: clipping first would cut the scaled edge and the outline.
+                .tvFocusable(interaction, RoundedCornerShape(10.dp))
                 .clip(RoundedCornerShape(10.dp))
                 .background(tokens.colors.surfaceCard)
-                .tvFocusable(interaction, RoundedCornerShape(10.dp))
+                .restoreFocusIfOpened(isOpened, onFocusRestored)
                 .clickable(
                     interactionSource = interaction,
                     // The ripple is invisible at TV distance; the border and scale from
@@ -659,9 +748,14 @@ private fun TvContinueRow(
         )
 
         LazyRow(
+            // See TvPortraitRow: the row clips to its own bounds, so it is bled outward
+            // and its content inset by the same amount to leave the focus outline room.
+            modifier = Modifier.focusBleed(),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
-            // Room for the focused card to scale without the row clipping it.
-            contentPadding = PaddingValues(vertical = 8.dp),
+            contentPadding = PaddingValues(
+                horizontal = FOCUS_BLEED,
+                vertical = FOCUS_BLEED,
+            ),
         ) {
             items(items = entries, key = { it.key }) { entry ->
                 TvContinueCard(
@@ -779,6 +873,15 @@ private fun WatchHistoryEntry.toCard(): AnimeCard = AnimeCard(
     sourceName = sourceName,
 )
 
+/**
+ * Slack a row leaves around its cards for the focus outline and scale.
+ *
+ * A focused card grows by 6% and is stroked on its edge, both of which reach outside the
+ * card's own bounds. The largest card here is 225dp tall, so 6% is under 7dp per side;
+ * 12dp covers that and the stroke with room to spare.
+ */
+private val FOCUS_BLEED = 12.dp
+
 private val CONTINUE_CARD_WIDTH = 220.dp
 
 /** 16:9, expressed the way [aspectRatio] wants it. */
@@ -810,8 +913,30 @@ private val MIN_ROWS_TOP_INSET = 120.dp
 /** Pieces of the Popular row's height, kept beside the row that uses them. */
 private val POPULAR_LABEL_HEIGHT = 28.dp
 private val POPULAR_LABEL_GAP = 10.dp
-private val POPULAR_ROW_VERTICAL_PADDING = 8.dp
+
+/** The row's vertical content padding, which is the focus slack it leaves. */
+private val POPULAR_ROW_VERTICAL_PADDING = FOCUS_BLEED
 private val POPULAR_CARD_LABEL_HEIGHT = 28.dp
+
+/**
+ * Widens a row past its parent's padding by [FOCUS_BLEED] on both sides.
+ *
+ * Paired with matching content padding on the row itself, which puts the cards back
+ * where they were. Only the row's clip bounds move, so the outline of the first and last
+ * card has somewhere to draw. Not a negative padding modifier: those shift the content
+ * too, which would pull the first card under the navigation rail.
+ */
+private fun Modifier.focusBleed(): Modifier = layout { measurable, constraints ->
+    val bleed = FOCUS_BLEED.roundToPx() * 2
+    val placeable = measurable.measure(
+        constraints.copy(maxWidth = constraints.maxWidth + bleed),
+    )
+    // Reports the original width so the row still occupies its allotted space in the
+    // grid, and offsets the wider content back over the padding it was given.
+    layout(constraints.maxWidth, placeable.height) {
+        placeable.place(-FOCUS_BLEED.roundToPx(), 0)
+    }
+}
 
 /** Gap between the Popular row and the bottom edge. */
 private val POPULAR_BOTTOM_GAP = 24.dp
@@ -829,3 +954,16 @@ private const val FADE_DISTANCE_PX = 420f
 
 /** Just short of opaque, so the transition never reads as a hard cut. */
 private const val MAX_FADE = 0.97f
+
+/** Retry budget for returning focus to the card that was opened. */
+private const val RESTORE_FOCUS_ATTEMPTS = 20
+private const val RESTORE_FOCUS_RETRY_MS = 40L
+
+/**
+ * Row identifiers for focus restoration.
+ *
+ * A card key alone is ambiguous - the same title appears in both rows - so the row is
+ * part of the identity of "the card that was opened".
+ */
+private const val ROW_POPULAR = "popular"
+private const val ROW_LATEST = "latest"

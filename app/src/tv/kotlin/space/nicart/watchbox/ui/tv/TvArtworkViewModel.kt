@@ -125,6 +125,40 @@ class TvArtworkViewModel(
         }
     }
 
+    /**
+     * Which card's detail page was opened last, as "<row>::<card key>", or null.
+     *
+     * Held here because this survives navigation while the home screen's composition does
+     * not: pushing Detail disposes the whole subtree, so anything the cards remember
+     * themselves is gone by the time the user comes back. The card that was opened is the
+     * one focus should return to, which is not the same as the focused card - focus can
+     * move after opening, and does when the shell re-homes it to the rail.
+     *
+     * Qualified by row because a card key is "<source>::<url>", which is the same title in
+     * Popular and in Latest. Keyed on the card alone, both rows matched and focus landed on
+     * whichever composed last rather than the row the user actually opened from.
+     */
+    private val _lastOpened = MutableStateFlow<String?>(null)
+    val lastOpened: StateFlow<String?> = _lastOpened.asStateFlow()
+
+    /** Records the card being opened, so focus can return to it. */
+    fun onOpen(rowKey: String, card: AnimeCard) {
+        _lastOpened.value = openedKey(rowKey, card)
+    }
+
+    /**
+     * Clears the pending restore once a card has claimed focus.
+     *
+     * Without this the row would pull focus back to that card every time it recomposed -
+     * including while the user was moving away from it.
+     */
+    fun onFocusRestored() {
+        _lastOpened.value = null
+    }
+
+    /** The [lastOpened] value identifying [card] within [rowKey]. */
+    fun openedKey(rowKey: String, card: AnimeCard): String = "$rowKey::${card.key}"
+
     companion object {
         /**
          * Long enough to skip cards passed over while holding a direction, short
