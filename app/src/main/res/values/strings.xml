@@ -87,6 +87,9 @@
     <string name="tv_row_popular">Popular</string>
     <string name="tv_row_latest">Latest</string>
     <string name="tv_hero_details">Details</string>
+    <string name="tv_hero_loading">Loading catalogue…</string>
+    <string name="tv_hero_empty_title">Nothing to show</string>
+    <string name="tv_hero_empty_body">This source returned no titles. It may be unreachable from your network.</string>
     <string name="tv_source_picker_title">Choose a source</string>
     <string name="search_all_sources">All sources</string>
     <string name="empty_search_title">Nothing found</string>

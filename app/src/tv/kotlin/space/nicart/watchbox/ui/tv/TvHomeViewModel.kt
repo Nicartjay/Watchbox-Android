@@ -288,6 +288,14 @@ class TvHomeViewModel(
     fun select(source: SourceEntry) {
         loadJob?.cancel()
 
+        // Back to the first spotlight. The index is a position in a shortlist that is about
+        // to be replaced wholesale, so carrying it over lands on an unrelated title at an
+        // arbitrary offset - and the dots claimed the user was mid-carousel on a catalogue
+        // they had only just opened. Clamping alone did not catch this: the old index is
+        // usually still in range for the new list, so it survived and simply meant something
+        // else.
+        _heroIndex.value = 0
+
         _state.value = _state.value.copy(
             selected = source,
             isLoading = true,

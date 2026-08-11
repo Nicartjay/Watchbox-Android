@@ -1,5 +1,6 @@
 package space.nicart.watchbox.ui.tv
 
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -58,6 +59,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.LocalPosterScale
 import space.nicart.watchbox.core.ui.adaptiveFocus
+import space.nicart.watchbox.core.ui.tvInitialFocus
 import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.tvFocusable
 import space.nicart.watchbox.core.ui.wb
@@ -74,6 +76,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 
 /**
@@ -157,6 +160,24 @@ fun TvHomeScreen(
     val heroCard = heroItems.getOrNull(heroIndex)?.let { artwork[it.key] ?: it }
 
     /**
+     * Bumped on every user action on the hero, to restart the rotation delay.
+     *
+     * A counter rather than a timestamp: it is a change signal for the rotation effect, and
+     * a plain increment is unambiguous. Reading a clock would also make the effect's restart
+     * depend on when it happened to recompose.
+     */
+    var heroInteraction by remember { mutableIntStateOf(0) }
+
+    /**
+     * Whether focus is anywhere on this screen.
+     *
+     * Goes false when the source picker or an expanded nav rail takes focus, which is the
+     * only signal this screen gets that something is covering it - the picker is a sibling
+     * owned by the shell, so its open state is not visible here.
+     */
+    var screenFocused by remember { mutableStateOf(false) }
+
+    /**
      * Holds the grid at the top while the spotlight has focus.
      *
      * The hero is a full-viewport grid item, so focusing a button inside it triggers the
@@ -180,13 +201,30 @@ fun TvHomeScreen(
     /**
      * Rotates the spotlight while the user is not interacting with it.
      *
-     * Paused while the hero holds focus: advancing under a focused Play button would change
-     * what that button does between the user deciding to press it and pressing it. Also
-     * paused once the rows have focus, where the block below follows focus instead and
-     * rotating it would fight the user's own navigation.
+     * Keeps rotating when the buttons merely hold focus. Focus lands on Details as soon as
+     * the screen opens, so pausing on focus alone meant the carousel almost never advanced:
+     * the common case is a user looking at the hero without having touched anything, which
+     * is exactly when it should be cycling.
+     *
+     * Four things stop it:
+     *
+     * - Recent interaction, via [heroInteraction]. Rotating under a button the user is
+     *   actively working would change what that button does between them deciding to press
+     *   it and pressing it, and they would start the wrong title. Any press or focus move on
+     *   the hero restarts this effect and so restarts the delay, which gives a full interval
+     *   of a stable target after every input.
+     * - A press being resolved. Advancing mid-flight would leave the spinner on a title the
+     *   user is no longer looking at and open the player on the previous one.
+     * - Focus in the rows, where the backdrop follows the focused card instead. Rotating
+     *   there would fight the user's own navigation.
+     * - Focus having left this screen entirely, via [screenFocused] - which is what the
+     *   source picker and the nav rail do when they open. The hero was still cycling behind
+     *   the open drawer, so the spotlight the user came back to was not the one they left,
+     *   and the artwork changed underneath a panel they were reading.
      */
-    LaunchedEffect(heroItems.size, heroFocused, focused != null) {
-        if (heroItems.size <= 1 || heroFocused || focused != null) return@LaunchedEffect
+    LaunchedEffect(heroItems.size, focused != null, playRequest, heroInteraction, screenFocused) {
+        if (heroItems.size <= 1 || focused != null || !screenFocused) return@LaunchedEffect
+        if (playRequest !is TvPlayRequest.Idle) return@LaunchedEffect
 
         while (true) {
             delay(HERO_ROTATE_MS)
@@ -229,7 +267,11 @@ fun TvHomeScreen(
     // though the logo had already been fetched.
     val backdrop = focused ?: heroCard
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .onFocusChanged { screenFocused = it.hasFocus },
+    ) {
         // The hero fills the viewport, so its height is measured here rather than derived
         // from the rows below it.
         val viewportHeight = maxHeight
@@ -283,6 +325,11 @@ fun TvHomeScreen(
                     heroCount = heroItems.size,
                     heroIndex = heroIndex,
                     onFocusChanged = { heroFocused = it },
+                    // Any input on the hero gives the user a fresh full interval before the
+                    // spotlight moves under them.
+                    onInteraction = { heroInteraction++ },
+                    isLoading = state.isLoading,
+                    onRetry = { state.selected?.let(viewModel::select) },
                 )
             },
         )
@@ -320,12 +367,26 @@ private fun TvBackdrop(card: AnimeCard?, fade: Float) {
     val tokens = MaterialTheme.wb
 
     Box(modifier = Modifier.fillMaxSize()) {
-        WbAsyncImage(
-            url = card?.fullBleedImage,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
-        )
+        // Crossfaded rather than swapped. A hard cut between two full-screen images is a
+        // jarring flash at this size, and the carousel advances on its own - an unannounced
+        // full-screen change the user did not ask for reads as a glitch.
+        //
+        // Keyed by the URL, not the card: two entries for the same title resolve to the same
+        // artwork, and re-running the fade for an identical image is a visible flicker for
+        // no change. Coil's own crossfade cannot do this - it fades a placeholder to a
+        // loaded image within one request, not one image to the next.
+        Crossfade(
+            targetState = card?.fullBleedImage,
+            animationSpec = tween(durationMillis = BACKDROP_FADE_MS),
+            label = "tv-hero-backdrop",
+        ) { url ->
+            WbAsyncImage(
+                url = url,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
 
         // Left gradient protects the title block; the bottom one carries the rows and the
         // buttons in the lower right.
@@ -392,21 +453,45 @@ private fun TvHeroPage(
     heroCount: Int,
     heroIndex: Int,
     onFocusChanged: (Boolean) -> Unit,
+    onInteraction: () -> Unit,
+    isLoading: Boolean,
+    onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (card == null) return
+    // With no title to show the page still has to occupy the slot and say why. Returning
+    // early here left the whole viewport blank on a source switch - no artwork, no text and
+    // nothing focusable, so the remote appeared dead until the feed happened to arrive.
+    if (card == null) {
+        TvHeroPlaceholder(
+            isLoading = isLoading,
+            onRetry = onRetry,
+            onFocusChanged = onFocusChanged,
+            modifier = modifier,
+        )
+        return
+    }
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .onFocusChanged { onFocusChanged(it.hasFocus) },
     ) {
-        TvHeroTitle(
-            card = card,
+        // Crossfaded on the same timing as the backdrop behind it. Left as a hard swap the
+        // logo and metadata cut instantly while the artwork was still dissolving, which drew
+        // the eye to the text rather than the image and made the transition look broken.
+        //
+        // Keyed by the card, not the URL: the title has to change even when two entries
+        // happen to share artwork.
+        Crossfade(
+            targetState = card,
+            animationSpec = tween(durationMillis = BACKDROP_FADE_MS),
+            label = "tv-hero-title",
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(top = HERO_TITLE_TOP, end = 48.dp),
-        )
+        ) { shown ->
+            TvHeroTitle(card = shown)
+        }
 
         TvHeroActions(
             isPlayResolving = isPlayResolving,
@@ -414,6 +499,7 @@ private fun TvHeroPage(
             onDetails = onDetails,
             isOpened = isOpened,
             onFocusRestored = onFocusRestored,
+            onInteraction = onInteraction,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(bottom = HERO_ACTIONS_BOTTOM),
@@ -434,6 +520,112 @@ private fun TvHeroPage(
                 .align(Alignment.BottomStart)
                 .padding(bottom = HERO_DOTS_BOTTOM),
         )
+    }
+}
+
+/**
+ * The spotlight slot when there is no title to put in it.
+ *
+ * Exists so the hero never becomes an empty screen. On a source switch both feeds are
+ * cleared before the new ones arrive, and with nothing rendered the viewport went black with
+ * no text and nothing focusable - indistinguishable from a crash, and the remote looked dead
+ * because focus had nowhere to land.
+ *
+ * Carries a focusable Retry. A source that is simply unreachable - blocked by a network, or
+ * offline - is the common case behind an empty catalogue, and without a control here the only
+ * way out was to switch source and back.
+
+ */
+@Composable
+private fun TvHeroPlaceholder(
+    isLoading: Boolean,
+    onRetry: () -> Unit,
+    onFocusChanged: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.wb
+    val retryInteraction = rememberFocusInteraction()
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .onFocusChanged { onFocusChanged(it.hasFocus) },
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .fillMaxWidth(0.55f),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            if (isLoading) {
+                // A spinner beside the label rather than centred on the screen: the text is
+                // what says which state this is, and a bare spinner in the middle of a black
+                // viewport reads as a hang.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    CircularProgressIndicator(
+                        color = tokens.colors.textPrimary,
+                        strokeWidth = 3.dp,
+                        modifier = Modifier.size(28.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.tv_hero_loading),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = tokens.colors.textMuted,
+                    )
+                }
+                return@Column
+            }
+
+            Text(
+                text = stringResource(R.string.tv_hero_empty_title),
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = tokens.colors.textPrimary,
+            )
+            Text(
+                // Deliberately not the exception's own message. It reaches here verbatim -
+                // "java.security.cert.CertPathValidatorException: Trust anchor for
+                // certification path not found" - which says nothing to a viewer holding a
+                // remote. The cause is logged; this line only has to say what to do next.
+                text = stringResource(R.string.tv_hero_empty_body),
+                style = MaterialTheme.typography.titleMedium,
+                color = tokens.colors.textMuted,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+
+            Row(
+                modifier = Modifier
+                    .height(HERO_BUTTON_HEIGHT)
+                    .adaptiveFocus(
+                        retryInteraction,
+                        RoundedCornerShape(HERO_BUTTON_HEIGHT / 2),
+                        borderColor = tokens.colors.background,
+                    )
+                    .clip(RoundedCornerShape(HERO_BUTTON_HEIGHT / 2))
+                    .background(tokens.colors.textPrimary)
+                    // Takes focus on arrival: it is the only control on the screen, so
+                    // anything else leaves the remote with nowhere to go.
+                    .tvInitialFocus()
+                    .clickable(
+                        interactionSource = retryInteraction,
+                        indication = null,
+                        onClick = onRetry,
+                    )
+                    .padding(horizontal = 26.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.action_retry),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.colors.background,
+                )
+            }
+        }
     }
 }
 
@@ -502,6 +694,7 @@ private fun TvHeroActions(
     onDetails: () -> Unit,
     isOpened: Boolean,
     onFocusRestored: () -> Unit,
+    onInteraction: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.wb
@@ -516,6 +709,10 @@ private fun TvHeroActions(
         Row(
             modifier = Modifier
                 .height(HERO_BUTTON_HEIGHT)
+                // Per button, not on the parent: the parent's `hasFocus` stays true when the
+                // D-pad moves between these two, so a single parent listener would miss the
+                // very input that says the user is aiming at something.
+                .onFocusChanged { if (it.isFocused) onInteraction() }
                 .adaptiveFocus(
                     detailsInteraction,
                     RoundedCornerShape(HERO_BUTTON_HEIGHT / 2),
@@ -550,6 +747,7 @@ private fun TvHeroActions(
         Row(
             modifier = Modifier
                 .height(HERO_BUTTON_HEIGHT)
+                .onFocusChanged { if (it.isFocused) onInteraction() }
                 // Before clip, per tvFocusable's contract. Dark, not the usual white:
                 // this button is white, and the default theme's accent is #F5F5F5, so a
                 // white or accent stroke was invisible against it - the button scaled up
@@ -1270,3 +1468,11 @@ private val HERO_DOT_ACTIVE = 11.dp
  */
 private val HERO_DOTS_BOTTOM = HERO_ACTIONS_BOTTOM + (HERO_BUTTON_HEIGHT / 2) -
     (HERO_DOT_ACTIVE / 2)
+
+/**
+ * How long the spotlight takes to dissolve from one title to the next.
+ *
+ * Long enough to read as a deliberate transition rather than a flicker, and short enough
+ * that it is finished well before the next rotation.
+ */
+private const val BACKDROP_FADE_MS = 450
