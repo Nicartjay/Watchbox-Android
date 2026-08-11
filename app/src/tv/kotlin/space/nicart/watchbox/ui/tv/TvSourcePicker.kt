@@ -9,6 +9,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,14 +25,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.tvFocusOutline
@@ -104,6 +112,7 @@ fun TvRailSourceButton(
  * Shown even for a single source, unlike the old home-screen picker: from the rail it is
  * a permanent control, and a button that opens nothing reads as broken.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun TvSourcePickerPanel(
     sources: List<SourceEntry>,
@@ -113,12 +122,25 @@ fun TvSourcePickerPanel(
     onDismiss: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
+    val panelFocus = remember { FocusRequester() }
 
     // Closes the drawer instead of leaving the app. The picker opens from the rail on
     // the root Tabs destination, where nothing is left to pop, so an unhandled Back
     // here exits WatchBox entirely. See the note in SourceFilterPanel for why this
     // cannot be a key handler.
     BackHandler(enabled = visible, onBack = onDismiss)
+
+    // Pull focus in when the drawer opens, so the first D-pad press acts on a source
+    // rather than the rail behind it, which is still laid out and focusable.
+    LaunchedEffect(visible) {
+        if (!visible) return@LaunchedEffect
+        // Retried because requestFocus reports success even when no focusable node is
+        // attached yet: the drawer is still animating in on the first frames.
+        repeat(20) {
+            runCatching { panelFocus.requestFocus() }
+            delay(25)
+        }
+    }
 
     AnimatedVisibility(
         visible = visible,
@@ -145,6 +167,15 @@ fun TvSourcePickerPanel(
                     .fillMaxSize()
                     .clip(RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
                     .background(tokens.colors.surfaceElevated)
+                    // Keeps D-pad focus inside the drawer: the rail behind is still laid
+                    // out and focusable, so without this Up and Down drive the hidden
+                    // tabs and the picker can never be reached with a remote.
+                    .focusRequester(panelFocus)
+                    // Cancels focus exit outright: a remote has no pointer to dismiss
+                    // with, so focus escaping the drawer leaves no way back into it.
+                    // Back closes it instead.
+                    .focusProperties { exit = { FocusRequester.Cancel } }
+                    .focusGroup()
                     .padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -179,9 +210,10 @@ private fun TvSourceRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // Before clip: clipping first would cut the scaled edge and the outline.
+            .tvFocusable(interaction, RoundedCornerShape(10.dp), focusedScale = 1.02f)
             .clip(RoundedCornerShape(10.dp))
             .background(if (isSelected) tokens.colors.accent else tokens.colors.surface)
-            .tvFocusable(interaction, RoundedCornerShape(10.dp), focusedScale = 1.02f)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
