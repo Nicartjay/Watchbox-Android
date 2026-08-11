@@ -20,8 +20,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -54,6 +59,15 @@ fun rememberFocusInteraction(): MutableInteractionSource = remember { MutableInt
  * Scale is applied rather than a shadow because a scale reads at distance and costs
  * no extra draw layer. It is kept small: anything above about 1.1 makes neighbouring
  * items visibly shift, which looks like the layout is jumping.
+ *
+ * The outline is drawn over the content rather than with `Modifier.border`, which draws
+ * *behind* children and so was hidden by any card whose image fills its bounds - which
+ * is every poster row on the TV home.
+ *
+ * **Apply this before `clip`.** Both the scale and the outline are clipped by any
+ * `clip` earlier in the chain: the scaled-up card is cut back to its original bounds,
+ * which reads as the image zooming rather than the card growing, and the outline lands
+ * outside the clip and disappears entirely.
  */
 fun Modifier.tvFocusable(
     interactionSource: MutableInteractionSource,
@@ -75,11 +89,46 @@ fun Modifier.tvFocusable(
 
     this
         .scale(scale)
-        .border(
-            width = if (isFocused && enabled) borderWidth else 0.dp,
-            color = if (isFocused && enabled) borderColor else Color.Transparent,
+        .focusOutlineOnTop(
+            visible = isFocused && enabled,
             shape = shape,
+            borderColor = borderColor,
+            borderWidth = borderWidth,
         )
+}
+
+/**
+ * Strokes [shape] over the content once [visible].
+ *
+ * Inset by half the stroke width because a stroke straddles the path it follows, so
+ * without it the outer half falls outside the composable's bounds and is clipped to a
+ * thin, uneven line.
+ */
+private fun Modifier.focusOutlineOnTop(
+    visible: Boolean,
+    shape: RoundedCornerShape,
+    borderColor: Color,
+    borderWidth: Dp,
+): Modifier = drawWithContent {
+    drawContent()
+
+    if (!visible) return@drawWithContent
+
+    val stroke = borderWidth.toPx()
+    val inset = stroke / 2f
+    val outline = shape.createOutline(
+        size = Size(size.width - stroke, size.height - stroke),
+        layoutDirection = layoutDirection,
+        density = this,
+    )
+
+    translate(left = inset, top = inset) {
+        drawOutline(
+            outline = outline,
+            color = borderColor,
+            style = Stroke(width = stroke),
+        )
+    }
 }
 
 /**

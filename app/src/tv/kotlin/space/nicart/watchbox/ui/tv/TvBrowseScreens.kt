@@ -128,9 +128,10 @@ private fun TvExtensionsEntry(updateCount: Int, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // Before clip: clipping first would cut the scaled edge and the outline.
+            .tvFocusable(interaction, RoundedCornerShape(16.dp), focusedScale = 1.02f)
             .clip(RoundedCornerShape(16.dp))
             .background(tokens.colors.surfaceCard)
-            .tvFocusable(interaction, RoundedCornerShape(16.dp), focusedScale = 1.02f)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 24.dp, vertical = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -174,9 +175,10 @@ private fun TvSourceTile(source: SourceEntry, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            // Before clip: clipping first would cut the scaled edge and the outline.
+            .tvFocusable(interaction, RoundedCornerShape(16.dp))
             .clip(RoundedCornerShape(16.dp))
             .background(tokens.colors.surfaceCard)
-            .tvFocusable(interaction, RoundedCornerShape(16.dp))
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(vertical = 20.dp, horizontal = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -420,9 +422,10 @@ private fun TvGridPoster(card: AnimeCard, onClick: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(POSTER_ASPECT)
+                // Before clip: clipping first would cut the scaled edge and the outline.
+                .tvFocusable(interaction, RoundedCornerShape(12.dp))
                 .clip(RoundedCornerShape(12.dp))
                 .background(tokens.colors.surfaceCard)
-                .tvFocusable(interaction, RoundedCornerShape(12.dp))
                 .focusable(interactionSource = interaction)
                 .clickable(interactionSource = interaction, indication = null, onClick = onClick),
         ) {
