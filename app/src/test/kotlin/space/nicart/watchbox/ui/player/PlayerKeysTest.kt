@@ -26,24 +26,38 @@ class PlayerKeysTest {
 
     // ------------------------------------------------- controls visible
 
+    /**
+     * The D-pad must not be consumed while the controls are on screen.
+     *
+     * Compose only moves focus on a key event nothing claimed. These keys used to seek
+     * and toggle playback here, which consumed every press, so focus never left the
+     * player surface: no button highlighted and none could be activated by remote.
+     * Falling through is what makes the visible controls reachable.
+     */
     @Test
-    fun `left and right seek when the controls are showing`() {
-        assertEquals(PlayerKeyAction.SEEK_BACK, map(KEY_DPAD_LEFT))
-        assertEquals(PlayerKeyAction.SEEK_FORWARD, map(KEY_DPAD_RIGHT))
+    fun `directions are left to focus navigation when the controls are showing`() {
+        assertEquals(PlayerKeyAction.NONE, map(KEY_DPAD_LEFT))
+        assertEquals(PlayerKeyAction.NONE, map(KEY_DPAD_RIGHT))
+        assertEquals(PlayerKeyAction.NONE, map(KEY_DPAD_UP))
+        assertEquals(PlayerKeyAction.NONE, map(KEY_DPAD_DOWN))
     }
 
+    /**
+     * Centre activates whatever is focused, which is the focused button's own job.
+     * Toggling playback here would steal OK from every other control.
+     */
     @Test
-    fun `centre toggles playback`() {
-        assertEquals(PlayerKeyAction.TOGGLE_PLAY, map(KEY_DPAD_CENTER))
-        assertEquals(PlayerKeyAction.TOGGLE_PLAY, map(KEY_ENTER))
+    fun `centre is left to the focused control when the controls are showing`() {
+        assertEquals(PlayerKeyAction.NONE, map(KEY_DPAD_CENTER))
+        assertEquals(PlayerKeyAction.NONE, map(KEY_ENTER))
     }
 
     // ------------------------------------------------- controls hidden
 
     @Test
-    fun `a direction reveals the controls before it seeks`() {
+    fun `a direction reveals the controls first`() {
         // A blind seek gives no feedback about where you landed, so the first press
-        // surfaces the scrubber and the next one acts.
+        // surfaces the controls; from there the D-pad drives them.
         assertEquals(
             PlayerKeyAction.SHOW_CONTROLS,
             map(KEY_DPAD_RIGHT, controlsVisible = false),
@@ -95,6 +109,24 @@ class PlayerKeysTest {
     fun `track keys change episode`() {
         assertEquals(PlayerKeyAction.NEXT_EPISODE, map(KEY_MEDIA_NEXT))
         assertEquals(PlayerKeyAction.PREVIOUS_EPISODE, map(KEY_MEDIA_PREVIOUS))
+    }
+
+    /**
+     * With the D-pad handed to focus navigation, these are the only way left to seek
+     * from a remote, so they must work in both control states.
+     */
+    @Test
+    fun `transport seek keys work whether the controls show or not`() {
+        assertEquals(PlayerKeyAction.SEEK_BACK, map(KEY_MEDIA_REWIND))
+        assertEquals(PlayerKeyAction.SEEK_FORWARD, map(KEY_MEDIA_FAST_FORWARD))
+        assertEquals(
+            PlayerKeyAction.SEEK_BACK,
+            map(KEY_MEDIA_REWIND, controlsVisible = false),
+        )
+        assertEquals(
+            PlayerKeyAction.SEEK_FORWARD,
+            map(KEY_MEDIA_FAST_FORWARD, controlsVisible = false),
+        )
     }
 
     // --------------------------------------------------- panel precedence

@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +44,8 @@ import space.nicart.watchbox.R
 import space.nicart.watchbox.cast.CastDevice
 import space.nicart.watchbox.cast.CastProtocol
 import space.nicart.watchbox.cast.CastState
+import space.nicart.watchbox.core.ui.adaptiveFocus
+import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.core.ui.wbType
 
@@ -65,13 +68,19 @@ fun CastButton(
     onClick: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
 
     Box(
         modifier = Modifier
             .size(size + 16.dp)
             .clip(androidx.compose.foundation.shape.CircleShape)
             .background(Color.Black.copy(alpha = 0.35f))
-            .clickable(onClick = onClick),
+            .adaptiveFocus(interaction, androidx.compose.foundation.shape.CircleShape)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(

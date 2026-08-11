@@ -3,6 +3,7 @@ package space.nicart.watchbox.ui.player
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,6 +45,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -55,6 +59,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import space.nicart.watchbox.R
+import space.nicart.watchbox.core.ui.adaptiveFocus
+import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.wbType
 import space.nicart.watchbox.domain.formatTimecode
 
@@ -139,6 +145,16 @@ fun PlayerControlsOverlay(
     onOpenPanel: (PlayerPanel) -> Unit,
     isCasting: Boolean = false,
     onOpenCast: () -> Unit = {},
+    /**
+     * Claims focus for the play button when the controls appear.
+     *
+     * Supplied by the caller because the controls are wrapped in an
+     * `AnimatedVisibility` that composes them afresh on every reveal, so the request
+     * has to be re-made from outside rather than once on first composition.
+     */
+    playFocusRequester: FocusRequester? = null,
+    /** Reports the play button's focus, so the caller's retry can stop guessing. */
+    onPlayFocusChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -190,6 +206,8 @@ fun PlayerControlsOverlay(
                 metrics = metrics,
                 onPlayPause = onPlayPause,
                 onSeekBy = onSeekBy,
+                playFocusRequester = playFocusRequester,
+                onPlayFocusChanged = onPlayFocusChanged,
                 modifier = Modifier
                     .align(Alignment.Center)
                     .padding(bottom = metrics.centerLift),
@@ -303,12 +321,18 @@ private fun HeaderIconButton(
     enabled: Boolean = true,
 ) {
     if (!enabled) return
+    val interaction = rememberFocusInteraction()
     Box(
         modifier = Modifier
             .size(size + 16.dp)
             .clip(CircleShape)
             .background(Color.Black.copy(alpha = 0.35f))
-            .clickable(onClick = onClick),
+            .adaptiveFocus(interaction, CircleShape)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -327,6 +351,8 @@ private fun CenterControls(
     metrics: PlayerMetrics,
     onPlayPause: () -> Unit,
     onSeekBy: (Long) -> Unit,
+    playFocusRequester: FocusRequester? = null,
+    onPlayFocusChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -334,10 +360,18 @@ private fun CenterControls(
         horizontalArrangement = Arrangement.spacedBy(metrics.centerGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        val backInteraction = rememberFocusInteraction()
+        val playInteraction = rememberFocusInteraction()
+        val forwardInteraction = rememberFocusInteraction()
+
         Box(
             modifier = Modifier
                 .clip(CircleShape)
-                .clickable { onSeekBy(-10_000L) }
+                .adaptiveFocus(backInteraction, CircleShape)
+                .clickable(
+                    interactionSource = backInteraction,
+                    indication = LocalIndication.current,
+                ) { onSeekBy(-10_000L) }
                 .padding(10.dp),
         ) {
             Icon(
@@ -351,7 +385,17 @@ private fun CenterControls(
         Box(
             modifier = Modifier
                 .clip(CircleShape)
-                .clickable(enabled = !isBuffering, onClick = onPlayPause)
+                .then(
+                    playFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier,
+                )
+                .onFocusChanged { onPlayFocusChanged(it.isFocused) }
+                .adaptiveFocus(playInteraction, CircleShape)
+                .clickable(
+                    interactionSource = playInteraction,
+                    indication = LocalIndication.current,
+                    enabled = !isBuffering,
+                    onClick = onPlayPause,
+                )
                 .padding(13.dp),
             contentAlignment = Alignment.Center,
         ) {
@@ -374,7 +418,11 @@ private fun CenterControls(
         Box(
             modifier = Modifier
                 .clip(CircleShape)
-                .clickable { onSeekBy(10_000L) }
+                .adaptiveFocus(forwardInteraction, CircleShape)
+                .clickable(
+                    interactionSource = forwardInteraction,
+                    indication = LocalIndication.current,
+                ) { onSeekBy(10_000L) }
                 .padding(10.dp),
         ) {
             Icon(
@@ -510,10 +558,18 @@ private fun ActionPill(
     onClick: () -> Unit,
 ) {
     val type = MaterialTheme.wbType
+    val interaction = rememberFocusInteraction()
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(22.dp))
-            .clickable(onClick = onClick)
+            // No scale: these sit in a fixed-width pill row, so growing one shifts
+            // its neighbours sideways.
+            .adaptiveFocus(interaction, RoundedCornerShape(22.dp), scale = false)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
             .padding(horizontal = 12.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,

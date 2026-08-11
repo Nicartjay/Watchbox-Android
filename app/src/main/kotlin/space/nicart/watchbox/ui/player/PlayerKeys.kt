@@ -31,11 +31,14 @@ enum class PlayerKeyAction {
  *
  * The rules encode three behaviours a remote needs and a touchscreen does not:
  *
- *  - **Directional keys reveal the controls before they act.** On a TV the controls
- *    are usually hidden, and a blind seek gives no feedback about where you landed.
- *    The first press surfaces the scrubber; the next one seeks.
+ *  - **Directional keys reveal the controls, then hand them over.** On a TV the
+ *    controls are usually hidden, and a blind seek gives no feedback about where you
+ *    landed. The first press surfaces the scrubber; afterwards the D-pad moves focus
+ *    between the on-screen buttons instead of being consumed here, so what the remote
+ *    is about to activate is always visible.
  *  - **Dedicated media keys always act.** A remote's play/pause button should work
- *    whether the controls are showing or not, since its meaning is unambiguous.
+ *    whether the controls are showing or not, since its meaning is unambiguous. These
+ *    are also what makes seeking without the controls still possible.
  *  - **Locked ignores everything except unlock.** Matching the touch behaviour, so a
  *    child pressing buttons cannot change what is playing.
  */
@@ -85,12 +88,18 @@ fun mapPlayerKey(
         }
     }
 
-    return when (keyCode) {
-        KEY_DPAD_LEFT -> PlayerKeyAction.SEEK_BACK
-        KEY_DPAD_RIGHT -> PlayerKeyAction.SEEK_FORWARD
-        KEY_DPAD_CENTER, KEY_ENTER -> PlayerKeyAction.TOGGLE_PLAY
-        else -> PlayerKeyAction.NONE
-    }
+    // Controls are on screen, so the D-pad belongs to them.
+    //
+    // These used to seek and toggle playback here as well, which consumed every
+    // directional press. Compose moves focus off unconsumed key events, so nothing
+    // could ever move: focus stayed on the surface, no button highlighted, and the
+    // buttons were unreachable by remote even though they were focusable.
+    //
+    // Returning NONE lets the press fall through to focus navigation, which is what
+    // makes the visible buttons usable. The blind-seek case the old mapping served is
+    // still covered by the branch above - while the controls are hidden - and by the
+    // dedicated transport keys, which remain unconditional.
+    return PlayerKeyAction.NONE
 }
 
 /**

@@ -22,6 +22,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
@@ -46,6 +48,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.cast.CastManager
+import space.nicart.watchbox.core.ui.LocalLayoutMetrics
 import space.nicart.watchbox.cast.CastPermissions
 import space.nicart.watchbox.cast.ExternalCast
 import space.nicart.watchbox.cast.CastMedia
@@ -74,6 +77,10 @@ import space.nicart.watchbox.ui.components.WbLoading
  * seeks +/-10s, horizontal drag scrubs with duration-scaled sensitivity.
  */
 private const val CONTROLS_AUTO_HIDE_MS = 3_000L
+
+/** Frames to spend chasing focus into the freshly composed controls. */
+private const val CONTROL_FOCUS_ATTEMPTS = 12
+private const val CONTROL_FOCUS_RETRY_MS = 60L
 private const val TAG = "WbPlayer"
 
 @UnstableApi
@@ -175,7 +182,63 @@ fun PlayerScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     var openPanel by remember { mutableStateOf(PlayerPanel.NONE) }
 
+    /**
+     * Bumped on every remote press, to re-arm the auto-hide timer.
+     *
+     * Counts presses this screen did *not* consume too: moving focus between the
+     * controls is exactly the case where they must stay up, and those events are
+     * deliberately left for the focus system.
+     */
+    var lastInteraction by remember { mutableIntStateOf(0) }
+
     val playerFocusRequester = remember { FocusRequester() }
+    val playFocusRequester = remember { FocusRequester() }
+    val metricsForFocus = LocalLayoutMetrics.current
+
+    /** Observed focus, not assumed - see the retry below. */
+    var playHasFocus by remember { mutableStateOf(false) }
+
+    /**
+     * Whether the on-screen controls are the D-pad's target.
+     *
+     * Also gates the video surface's focusability. The surface fills the window, so
+     * every control sits geometrically *inside* it: while it is focusable, a
+     * directional search from a control finds no candidate beyond the surface's own
+     * bounds and focus never leaves the centre row. Dropping it out of the focus
+     * order while the controls are up is what lets Up and Down reach the header and
+     * the pill row.
+     */
+    val controlsOwnFocus = controlsVisible &&
+        !state.locked &&
+        !state.isResolving &&
+        openPanel == PlayerPanel.NONE
+
+    // Focus follows the controls, on TV only.
+    //
+    // The controls are the D-pad's target while they are up, so something in them has
+    // to hold focus or the first press is spent moving off the video surface. When they
+    // hide, focus returns to the surface, which is what keeps the reveal-first key
+    // handling working.
+    //
+    // The retry mirrors tvInitialFocus, including why it watches playHasFocus rather
+    // than the call: AnimatedVisibility composes the controls over the frames after
+    // this runs, and requestFocus reports success even when its target has no node yet,
+    // so trusting the return value exits the loop having moved nothing.
+    LaunchedEffect(controlsVisible, openPanel, state.locked, state.isResolving) {
+        if (!metricsForFocus.isFocusDriven) return@LaunchedEffect
+
+        if (!controlsOwnFocus) {
+            runCatching { playerFocusRequester.requestFocus() }
+            return@LaunchedEffect
+        }
+
+        repeat(CONTROL_FOCUS_ATTEMPTS) {
+            withFrameNanos { }
+            runCatching { playFocusRequester.requestFocus() }
+            if (playHasFocus) return@LaunchedEffect
+            delay(CONTROL_FOCUS_RETRY_MS)
+        }
+    }
 
     /**
      * Applies a mapped remote action.
@@ -236,6 +299,9 @@ fun PlayerScreen(
     }
 
     // Claimed once the surface exists, so the first remote press does something.
+    // On TV the effect above takes over from here, moving focus onto the controls
+    // whenever they are up; this still matters for the phone and for the window
+    // between composition and that effect's first frame.
     LaunchedEffect(Unit) {
         runCatching { playerFocusRequester.requestFocus() }
     }
@@ -358,18 +424,30 @@ fun PlayerScreen(
     }
 
     // --- auto-hide controls
-    LaunchedEffect(controlsVisible, isPlaying, openPanel) {
+    //
+    // Keyed on lastInteraction as well so navigating the controls keeps them up.
+    // Directional keys are no longer consumed here - they move focus instead - so
+    // without this the controls would hide three seconds in while the user was still
+    // moving between buttons, taking the focused button with them.
+    LaunchedEffect(controlsVisible, isPlaying, openPanel, lastInteraction) {
         if (controlsVisible && isPlaying && openPanel == PlayerPanel.NONE) {
             delay(CONTROLS_AUTO_HIDE_MS)
             controlsVisible = false
         }
     }
 
+    // Back peels one layer at a time, and only leaves once nothing of ours is showing.
+    //
+    // The controls case has to live here, not in mapPlayerKey: the manifest opts into
+    // enableOnBackInvokedCallback, so on API 33+ the system consumes KEYCODE_BACK before
+    // the view tree ever sees it and the DISMISS branch of the key mapping never runs
+    // for a real remote's Back. Without this, dismissing the controls exited playback.
     BackHandler {
         when {
             castPanelOpen -> castPanelOpen = false
             openPanel != PlayerPanel.NONE -> openPanel = PlayerPanel.NONE
             state.locked -> viewModel.setLocked(false)
+            controlsVisible -> controlsVisible = false
             else -> {
                 viewModel.flushProgress(exoPlayer.currentPosition, exoPlayer.duration)
                 onBack()
@@ -380,7 +458,34 @@ fun PlayerScreen(
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Color.Black)
+            // Remote input, handled at the root.
+            //
+            // Compose routes a key event up the focused node's ancestors, so this has
+            // to sit above both the video surface and the controls: once focus moves
+            // onto a control button the surface is no longer an ancestor, and a handler
+            // attached there would stop seeing media keys entirely.
+            //
+            // onKeyEvent rather than onPreviewKeyEvent so the focused control gets
+            // first refusal - OK must activate the focused button, not be swallowed
+            // here - and unhandled directions still reach the focus system.
+            .onKeyEvent { event ->
+                // KeyUp only. A held direction repeats KeyDown, which would seek
+                // dozens of times from one press.
+                if (event.type != KeyEventType.KeyUp) return@onKeyEvent false
+
+                // Counted before the mapping, so a press that moves focus rather
+                // than acting still keeps the controls on screen.
+                lastInteraction++
+
+                val action = mapPlayerKey(
+                    keyCode = event.nativeKeyEvent.keyCode,
+                    controlsVisible = controlsVisible,
+                    panelOpen = openPanel != PlayerPanel.NONE,
+                    isLocked = state.locked,
+                )
+                handlePlayerKey(action)
+            },
     ) {
         val metrics = remember(maxWidth) { playerMetricsFor(maxWidth) }
 
@@ -412,22 +517,14 @@ fun PlayerScreen(
                 .fillMaxSize()
                 // Remote input. Focusable so key events arrive at all, and focus is
                 // claimed on entry: without it the first press is spent establishing
-                // focus and the remote appears dead.
+                // focus and the remote appears dead. Key handling itself lives on the
+                // root, which stays an ancestor once focus moves onto a control.
+                //
+                // Focusable only while the controls are down: it covers the whole
+                // window, so leaving it in the focus order traps directional movement
+                // inside its bounds - see controlsOwnFocus.
                 .focusRequester(playerFocusRequester)
-                .focusable()
-                .onKeyEvent { event ->
-                    // KeyUp only. A held direction repeats KeyDown, which would seek
-                    // dozens of times from one press.
-                    if (event.type != KeyEventType.KeyUp) return@onKeyEvent false
-
-                    val action = mapPlayerKey(
-                        keyCode = event.nativeKeyEvent.keyCode,
-                        controlsVisible = controlsVisible,
-                        panelOpen = openPanel != PlayerPanel.NONE,
-                        isLocked = state.locked,
-                    )
-                    handlePlayerKey(action)
-                }
+                .focusable(enabled = !controlsOwnFocus)
                 .pointerInput(state.locked) {
                     detectTapGestures(
                         onTap = {
@@ -605,6 +702,8 @@ fun PlayerScreen(
                 onCycleAspect = viewModel::cycleAspect,
                 onOpenPanel = { openPanel = it },
                 isCasting = castState.isCasting,
+                playFocusRequester = playFocusRequester,
+                onPlayFocusChanged = { playHasFocus = it },
                 onOpenCast = {
                     castPanelOpen = true
                     // Requested here rather than at startup: it is only needed for

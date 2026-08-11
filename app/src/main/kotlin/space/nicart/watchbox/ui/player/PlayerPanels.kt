@@ -9,6 +9,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +47,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import space.nicart.watchbox.R
+import space.nicart.watchbox.core.ui.adaptiveFocus
+import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.core.ui.wbType
 import space.nicart.watchbox.domain.EpisodeEntry
@@ -198,12 +201,17 @@ private fun PanelList(
         ) {
             itemsIndexed(entries) { index, label ->
                 val selected = index == selectedIndex
+                val interaction = rememberFocusInteraction()
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
                         .background(if (selected) tokens.colors.accent else Color.Transparent)
-                        .clickable { onSelect(index) }
+                        .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
+                        .clickable(
+                            interactionSource = interaction,
+                            indication = LocalIndication.current,
+                        ) { onSelect(index) }
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -258,6 +266,7 @@ private fun EpisodePanel(
         ) {
             items(items = state.episodes, key = { it.url }) { episode ->
                 val selected = episode.url == state.episode?.url
+                val interaction = rememberFocusInteraction()
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -265,7 +274,11 @@ private fun EpisodePanel(
                         .background(
                             if (selected) tokens.colors.accent else tokens.colors.surfaceCard,
                         )
-                        .clickable { onSelect(episode) }
+                        .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
+                        .clickable(
+                            interactionSource = interaction,
+                            indication = LocalIndication.current,
+                        ) { onSelect(episode) }
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
@@ -306,13 +319,19 @@ private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
 @Composable
 private fun PanelActionRow(label: String, onClick: () -> Unit) {
     val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(tokens.colors.surfaceCard)
-            .clickable(onClick = onClick)
+            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -412,13 +431,19 @@ private fun PanelSectionLabel(text: String) {
 @Composable
 private fun PanelChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
     val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected) tokens.colors.accent else tokens.colors.surface)
-            .clickable(onClick = onClick)
+            .adaptiveFocus(interaction, RoundedCornerShape(10.dp), scale = false)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
