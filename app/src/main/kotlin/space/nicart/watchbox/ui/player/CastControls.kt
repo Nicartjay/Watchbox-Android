@@ -30,16 +30,24 @@ import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import space.nicart.watchbox.R
 import space.nicart.watchbox.cast.CastDevice
 import space.nicart.watchbox.cast.CastProtocol
@@ -102,9 +110,25 @@ fun CastPanel(
     onSendToExternal: () -> Unit,
     onStopCasting: () -> Unit,
     onRescan: () -> Unit,
+    onSetForceProxy: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
+    val panelFocus = remember { FocusRequester() }
+
+    // Pulls focus into the panel when it opens, so a remote can reach the controls inside it.
+    // The panel is not adjacent to the player controls in any direction, so without this focus
+    // had no route in: the relay switch below was drawn but could never be pressed with a
+    // D-pad. Retried because requestFocus reports success even before its target has a node,
+    // which is the case while the drawer is still sliding in. Same pattern as PlayerPanels.
+    LaunchedEffect(visible) {
+        if (!visible) return@LaunchedEffect
+        repeat(CAST_FOCUS_ATTEMPTS) {
+            withFrameNanos { }
+            runCatching { panelFocus.requestFocus() }
+            delay(CAST_FOCUS_RETRY_MS)
+        }
+    }
 
     AnimatedVisibility(
         visible = visible,
@@ -207,6 +231,19 @@ fun CastPanel(
                     )
                     return@Column
                 }
+
+                // Above the device list, because it changes what happens when a device is
+                // picked. It takes effect on the next cast rather than the current one - the
+                // receiver has already been handed a URL, and swapping it underneath would
+                // mean tearing down and reloading the session.
+                CastToggleRow(
+                    label = stringResource(R.string.cast_route_through_phone),
+                    description = stringResource(R.string.cast_route_through_phone_hint),
+                    checked = state.forceProxy,
+                    onCheckedChange = onSetForceProxy,
+                    focusRequester = panelFocus,
+                )
+                Spacer(Modifier.height(12.dp))
 
                 // Only offered when the SDK already holds a session; the system
                 // picker is what establishes it.
@@ -332,6 +369,69 @@ private fun CastRow(
 }
 
 /**
+ * A switch with an explanation under it.
+ *
+ * The second line is not decoration: "route through this phone" describes a mechanism, not a
+ * reason, and a user hitting a link their receiver is refusing has no way to guess that this
+ * is the setting that fixes it.
+ */
+@Composable
+private fun CastToggleRow(
+    label: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    focusRequester: FocusRequester,
+) {
+    val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .focusRequester(focusRequester)
+            // Before clip, as adaptiveFocus draws its outline outside the row's bounds.
+            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
+            .clip(RoundedCornerShape(12.dp))
+            .background(tokens.colors.surfaceCard)
+            // The whole row toggles, not just the switch: on a television the switch itself is
+            // far too small a target for a D-pad, and this is the only focusable element here.
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+            ) { onCheckedChange(!checked) }
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleMedium,
+                color = tokens.colors.textPrimary,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.colors.textMuted,
+            )
+        }
+
+        Switch(
+            checked = checked,
+            // Null so the row's own click is the single source of the toggle. A live callback
+            // here would fire a second time when the row was pressed.
+            onCheckedChange = null,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = tokens.colors.onAccent,
+                checkedTrackColor = tokens.colors.accent,
+            ),
+        )
+    }
+}
+
+/**
  * True when a Chromecast session exists but our media has not been sent to it.
  *
  * Derived rather than stored so it cannot drift out of step with the SDK, which
@@ -349,3 +449,6 @@ private fun GroupLabel(text: String) {
         modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
     )
 }
+
+private const val CAST_FOCUS_ATTEMPTS = 12
+private const val CAST_FOCUS_RETRY_MS = 60L

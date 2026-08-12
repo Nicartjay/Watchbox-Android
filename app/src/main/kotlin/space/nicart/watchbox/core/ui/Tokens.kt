@@ -297,9 +297,14 @@ data class WbThemeTokens(
  * `textSecondary` and `textMuted` are hardcoded upstream rather than
  * palette-derived, so they stay constant across accents.
  */
-fun wbThemeTokens(theme: AppTheme, amoled: Boolean): WbThemeTokens {
+fun wbThemeTokens(theme: AppTheme): WbThemeTokens {
     val p = paletteFor(theme)
-    val background = if (amoled) Color.Black else Color(p.background)
+
+    // Always true black. It was a setting, defaulting off, which meant the palette's near-black
+    // was what almost everyone saw - and on an OLED panel a near-black backdrop behind a
+    // full-bleed poster shows as a visible grey box around it. Black is the right default on the
+    // televisions and phones this runs on, so it is no longer a choice to find and turn on.
+    val background = Color.Black
     val surface = Color(p.backgroundElevated)
     val card = Color(p.backgroundCard)
     val accent = Color(p.secondary)
@@ -355,5 +360,5 @@ fun wbThemeTokens(theme: AppTheme, amoled: Boolean): WbThemeTokens {
 }
 
 internal val LocalWbTokens = compositionLocalOf {
-    wbThemeTokens(AppTheme.Default, amoled = false)
+    wbThemeTokens(AppTheme.Default)
 }

@@ -3,6 +3,7 @@ package space.nicart.watchbox.ui.player
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,6 +52,11 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -464,6 +470,9 @@ private fun ProgressControls(
     onOpenPanel: (PlayerPanel) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val isFocusDriven = LocalLayoutMetrics.current.isFocusDriven
+    val sliderInteraction = rememberFocusInteraction()
+
     Column(modifier = modifier) {
         Slider(
             value = if (durationMs > 0) {
@@ -474,6 +483,7 @@ private fun ProgressControls(
             onValueChange = { fraction ->
                 if (durationMs > 0) onSeek((fraction * durationMs).toLong())
             },
+            interactionSource = sliderInteraction,
             colors = SliderDefaults.colors(
                 thumbColor = Color.White,
                 activeTrackColor = Color.White,
@@ -482,6 +492,52 @@ private fun ProgressControls(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(metrics.sliderTouchHeight)
+                // Focusable and D-pad driven on a remote. Material3's Slider is built for a
+                // pointer: it is not focusable and ignores key events, so on a television the
+                // timeline could be seen but never moved - the only way to reach a position was
+                // the ±10s buttons, ten seconds at a time.
+                //
+                // Left/Right are consumed here rather than mapped in mapPlayerKey because they
+                // must only seek while this row holds focus; consumed globally they would stop
+                // focus ever moving between the buttons, which is the bug the key mapping was
+                // rewritten to fix.
+                .then(
+                    if (isFocusDriven) {
+                        Modifier
+                            .adaptiveFocus(sliderInteraction, RoundedCornerShape(4.dp), scale = false)
+                            .focusable(interactionSource = sliderInteraction)
+                            .onPreviewKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown) {
+                                    return@onPreviewKeyEvent false
+                                }
+                                when (event.key) {
+                                    Key.DirectionLeft -> {
+                                        onSeek(
+                                            (positionMs - SLIDER_SEEK_STEP_MS)
+                                                .coerceAtLeast(0L),
+                                        )
+                                        true
+                                    }
+
+                                    Key.DirectionRight -> {
+                                        // Clamped to the duration so a press at the end does
+                                        // not ask for a position past it.
+                                        onSeek(
+                                            (positionMs + SLIDER_SEEK_STEP_MS)
+                                                .coerceAtMost(durationMs.coerceAtLeast(0L)),
+                                        )
+                                        true
+                                    }
+
+                                    // Everything else falls through, so Up and Down still move
+                                    // focus out of the scrubber to the surrounding controls.
+                                    else -> false
+                                }
+                            }
+                    } else {
+                        Modifier
+                    },
+                )
                 .graphicsLayer { scaleY = metrics.sliderScaleY },
         )
 
@@ -666,3 +722,12 @@ fun LockedPlayerOverlay(
 
 private fun Float.formatSpeed(): String =
     if (this == this.toInt().toFloat()) this.toInt().toString() else "%.2f".format(this).trimEnd('0').trimEnd('.')
+
+/**
+ * How far one directional press moves the scrubber.
+ *
+ * Coarser than the ±10s buttons on purpose: those exist for a precise nudge, whereas holding a
+ * direction on the timeline is how someone crosses a long film, and ten seconds a press makes
+ * that unusable.
+ */
+internal const val SLIDER_SEEK_STEP_MS = 15_000L

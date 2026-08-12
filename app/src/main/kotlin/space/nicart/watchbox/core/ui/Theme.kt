@@ -106,14 +106,13 @@ private fun wbTypography(): Typography {
 @Composable
 fun WatchBoxTheme(
     appTheme: AppTheme = AppTheme.Default,
-    amoled: Boolean = false,
     /** Multiplier for text and spacing; see [LocalPosterScale] for posters. */
     uiScale: Float = 1f,
     /** Multiplier for poster and card sizes only. */
     posterScale: Float = 1f,
     content: @Composable () -> Unit,
 ) {
-    val tokens = remember(appTheme, amoled) { wbThemeTokens(appTheme, amoled) }
+    val tokens = remember(appTheme) { wbThemeTokens(appTheme) }
     val palette = remember(appTheme) { paletteFor(appTheme) }
     val typography = remember { wbTypography() }
     val typeScale = remember { wbTypeScale() }

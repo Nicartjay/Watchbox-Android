@@ -4,8 +4,10 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +19,20 @@ import space.nicart.watchbox.cast.dlna.DlnaRenderer
 import space.nicart.watchbox.cast.dlna.DlnaTransport
 import space.nicart.watchbox.cast.dlna.SsdpDiscovery
 
+/**
+ * Whether a stream has to be relayed through this device rather than handed over directly.
+ *
+ * Headers mean it must be: a receiver cannot send a `Referer`, so a CDN checking one refuses
+ * it. [forceProxy] covers what headers do not - a link bound to a cookie or to the address
+ * that fetched it looks header-free here but still fails on the receiver.
+ *
+ * Extracted from [CastManager.prepare] so the decision can be tested without a Cast session:
+ * getting it wrong either breaks playback on the television or needlessly routes an entire
+ * film through the phone, and neither is obvious from the outside.
+ */
+internal fun needsProxy(headers: Map<String, String>, forceProxy: Boolean): Boolean =
+    forceProxy || headers.isNotEmpty()
+
 /** What the player needs to know about the cast session. */
 data class CastState(
     val isCasting: Boolean = false,
@@ -25,6 +41,28 @@ data class CastState(
     val devices: List<CastDevice> = emptyList(),
     val isDiscovering: Boolean = false,
     val errorMessage: String? = null,
+    /**
+     * Where the receiver actually is, polled while a session is live.
+     *
+     * The player shows these instead of its own clock while casting. The local player is
+     * paused then, so its position is frozen and would leave the seek bar motionless while
+     * the television plays.
+     */
+    val positionMs: Long = 0L,
+    val durationMs: Long = 0L,
+    val isRemotePlaying: Boolean = false,
+    /**
+     * Route the stream through this device even when it needs no headers.
+     *
+     * Some links are only valid for the client that obtained them - tied to a cookie, a
+     * session or the address that fetched them - and a receiver asking for them itself is
+     * refused. Relaying makes every request come from the phone, which is the client the
+     * link was issued to.
+     *
+     * Off by default: it puts the phone in the data path for the whole stream, which costs
+     * battery and uplink, and is unnecessary for links that work as they are.
+     */
+    val forceProxy: Boolean = false,
 ) {
     val hasDevices: Boolean get() = devices.isNotEmpty()
 }
@@ -75,6 +113,9 @@ class CastManager(
     /** Whichever transport currently holds a session. */
     private var active: CastTransport? = null
 
+    /** Mirrors the receiver's clock into [state]; runs only while a session is live. */
+    private var progressJob: Job? = null
+
     val isCasting: Boolean get() = active?.isConnected == true
 
     fun initialise() {
@@ -95,10 +136,18 @@ class CastManager(
                     isCasting = true,
                     deviceName = chromecast.deviceName,
                 )
+                startProgressPolling()
             } else if (active === chromecast) {
                 active = null
                 proxy.stop()
-                _state.value = _state.value.copy(isCasting = false, deviceName = null)
+                stopProgressPolling()
+                _state.value = _state.value.copy(
+                    isCasting = false,
+                    deviceName = null,
+                    positionMs = 0L,
+                    durationMs = 0L,
+                    isRemotePlaying = false,
+                )
             }
         }
     }
@@ -107,6 +156,7 @@ class CastManager(
         routes.stop()
         chromecast.release()
         proxy.stop()
+        stopProgressPolling()
         scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
     }
 
@@ -217,7 +267,12 @@ class CastManager(
                     isCasting = true,
                     deviceName = chromecast.deviceName ?: device.name,
                     errorMessage = null,
+                    // Seeded from where the phone was, so the seek bar is right immediately
+                    // rather than sitting at zero until the first poll answers.
+                    positionMs = positionMs,
+                    isRemotePlaying = true,
                 )
+                startProgressPolling()
             } else {
                 proxy.stop()
                 active = null
@@ -259,7 +314,10 @@ class CastManager(
                     isCasting = true,
                     deviceName = renderer.friendlyName,
                     errorMessage = null,
+                    positionMs = positionMs,
+                    isRemotePlaying = true,
                 )
+                startProgressPolling()
             } else {
                 proxy.stop()
                 active = null
@@ -285,7 +343,13 @@ class CastManager(
                 return@launch
             }
 
-            if (!chromecast.load(prepared, positionMs)) {
+            if (chromecast.load(prepared, positionMs)) {
+                _state.value = _state.value.copy(
+                    positionMs = positionMs,
+                    isRemotePlaying = true,
+                )
+                startProgressPolling()
+            } else {
                 fail("The Chromecast refused the stream.")
             }
         }
@@ -298,9 +362,15 @@ class CastManager(
      * phone stays out of the data path. Otherwise the proxy is started on the
      * interface that can reach [deviceHost] and the URL is swapped for a local
      * one.
+     *
+     * [CastState.forceProxy] overrides the "no headers" shortcut. Headers are a good signal
+     * that a link is restricted but not a complete one: a link can also be bound to a cookie
+     * or to the address that obtained it, neither of which shows up as a request header here.
+     * Those fail on the receiver with nothing to distinguish them from an unreachable device,
+     * so the user is given the switch rather than left guessing.
      */
     private fun prepare(media: CastMedia, deviceHost: String?): CastMedia? {
-        if (media.headers.isEmpty()) return media
+        if (!needsProxy(media.headers, _state.value.forceProxy)) return media
 
         // Falls back to the general outbound address when the receiver's own
         // address is unknown. A Chromecast route does not always expose one, and
@@ -317,7 +387,14 @@ class CastManager(
                 media.mimeType.contains("mpegurl", true),
         ) ?: return null
 
-        Log.i(TAG, "casting via local proxy (source requires headers)")
+        Log.i(
+            TAG,
+            if (media.headers.isEmpty()) {
+                "casting via local proxy (user forced)"
+            } else {
+                "casting via local proxy (source requires headers)"
+            },
+        )
         return media.copy(url = proxied)
     }
 
@@ -325,7 +402,17 @@ class CastManager(
         active?.stop()
         active = null
         proxy.stop()
-        _state.value = _state.value.copy(isCasting = false, deviceName = null)
+        stopProgressPolling()
+
+        // The mirrored clock is cleared with the session. Left behind, the player would show
+        // the receiver's last position as though it were local.
+        _state.value = _state.value.copy(
+            isCasting = false,
+            deviceName = null,
+            positionMs = 0L,
+            durationMs = 0L,
+            isRemotePlaying = false,
+        )
     }
 
     fun dismissError() {
@@ -333,26 +420,91 @@ class CastManager(
     }
 
     private fun fail(message: String) {
+        stopProgressPolling()
         _state.value = _state.value.copy(
             isCasting = false,
             deviceName = null,
             errorMessage = message,
+            positionMs = 0L,
+            durationMs = 0L,
+            isRemotePlaying = false,
         )
     }
 
     // ------------------------------------------------------- remote controls
 
-    fun play() = active?.play()
+    /**
+     * Optimistic local echo, so a press moves the UI immediately.
+     *
+     * The poll below is the authority, but it runs at [PROGRESS_POLL_MS] and a DLNA round
+     * trip can take longer still. Without this the button appears not to have worked, and a
+     * second press then fights the first.
+     */
+    fun play() {
+        _state.value = _state.value.copy(isRemotePlaying = true)
+        scope.launch { active?.play() }
+    }
 
-    fun pause() = active?.pause()
+    fun pause() {
+        _state.value = _state.value.copy(isRemotePlaying = false)
+        scope.launch { active?.pause() }
+    }
 
-    fun seekTo(positionMs: Long) = active?.seekTo(positionMs)
+    fun seekTo(positionMs: Long) {
+        _state.value = _state.value.copy(positionMs = positionMs)
+        scope.launch { active?.seekTo(positionMs) }
+    }
 
     fun positionMs(): Long = active?.positionMs() ?: 0L
 
     fun durationMs(): Long = active?.durationMs() ?: 0L
 
     fun isRemotePlaying(): Boolean = active?.isPlaying() ?: false
+
+    /** Whether the next cast should be relayed through this device regardless of headers. */
+    fun setForceProxy(enabled: Boolean) {
+        _state.value = _state.value.copy(forceProxy = enabled)
+    }
+
+    /**
+     * Mirrors the receiver's clock into [state] while a session is live.
+     *
+     * Polled rather than pushed: DLNA has no notification channel at all, and using
+     * Chromecast's progress listener as well would mean two code paths reporting the same
+     * thing. One loop on IO covers both protocols.
+     *
+     * IO is required, not incidental - DlnaTransport bridges its suspending SOAP calls with
+     * runBlocking, so polling from the main thread would block it on a network round trip.
+     *
+     * A zero position is not written. Both transports return 0 when they cannot answer, and
+     * treating that as real made the seek bar jump to the start whenever a poll was missed.
+     */
+    private fun startProgressPolling() {
+        progressJob?.cancel()
+        progressJob = scope.launch {
+            while (isActive) {
+                val transport = active
+                if (transport == null || !transport.isConnected) break
+
+                val position = runCatching { transport.positionMs() }.getOrDefault(0L)
+                val duration = runCatching { transport.durationMs() }.getOrDefault(0L)
+                val playing = runCatching { transport.isPlaying() }.getOrDefault(false)
+
+                _state.value = _state.value.copy(
+                    positionMs = if (position > 0) position else _state.value.positionMs,
+                    durationMs = if (duration > 0) duration else _state.value.durationMs,
+                    isRemotePlaying = playing,
+                )
+
+                delay(PROGRESS_POLL_MS)
+            }
+        }
+    }
+
+    private fun stopProgressPolling() {
+        progressJob?.cancel()
+        progressJob = null
+    }
 
     private companion object {
         const val TAG = "CastManager"
@@ -363,5 +515,14 @@ class CastManager(
         /** How long to wait for a selected route to become a live session. */
         const val SESSION_TIMEOUT_MS = 15_000L
         const val SESSION_POLL_MS = 250L
+
+        /**
+         * How often the receiver's clock is read.
+         *
+         * One second rather than the local player's 500ms: each poll is a network round trip
+         * (three, for DLNA), and a seek bar that updates once a second is indistinguishable
+         * from one that updates twice.
+         */
+        const val PROGRESS_POLL_MS = 1_000L
     }
 }

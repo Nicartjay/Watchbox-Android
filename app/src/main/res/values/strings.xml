@@ -150,9 +150,15 @@
     <!-- Settings -->
     <string name="settings_appearance">Appearance</string>
     <string name="settings_theme">Accent theme</string>
-    <string name="settings_amoled">AMOLED black background</string>
     <string name="settings_playback">Playback</string>
     <string name="settings_auto_next">Auto-play next episode</string>
+    <string name="settings_battery">Background activity</string>
+    <string name="settings_battery_unrestricted">Unrestricted — playback and casting will not be interrupted</string>
+    <string name="settings_battery_restricted">Restricted — Android may interrupt casting or long playback</string>
+    <string name="settings_battery_allow">Allow background activity</string>
+    <string name="settings_battery_manage">Change in system settings</string>
+    <string name="settings_battery_unavailable">This device has no battery settings screen.</string>
+
     <string name="settings_data">Data</string>
     <string name="settings_clear_history">Clear watch history</string>
     <string name="settings_clear_list">Clear My List</string>
@@ -168,6 +174,8 @@
     <string name="cast_button">Cast</string>
     <string name="cast_group_chromecast">Chromecast</string>
     <string name="cast_group_dlna">Smart TV (DLNA)</string>
+    <string name="cast_route_through_phone">Route through this phone</string>
+    <string name="cast_route_through_phone_hint">Try this if the video will not start on the receiver. The phone fetches the stream and passes it on, which works for links tied to this device. Uses more battery and Wi-Fi.</string>
     <string name="cast_group_other">Other apps</string>
     <string name="cast_send_external">Send to Web Video Caster</string>
     <string name="cast_none_found_hint">Make sure your TV is on the same Wi-Fi network, then rescan.</string>

@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Nuvio-derived palette. Keep in sync with core/ui/ThemeColors.kt -->
-    <color name="wb_background">#FF0D0D0D</color>
+    <!--
+      The window and splash background, behind everything Compose draws.
+
+      True black, matching wbThemeTokens: the palette's #0D0D0D showed through wherever a
+      screen drew no background of its own - the detail page most visibly - which read as a
+      grey page next to the black ones around it.
+    -->
+    <color name="wb_background">#FF000000</color>
 </resources>

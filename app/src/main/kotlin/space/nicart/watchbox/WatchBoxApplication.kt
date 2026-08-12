@@ -8,6 +8,9 @@ import coil.memory.MemoryCache
 import coil.request.CachePolicy
 import eu.kanade.tachiyomi.network.NetworkHelper
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import space.nicart.watchbox.core.network.HttpClientFactory
 import space.nicart.watchbox.cast.CastManager
 import space.nicart.watchbox.data.local.WatchBoxStore
@@ -56,6 +59,14 @@ class WatchBoxApplication : Application(), ImageLoaderFactory {
         // Initialised eagerly so a Chromecast session started from the system UI
         // is already visible the first time the player opens.
         container.castManager.initialise()
+
+        // The relay preference is restored off the main thread: the store reads from disk, and
+        // the value is only needed once a cast is actually started.
+        CoroutineScope(Dispatchers.IO).launch {
+            container.castManager.setForceProxy(
+                container.store.currentSettings().castForceProxy,
+            )
+        }
     }
 
     /**

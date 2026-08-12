@@ -33,13 +33,12 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             // Theme choice lives in DataStore, so the whole tree recomposes when
-            // the user picks a different accent or toggles AMOLED.
+            // the user picks a different accent.
             val settings by container.store.settings
                 .collectAsStateWithLifecycle(initialValue = AppSettings())
 
             WatchBoxTheme(
                 appTheme = settings.theme,
-                amoled = settings.amoled,
                 uiScale = settings.uiScale,
                 posterScale = settings.posterScale,
             ) {

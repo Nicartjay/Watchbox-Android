@@ -1,5 +1,6 @@
 package space.nicart.watchbox.ui.detail
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,6 +22,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
@@ -35,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.core.ui.LocalLayoutMetrics
+import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.extension.model.Extension
 import space.nicart.watchbox.core.ui.tvInitialFocus
 import space.nicart.watchbox.R
@@ -75,7 +78,14 @@ fun DetailScreen(
     /** True while focus is on the action buttons, the first focusable item. */
     var atTopFocusable by remember { mutableStateOf(false) }
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+    // Draws its own background rather than relying on the window's. The screen had none, so
+    // whatever was behind it showed through - and a navigation transition or a translucent
+    // parent puts something other than the window there.
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.wb.colors.background),
+    ) {
         val metrics = LocalLayoutMetrics.current
         val isFocusDriven = metrics.isFocusDriven
         val isTablet = maxWidth >= 720.dp

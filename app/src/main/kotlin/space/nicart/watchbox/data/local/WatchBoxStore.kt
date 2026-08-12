@@ -46,7 +46,6 @@ class WatchBoxStore(context: Context) {
             AppSettings(
                 repos = readRepos(prefs),
                 theme = AppTheme.fromName(prefs[Keys.THEME]),
-                amoled = prefs[Keys.AMOLED] ?: false,
                 autoPlayNext = prefs[Keys.AUTO_NEXT] ?: true,
                 preferredQuality = prefs[Keys.QUALITY] ?: "1080",
                 nsfwSourcesEnabled = prefs[Keys.NSFW] ?: false,
@@ -73,6 +72,7 @@ class WatchBoxStore(context: Context) {
                     SubtitleProvider.OPEN_SUBTITLES_LEGACY,
                 ),
                 subtitleApiKey = prefs[Keys.SUB_API_KEY].orEmpty(),
+                castForceProxy = prefs[Keys.CAST_FORCE_PROXY] ?: false,
                 lastServerId = prefs[Keys.LAST_SERVER],
                 tvSourceId = prefs[Keys.TV_SOURCE],
             )
@@ -144,7 +144,6 @@ class WatchBoxStore(context: Context) {
     }
 
     suspend fun setTheme(theme: AppTheme) = store.edit { it[Keys.THEME] = theme.name }
-    suspend fun setAmoled(enabled: Boolean) = store.edit { it[Keys.AMOLED] = enabled }
     suspend fun setAutoPlayNext(enabled: Boolean) = store.edit { it[Keys.AUTO_NEXT] = enabled }
     suspend fun setPreferredQuality(quality: String) = store.edit { it[Keys.QUALITY] = quality }
     suspend fun setNsfwSourcesEnabled(enabled: Boolean) = store.edit { it[Keys.NSFW] = enabled }
@@ -202,6 +201,9 @@ class WatchBoxStore(context: Context) {
         it[Keys.SUB_PROVIDER] = provider.name
     }
     suspend fun setSubtitleApiKey(key: String) = store.edit { it[Keys.SUB_API_KEY] = key.trim() }
+    suspend fun setCastForceProxy(enabled: Boolean) = store.edit {
+        it[Keys.CAST_FORCE_PROXY] = enabled
+    }
     suspend fun setLastServerId(id: String?) = store.edit { prefs ->
         if (id == null) prefs.remove(Keys.LAST_SERVER) else prefs[Keys.LAST_SERVER] = id
     }
@@ -312,11 +314,15 @@ class WatchBoxStore(context: Context) {
     }
 
     private object Keys {
+        /**
+         * Removed: "amoled". The black background is now unconditional, so the stored flag is
+         * no longer read. Any value left on disk from an older build is simply ignored.
+         */
+
         /** Legacy single repository. Read for migration only; never written. */
         val REPO_URL = stringPreferencesKey("extension_repo_url")
         val REPOS = stringPreferencesKey("extension_repos")
         val THEME = stringPreferencesKey("theme")
-        val AMOLED = booleanPreferencesKey("amoled")
         val AUTO_NEXT = booleanPreferencesKey("auto_play_next")
         val QUALITY = stringPreferencesKey("preferred_quality")
         val NSFW = booleanPreferencesKey("nsfw_sources")
@@ -334,6 +340,7 @@ class WatchBoxStore(context: Context) {
         val SUB_LANG = stringPreferencesKey("subtitle_language")
         val SUB_PROVIDER = stringPreferencesKey("subtitle_provider")
         val SUB_API_KEY = stringPreferencesKey("subtitle_api_key")
+        val CAST_FORCE_PROXY = booleanPreferencesKey("cast_force_proxy")
         val LAST_SERVER = stringPreferencesKey("last_server_id")
         val TV_SOURCE = longPreferencesKey("tv_selected_source")
         val HISTORY = stringPreferencesKey("watch_history")
@@ -345,7 +352,6 @@ class WatchBoxStore(context: Context) {
 data class AppSettings(
     val repos: List<ExtensionRepo> = ExtensionRepo.DEFAULT,
     val theme: AppTheme = AppTheme.Default,
-    val amoled: Boolean = false,
     val autoPlayNext: Boolean = true,
     val preferredQuality: String = "1080",
     val nsfwSourcesEnabled: Boolean = false,
@@ -369,6 +375,14 @@ data class AppSettings(
     val subtitleProvider: SubtitleProvider = SubtitleProvider.OPEN_SUBTITLES_LEGACY,
     /** Key for the OpenSubtitles REST API. Empty means that provider is unavailable. */
     val subtitleApiKey: String = "",
+    /**
+     * Relay cast streams through this device even when they need no headers.
+     *
+     * Persisted because it is a property of the user's setup - a receiver that cannot fetch
+     * these links will not start being able to - so having to rediscover the switch on every
+     * cast would be tedious.
+     */
+    val castForceProxy: Boolean = false,
     val lastServerId: String? = null,
     /**
      * The source chosen in the TV navigation rail.

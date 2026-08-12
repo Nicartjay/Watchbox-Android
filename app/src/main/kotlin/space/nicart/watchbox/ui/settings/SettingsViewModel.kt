@@ -120,10 +120,6 @@ class SettingsViewModel(
         viewModelScope.launch { store.setTheme(theme) }
     }
 
-    fun setAmoled(enabled: Boolean) {
-        viewModelScope.launch { store.setAmoled(enabled) }
-    }
-
     fun setAutoPlayNext(enabled: Boolean) {
         viewModelScope.launch { store.setAutoPlayNext(enabled) }
     }

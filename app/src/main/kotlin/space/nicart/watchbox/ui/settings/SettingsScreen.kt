@@ -46,11 +46,19 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import space.nicart.watchbox.core.system.BatteryAction
+import space.nicart.watchbox.core.system.BatteryOptimization
+import space.nicart.watchbox.core.system.batteryActionFor
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -183,14 +191,6 @@ fun SettingsScreen(
                 }
             }
 
-            item(key = "amoled") {
-                SettingsToggleRow(
-                    title = stringResource(R.string.settings_amoled),
-                    checked = settings.amoled,
-                    onCheckedChange = viewModel::setAmoled,
-                )
-            }
-
             // ---------------------------------------------------- playback
             item(key = "playback-label") {
                 SettingsGroupLabel(stringResource(R.string.settings_playback))
@@ -210,6 +210,10 @@ fun SettingsScreen(
                     checked = settings.nsfwSourcesEnabled,
                     onCheckedChange = viewModel::setNsfwEnabled,
                 )
+            }
+
+            item(key = "battery") {
+                BatteryOptimizationRow()
             }
 
             // ----------------------------------------------- repositories
@@ -590,6 +594,95 @@ private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
             .padding(16.dp),
         content = content,
     )
+}
+
+/**
+ * Background-activity status, plus a way to change it.
+ *
+ * Not a stored setting: the value belongs to the system, so it is read live and re-read every
+ * time this screen resumes. A cached copy would show whatever was true when the screen was
+ * first opened, which is exactly the moment before the user goes off to change it.
+ *
+ * The row's action depends on the current state, because Android's own APIs are asymmetric:
+ * there is a dialog for asking, but no dialog for giving it back, so revoking has to go through
+ * the system settings list.
+ */
+@Composable
+private fun BatteryOptimizationRow() {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val tokens = MaterialTheme.wb
+
+    var exempt by remember { mutableStateOf(BatteryOptimization.isExempt(context)) }
+    var unavailable by remember { mutableStateOf(false) }
+
+    // Re-read on resume, which is when the user comes back from the system screen or the
+    // permission dialog. Neither reports its result to us: the dialog's result code says
+    // whether it was shown, not what was chosen.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                exempt = BatteryOptimization.isExempt(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    Column {
+        SettingsCard {
+            Text(
+                text = stringResource(R.string.settings_battery),
+                style = MaterialTheme.typography.titleMedium,
+                color = tokens.colors.textPrimary,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                // States the consequence, not the setting's name. "Restricted" alone does not
+                // tell anyone why they should care, and this row exists for people whose cast
+                // stalled without an error.
+                text = if (exempt) {
+                    stringResource(R.string.settings_battery_unrestricted)
+                } else {
+                    stringResource(R.string.settings_battery_restricted)
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.colors.textMuted,
+            )
+
+            if (unavailable) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.settings_battery_unavailable),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tokens.colors.textMuted,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        SettingsActionRow(
+            title = if (exempt) {
+                stringResource(R.string.settings_battery_manage)
+            } else {
+                stringResource(R.string.settings_battery_allow)
+            },
+            onClick = {
+                val launched = when (batteryActionFor(exempt)) {
+                    // Already exempt: the only remaining action is revoking, which Android
+                    // permits only from its own settings list.
+                    BatteryAction.MANAGE -> BatteryOptimization.openSettings(context)
+
+                    // Falls back to the settings list when the dialog is missing, which is the
+                    // case on television builds.
+                    BatteryAction.REQUEST -> BatteryOptimization.requestExemption(context) ||
+                        BatteryOptimization.openSettings(context)
+                }
+                unavailable = !launched
+            },
+        )
+    }
 }
 
 @Composable

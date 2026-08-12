@@ -37,6 +37,23 @@
         tools:targetApi="33" />
 
     <!--
+      Lets the app show Android's own "allow background activity" dialog instead of
+      sending the user to hunt through system settings.
+
+      Doze suspends network access, which breaks the two things that run while the
+      screen is off or the app is backgrounded: the local cast proxy, which must keep
+      serving the stream for as long as the receiver plays it, and long playback. The
+      failure is a silent stall, so the exemption is worth offering - but it is only
+      ever offered, never assumed: the app cannot grant this itself, and the row in
+      Settings reports the real system state rather than a preference of our own.
+
+      Note for anyone publishing this on Google Play: this permission is restricted
+      there and needs a declared justification, or the upload is rejected. It is
+      unrestricted for direct APK distribution, which is how this app ships.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!--
       Deliberately absent: QUERY_ALL_PACKAGES. Extensions live in this app's
       private storage, so package enumeration is never required.
     -->

@@ -365,6 +365,17 @@ class PlayerViewModel(
         _uiState.value = _uiState.value.copy(speed = speed)
     }
 
+    /**
+     * Remembers the cast relay choice.
+     *
+     * Persisted here rather than in CastManager so the cast layer keeps no reference to the
+     * store: it is told the value at startup and when it changes, and never reads settings
+     * itself.
+     */
+    fun setCastForceProxy(enabled: Boolean) {
+        viewModelScope.launch { store.setCastForceProxy(enabled) }
+    }
+
     fun cycleAspect() {
         _uiState.value = _uiState.value.copy(aspectMode = _uiState.value.aspectMode.next())
     }

@@ -151,10 +151,36 @@ fun PlayerScreen(
         if (granted) castManager.discover()
     }
 
-    // Local playback must stop while casting or audio plays from both the phone
-    // and the TV; it resumes when the session ends.
-    LaunchedEffect(castState.isCasting) {
-        if (castState.isCasting) exoPlayer.pause()
+    // While casting, this screen is a remote control and nothing else: the phone must not
+    // play or make a sound.
+    //
+    // A one-shot pause was not enough. Anything that rebuilds the media item - a quality
+    // switch, a downloaded subtitle - sets playWhenReady = true again, and PlayerFactory
+    // builds every new instance with it set, so local audio came back mid-session. The
+    // volume is therefore zeroed as well as paused, and both are restored when the session
+    // ends. Muting is what actually guarantees silence; the pause just stops it buffering
+    // a stream nobody is watching.
+    //
+    // Playback is not resumed automatically when the session ends - stopping a cast is as
+    // likely to mean "I am done" as "I will carry on here" - but the local player is moved to
+    // where the receiver got to, so pressing play continues from there instead of from
+    // wherever the phone was when casting started, which could be an hour earlier.
+    var lastCastPositionMs by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(castState.isCasting, exoPlayer) {
+        if (castState.isCasting) {
+            exoPlayer.volume = 0f
+            exoPlayer.playWhenReady = false
+            exoPlayer.pause()
+        } else {
+            exoPlayer.volume = 1f
+
+            // Captured before the session cleared it, so it is still meaningful here.
+            if (lastCastPositionMs > 0) {
+                exoPlayer.seekTo(lastCastPositionMs)
+                lastCastPositionMs = 0L
+            }
+        }
     }
 
     // The PlayerView must be re-bound whenever the instance above is replaced.
@@ -247,6 +273,49 @@ fun PlayerScreen(
         }
     }
 
+    // ----------------------------------------------------------- transport routing
+    //
+    // Every playback control goes through these three, so casting is handled in one place
+    // rather than at each call site. There are six of those - the buttons, the remote keys,
+    // the slider, double-tap and drag-to-scrub - and adding an isCasting branch to each is
+    // how one of them ends up forgotten and still driving the paused local player.
+    //
+    // `transportPosition` is the position the controls should act on: the receiver's while
+    // casting, the local player's otherwise.
+
+    val transportPosition: () -> Long = {
+        if (castState.isCasting) castState.positionMs else exoPlayer.currentPosition
+    }
+
+    val transportIsPlaying: () -> Boolean = {
+        if (castState.isCasting) castState.isRemotePlaying else exoPlayer.isPlaying
+    }
+
+    val transportPlay: () -> Unit = {
+        if (castState.isCasting) castManager.play() else exoPlayer.play()
+    }
+
+    val transportPause: () -> Unit = {
+        if (castState.isCasting) castManager.pause() else exoPlayer.pause()
+    }
+
+    val transportTogglePlay: () -> Unit = {
+        if (transportIsPlaying()) transportPause() else transportPlay()
+    }
+
+    val transportSeekTo: (Long) -> Unit = { target ->
+        // Clamped against whichever duration is known. A receiver rejects a seek past the end
+        // outright, and DLNA renderers in particular can drop the session over it.
+        val limit = durationMs.coerceAtLeast(0L)
+        val clamped = if (limit > 0) target.coerceIn(0L, limit) else target.coerceAtLeast(0L)
+
+        if (castState.isCasting) castManager.seekTo(clamped) else exoPlayer.seekTo(clamped)
+    }
+
+    val transportSeekBy: (Long) -> Unit = { delta ->
+        transportSeekTo(transportPosition() + delta)
+    }
+
     /**
      * Applies a mapped remote action.
      *
@@ -264,12 +333,12 @@ fun PlayerScreen(
             PlayerKeyAction.SHOW_CONTROLS -> true
 
             PlayerKeyAction.TOGGLE_PLAY -> {
-                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                transportTogglePlay()
                 true
             }
 
-            PlayerKeyAction.PLAY -> { exoPlayer.play(); true }
-            PlayerKeyAction.PAUSE -> { exoPlayer.pause(); true }
+            PlayerKeyAction.PLAY -> { transportPlay(); true }
+            PlayerKeyAction.PAUSE -> { transportPause(); true }
 
             PlayerKeyAction.SEEK_BACK, PlayerKeyAction.SEEK_FORWARD -> {
                 val delta = if (action == PlayerKeyAction.SEEK_FORWARD) {
@@ -277,10 +346,7 @@ fun PlayerScreen(
                 } else {
                     -PLAYER_KEY_SEEK_MS
                 }
-                exoPlayer.seekTo(
-                    (exoPlayer.currentPosition + delta)
-                        .coerceIn(0L, exoPlayer.duration.coerceAtLeast(0L)),
-                )
+                transportSeekBy(delta)
                 true
             }
 
@@ -417,7 +483,11 @@ fun PlayerScreen(
         )
         exoPlayer.prepare()
         if (resumeFrom > 0) exoPlayer.seekTo(resumeFrom)
-        exoPlayer.playWhenReady = true
+
+        // Not while casting. This effect re-runs on a quality switch or a subtitle download,
+        // and starting local playback then is what previously brought the phone's audio back
+        // in the middle of a cast session.
+        exoPlayer.playWhenReady = !castState.isCasting
     }
 
     // --- speed
@@ -475,12 +545,46 @@ fun PlayerScreen(
     }
 
     // --- position ticker + throttled history writes
-    LaunchedEffect(exoPlayer, state.selectedStream?.url) {
+    //
+    // While casting the clock comes from the receiver instead of the local player. The local
+    // one is paused then, so reading it left the seek bar frozen at the moment casting began
+    // while the television played on.
+    //
+    // History is still written, from whichever clock is authoritative. Keyed on isCasting so
+    // the loop switches sources when a session starts or ends.
+    LaunchedEffect(exoPlayer, state.selectedStream?.url, castState.isCasting) {
         while (true) {
-            positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
-            bufferedMs = exoPlayer.bufferedPosition.coerceAtLeast(0L)
-            if (exoPlayer.duration > 0) durationMs = exoPlayer.duration
-            if (isPlaying) viewModel.onProgress(positionMs, durationMs)
+            if (castState.isCasting) {
+                positionMs = castState.positionMs.coerceAtLeast(0L)
+
+                // Kept for when the session ends: stopCasting clears the mirrored clock, so
+                // reading it after the fact would give zero.
+                if (positionMs > 0) lastCastPositionMs = positionMs
+
+                // The receiver's own duration is preferred but not always offered - some DLNA
+                // renderers report zero - so the local player's is the fallback. It describes
+                // the same stream either way.
+                val remoteDuration = castState.durationMs
+                if (remoteDuration > 0) {
+                    durationMs = remoteDuration
+                } else if (exoPlayer.duration > 0) {
+                    durationMs = exoPlayer.duration
+                }
+
+                // Nothing is buffering locally, and leaving a stale value would draw a
+                // buffered bar that has no meaning for the receiver.
+                bufferedMs = 0L
+
+                // Recorded even though the phone is not playing: the episode is being
+                // watched, and stopping would lose the position and leave Continue Watching
+                // pointing at wherever the cast happened to start.
+                if (castState.isRemotePlaying) viewModel.onProgress(positionMs, durationMs)
+            } else {
+                positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+                bufferedMs = exoPlayer.bufferedPosition.coerceAtLeast(0L)
+                if (exoPlayer.duration > 0) durationMs = exoPlayer.duration
+                if (isPlaying) viewModel.onProgress(positionMs, durationMs)
+            }
             delay(500)
         }
     }
@@ -601,10 +705,7 @@ fun PlayerScreen(
                         onDoubleTap = { offset ->
                             if (state.locked) return@detectTapGestures
                             val forward = offset.x > size.width / 2f
-                            exoPlayer.seekTo(
-                                (exoPlayer.currentPosition + if (forward) 10_000L else -10_000L)
-                                    .coerceIn(0L, exoPlayer.duration.coerceAtLeast(0L)),
-                            )
+                            transportSeekBy(if (forward) 10_000L else -10_000L)
                         },
                     )
                 }
@@ -687,10 +788,7 @@ fun PlayerScreen(
                                     }
                                     val seekDelta = (seekAccumulated / size.width) * window
                                     if (kotlin.math.abs(seekDelta) >= 1_000f) {
-                                        exoPlayer.seekTo(
-                                            (exoPlayer.currentPosition + seekDelta.toLong())
-                                                .coerceIn(0L, durationMs.coerceAtLeast(0L)),
-                                        )
+                                        transportSeekBy(seekDelta.toLong())
                                         seekAccumulated = 0f
                                     }
                                     controlsVisible = true
@@ -741,21 +839,20 @@ fun PlayerScreen(
             PlayerControlsOverlay(
                 state = state,
                 metrics = metrics,
-                isPlaying = isPlaying,
-                isBuffering = isBuffering,
+                // The receiver's state while casting. The local player is paused then, so the
+                // button would otherwise offer "play" for something already playing on the
+                // television - and pressing it would pause the receiver, the opposite of what
+                // the icon promised.
+                isPlaying = transportIsPlaying(),
+                // Nothing buffers locally while casting, and a spinner over a picture that is
+                // playing elsewhere reads as a fault.
+                isBuffering = isBuffering && !castState.isCasting,
                 positionMs = positionMs,
                 durationMs = durationMs,
                 bufferedMs = bufferedMs,
-                onPlayPause = {
-                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                },
-                onSeek = { exoPlayer.seekTo(it) },
-                onSeekBy = { delta ->
-                    exoPlayer.seekTo(
-                        (exoPlayer.currentPosition + delta)
-                            .coerceIn(0L, durationMs.coerceAtLeast(0L)),
-                    )
-                },
+                onPlayPause = transportTogglePlay,
+                onSeek = transportSeekTo,
+                onSeekBy = transportSeekBy,
                 onBack = {
                     viewModel.flushProgress(exoPlayer.currentPosition, exoPlayer.duration)
                     onBack()
@@ -797,14 +894,17 @@ fun PlayerScreen(
             onSelectDevice = { device ->
                 castManager.castTo(
                     device = device,
-                    media = state.toCastMedia(),
+                    media = state.toCastMedia(durationMs),
                     positionMs = exoPlayer.currentPosition,
                 )
+                // Silenced now rather than when the session reports itself connected, which
+                // can take several seconds - the phone should go quiet the moment the user
+                // picks a device, not once the handshake finishes.
                 exoPlayer.pause()
                 castPanelOpen = false
             },
             onSendToExternal = {
-                val media = state.toCastMedia()
+                val media = state.toCastMedia(durationMs)
                 ExternalCast.sendToWebVideoCaster(
                     context = context,
                     url = media.url,
@@ -815,7 +915,7 @@ fun PlayerScreen(
             },
             onCastToChromecast = {
                 castManager.castToConnectedChromecast(
-                    media = state.toCastMedia(),
+                    media = state.toCastMedia(durationMs),
                     positionMs = exoPlayer.currentPosition,
                 )
                 exoPlayer.pause()
@@ -826,6 +926,12 @@ fun PlayerScreen(
                 castPanelOpen = false
             },
             onRescan = castManager::discover,
+            onSetForceProxy = { enabled ->
+                // Applied now and remembered for next time. Both are needed: the manager holds
+                // the value the next cast reads, the store makes it survive a restart.
+                castManager.setForceProxy(enabled)
+                viewModel.setCastForceProxy(enabled)
+            },
             onDismiss = { castPanelOpen = false },
         )
 
@@ -879,7 +985,7 @@ fun PlayerScreen(
  * to decide whether the stream has to be relayed through the local proxy, since a
  * receiver cannot send a `Referer` itself.
  */
-private fun PlayerUiState.toCastMedia(): CastMedia {
+private fun PlayerUiState.toCastMedia(runtimeMs: Long = 0L): CastMedia {
     val stream = selectedStream
     return CastMedia(
         url = stream?.url.orEmpty(),
@@ -891,7 +997,9 @@ private fun PlayerUiState.toCastMedia(): CastMedia {
         title = title,
         subtitle = episodeLabel,
         artworkUrl = detail?.posterUrl,
-        durationMs = 0L,
+        // The runtime the local player worked out, not zero. DLNA builds its metadata from
+        // this, and a renderer told a stream is zero-length can refuse to seek in it at all.
+        durationMs = runtimeMs.coerceAtLeast(0L),
         // Downloaded subtitles are not cast. A receiver fetches them itself, so a file:// path
         // on this device is unreachable to it, and the searched catalogues serve SubRip, which
         // the receiver ignores even when reachable. Either way the track would appear in the

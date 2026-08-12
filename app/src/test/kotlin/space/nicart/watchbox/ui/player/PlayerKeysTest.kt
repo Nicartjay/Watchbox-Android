@@ -2,6 +2,7 @@ package space.nicart.watchbox.ui.player
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * Tests for the player's remote-key mapping.
@@ -194,5 +195,29 @@ class PlayerKeysTest {
     fun `the key seek step matches the double-tap gesture`() {
         // So the two input methods agree about what a skip is.
         assertEquals(10_000L, PLAYER_KEY_SEEK_MS)
+    }
+
+    /**
+     * The scrubber deliberately moves further per press than the skip buttons.
+     *
+     * They are separate constants because they answer different needs: the buttons are for a
+     * precise nudge past something, the timeline is for crossing a whole film. Pinned so a
+     * later tidy-up does not "unify" them and make long seeks unusable on a remote.
+     */
+    @Test
+    fun `the scrubber step is coarser than a skip`() {
+        assertTrue(
+            SLIDER_SEEK_STEP_MS > PLAYER_KEY_SEEK_MS,
+            "scrubber step $SLIDER_SEEK_STEP_MS should exceed skip step $PLAYER_KEY_SEEK_MS",
+        )
+    }
+
+    /** Directional keys must still fall through, or focus cannot move between controls. */
+    @Test
+    fun `making the scrubber seekable did not consume directions globally`() {
+        // The scrubber handles Left and Right itself, while it holds focus. The global mapping
+        // must stay NONE: consuming them here is what previously stranded focus on the surface.
+        assertEquals(PlayerKeyAction.NONE, map(KEY_DPAD_LEFT))
+        assertEquals(PlayerKeyAction.NONE, map(KEY_DPAD_RIGHT))
     }
 }
