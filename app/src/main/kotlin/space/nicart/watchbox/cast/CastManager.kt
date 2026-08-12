@@ -18,6 +18,7 @@ import space.nicart.watchbox.cast.dlna.DlnaDescriptionParser
 import space.nicart.watchbox.cast.dlna.DlnaRenderer
 import space.nicart.watchbox.cast.dlna.DlnaTransport
 import space.nicart.watchbox.cast.dlna.SsdpDiscovery
+import space.nicart.watchbox.cast.dlna.isHls
 
 /**
  * Whether a stream has to be relayed through this device rather than handed over directly.
@@ -301,6 +302,15 @@ class CastManager(
 
             dlna.connect(renderer)
             active = dlna
+
+            // Warned rather than blocked. Almost no DLNA renderer decodes HLS, and the one on
+            // the television reports it as "file not supported" - which reads as a broken app
+            // rather than an incompatible stream. The cast still proceeds: a few renderers do
+            // manage it, and refusing outright would take away the only option on a source
+            // that offers nothing else.
+            if (media.isHls) {
+                Log.w(TAG, "casting HLS to a DLNA renderer; most cannot decode it")
+            }
 
             val prepared = prepare(media, device.host)
             if (prepared == null) {

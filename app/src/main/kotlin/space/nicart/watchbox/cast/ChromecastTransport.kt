@@ -1,7 +1,11 @@
 package space.nicart.watchbox.cast
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
@@ -12,7 +16,6 @@ import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.CastState
 import com.google.android.gms.cast.framework.SessionManagerListener
-import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.common.images.WebImage
@@ -27,22 +30,68 @@ import com.google.android.gms.common.images.WebImage
  *
  * Play Services may be missing entirely (emulators, de-Googled devices), so every
  * entry point tolerates a null [CastContext] rather than assuming availability.
+ *
+ * ## Threading
+ *
+ * Every member here hops to the main thread, because the Cast SDK requires it and enforces
+ * it: 56 methods on `RemoteMediaClient` call `Preconditions.checkMainThread`, and so do
+ * `CastContext.getCastState` and `SessionManager.getCurrentCastSession`. Violating it throws
+ * `IllegalStateException` rather than misbehaving quietly.
+ *
+ * That caught the app out: [CastManager] runs on `Dispatchers.IO`, which is right for DLNA's
+ * blocking SOAP calls and fatal here. Picking a Chromecast crashed the app outright, because
+ * even reading [isConnected] on the way to loading was a violation.
+ *
+ * The hop lives in this class rather than at the call sites so the mistake cannot be made
+ * again by adding a method: there is nowhere in here that touches the SDK directly.
  */
 class ChromecastTransport(private val context: Context) : CastTransport {
 
     private var castContext: CastContext? = null
     private var sessionListener: SessionManagerListener<CastSession>? = null
 
-    private val session: CastSession?
-        get() = castContext?.sessionManager?.currentCastSession
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-    private val remote: RemoteMediaClient?
-        get() = session?.remoteMediaClient
+    /**
+     * Runs [block] on the main thread and waits for its result.
+     *
+     * Blocking is acceptable because these are local, in-process calls that return immediately
+     * - `load` hands off a request and answers with a PendingResult rather than waiting for the
+     * receiver - and because the callers are already off the main thread on IO.
+     *
+     * Failures are swallowed to a fallback: a receiver going away mid-call must degrade to
+     * "casting stopped working", not take the player down with it.
+     */
+    private fun <T> onMain(fallback: T, block: () -> T): T {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            return runCatching(block).getOrDefault(fallback)
+        }
+
+        val latch = CountDownLatch(1)
+        var result: T = fallback
+
+        mainHandler.post {
+            result = runCatching(block).getOrDefault(fallback)
+            latch.countDown()
+        }
+
+        // Bounded so a wedged main thread cannot hang the caller for ever. Overshooting the
+        // deadline just returns the fallback, which reads as "not connected".
+        return if (latch.await(MAIN_CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)) result else fallback
+    }
+
+    /** Fire-and-forget variant, for the calls whose result nothing reads. */
+    private fun onMainAsync(block: () -> Unit) {
+        mainHandler.post { runCatching(block) }
+    }
+
+    private val session: CastSession?
+        get() = onMain(null) { castContext?.sessionManager?.currentCastSession }
 
     override val isAvailable: Boolean get() = castContext != null
 
     override val isConnected: Boolean
-        get() = castContext?.castState == CastState.CONNECTED
+        get() = onMain(false) { castContext?.castState == CastState.CONNECTED }
 
     /**
      * Initialises the SDK.
@@ -112,7 +161,8 @@ class ChromecastTransport(private val context: Context) : CastTransport {
         get() = session?.castDevice?.friendlyName
 
     override suspend fun load(media: CastMedia, positionMs: Long): Boolean {
-        val client = remote ?: return false
+        // Built off the main thread - these are plain data objects - then handed over in one
+        // hop, so only the SDK call itself occupies the main thread.
 
         val metadata = MediaMetadata(
             if (media.isMovie) {
@@ -160,34 +210,58 @@ class ChromecastTransport(private val context: Context) : CastTransport {
             }
             .build()
 
-        return runCatching { client.load(request); true }
-            .onFailure { Log.w(TAG, "load failed: ${it.message}") }
-            .getOrDefault(false)
+        return onMain(false) {
+            val client = castContext?.sessionManager?.currentCastSession?.remoteMediaClient
+                ?: return@onMain false
+            client.load(request)
+            true
+        }.also { if (!it) Log.w(TAG, "load failed or no session") }
     }
 
-    override fun play() { remote?.play() }
-
-    override fun pause() { remote?.pause() }
-
-    override fun stop() {
-        runCatching { remote?.stop() }
-        runCatching { castContext?.sessionManager?.endCurrentSession(true) }
+    override fun play() = onMainAsync {
+        castContext?.sessionManager?.currentCastSession?.remoteMediaClient?.play()
     }
 
-    override fun seekTo(positionMs: Long) {
-        remote?.seek(MediaSeekOptions.Builder().setPosition(positionMs).build())
+    override fun pause() = onMainAsync {
+        castContext?.sessionManager?.currentCastSession?.remoteMediaClient?.pause()
     }
 
-    override fun positionMs(): Long = remote?.approximateStreamPosition ?: 0L
+    override fun stop() = onMainAsync {
+        castContext?.sessionManager?.currentCastSession?.remoteMediaClient?.stop()
+        castContext?.sessionManager?.endCurrentSession(true)
+    }
 
-    override fun durationMs(): Long = remote?.streamDuration ?: 0L
+    override fun seekTo(positionMs: Long) = onMainAsync {
+        castContext?.sessionManager?.currentCastSession?.remoteMediaClient
+            ?.seek(MediaSeekOptions.Builder().setPosition(positionMs).build())
+    }
 
-    override fun isPlaying(): Boolean =
-        remote?.mediaStatus?.playerState == MediaStatus.PLAYER_STATE_PLAYING
+    override fun positionMs(): Long = onMain(0L) {
+        castContext?.sessionManager?.currentCastSession
+            ?.remoteMediaClient?.approximateStreamPosition ?: 0L
+    }
+
+    override fun durationMs(): Long = onMain(0L) {
+        castContext?.sessionManager?.currentCastSession
+            ?.remoteMediaClient?.streamDuration ?: 0L
+    }
+
+    override fun isPlaying(): Boolean = onMain(false) {
+        castContext?.sessionManager?.currentCastSession
+            ?.remoteMediaClient?.mediaStatus?.playerState == MediaStatus.PLAYER_STATE_PLAYING
+    }
 
     private companion object {
         const val TAG = "Chromecast"
         const val SUBTITLE_MIME = "text/vtt"
         const val SUBTITLE_TRACK_ID_BASE = 1L
+
+        /**
+         * How long a main-thread hop may take before the caller gives up.
+         *
+         * These calls only marshal a request, so they return in microseconds; the timeout
+         * exists purely so a blocked main thread cannot wedge the cast coroutine.
+         */
+        const val MAIN_CALL_TIMEOUT_MS = 2_000L
     }
 }

@@ -48,6 +48,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.cast.CastManager
+import space.nicart.watchbox.cast.CastProtocol
 import space.nicart.watchbox.core.ui.LocalLayoutMetrics
 import space.nicart.watchbox.cast.CastPermissions
 import space.nicart.watchbox.cast.ExternalCast
@@ -894,7 +895,12 @@ fun PlayerScreen(
             onSelectDevice = { device ->
                 castManager.castTo(
                     device = device,
-                    media = state.toCastMedia(durationMs),
+                    // DLNA renderers get a progressive stream where one exists. Chromecast
+                    // decodes HLS itself, so it is left on whatever is playing locally.
+                    media = state.toCastMedia(
+                        runtimeMs = durationMs,
+                        preferProgressive = device.protocol == CastProtocol.DLNA,
+                    ),
                     positionMs = exoPlayer.currentPosition,
                 )
                 // Silenced now rather than when the session reports itself connected, which
@@ -979,14 +985,51 @@ fun PlayerScreen(
 }
 
 /**
+ * Picks which stream to hand a receiver.
+ *
+ * [preferProgressive] is set for DLNA, which is effectively HLS-blind: a television handed an
+ * `.m3u8` answers "file not supported", naming neither the format nor the app's part in it.
+ * A plain-file stream is chosen instead when the source published one.
+ *
+ * Falls back to [selected] when every stream is HLS, so casting is attempted rather than
+ * silently refused - a handful of renderers do manage it, and the receiver's own complaint is
+ * more use than a button that does nothing.
+ *
+ * Top-level so the choice can be tested without a player: it is the difference between a
+ * working cast and an error message with no explanation.
+ */
+internal fun castStreamFor(
+    streams: List<StreamOption>,
+    selected: StreamOption?,
+    preferProgressive: Boolean,
+): StreamOption? {
+    if (!preferProgressive) return selected
+
+    // Keeps the current stream when it already is progressive, so the quality the user chose
+    // is not swapped for a different one unnecessarily.
+    if (selected != null && !selected.isHls) return selected
+
+    return streams.firstOrNull { !it.isHls } ?: selected
+}
+
+/**
  * Builds the payload for a receiver from the current playback state.
  *
  * The upstream headers are carried through deliberately: [CastManager] uses them
  * to decide whether the stream has to be relayed through the local proxy, since a
  * receiver cannot send a `Referer` itself.
+ *
+ * [preferProgressive] swaps an HLS stream for a plain-file one when the source offers both.
+ * DLNA renderers are the reason: nearly none decode HLS, and a television handed an
+ * `.m3u8` reports "file not supported" with nothing to say which part failed. Chromecast
+ * handles HLS natively, so it keeps whatever the player is using.
  */
-private fun PlayerUiState.toCastMedia(runtimeMs: Long = 0L): CastMedia {
-    val stream = selectedStream
+private fun PlayerUiState.toCastMedia(
+    runtimeMs: Long = 0L,
+    preferProgressive: Boolean = false,
+): CastMedia {
+    val stream = castStreamFor(streams, selectedStream, preferProgressive)
+
     return CastMedia(
         url = stream?.url.orEmpty(),
         headers = stream?.headers.orEmpty(),
