@@ -123,6 +123,15 @@ fun TvHomeScreen(
     val lastOpened by artworkViewModel.lastOpened.collectAsStateWithLifecycle()
     val playRequest by viewModel.playRequest.collectAsStateWithLifecycle()
 
+    // Drops the previous source's artwork when the feed switches.
+    //
+    // The id is passed rather than relied on as the effect key: this composition is disposed
+    // and rebuilt whenever Detail is pushed and popped, so the effect re-runs with an unchanged
+    // source and the view model has to tell the two apart itself.
+    LaunchedEffect(state.selected?.id) {
+        artworkViewModel.onSourceChanged(state.selected?.id)
+    }
+
     val gridState = rememberLazyGridState()
 
     /**

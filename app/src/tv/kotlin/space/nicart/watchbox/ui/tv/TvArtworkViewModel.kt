@@ -126,6 +126,48 @@ class TvArtworkViewModel(
     }
 
     /**
+     * Forgets everything belonging to the previous source.
+     *
+     * Three pieces of state outlive a source switch, and each caused a visible fault:
+     *
+     *  - [_focused] is what the hero backdrop prefers over the spotlight card, so the old
+     *    source's artwork stayed on screen beneath the new source's logo and title. That is
+     *    the mismatch: the backdrop and the text were reading different cards.
+     *  - [requestedRows] is a de-duplication set keyed by row name, and the hero's name is a
+     *    constant. Once "tv-hero" had been requested for one source, every later source was
+     *    skipped, so the new spotlight never got a backdrop or a logo at all.
+     *  - [_artwork] is keyed by card, which is unique per source, so it is correct to keep -
+     *    but it is dropped anyway. It is a cache of a screen that no longer exists, and
+     *    holding five sources' artwork to save refetching one is the wrong trade.
+     *
+     * A pending focus lookup is cancelled too: its response is for a card the user can no
+     * longer see, and publishing it would put the old source back on the hero.
+     */
+    fun onSourceChanged(sourceId: Long?) {
+        // Only on a real change. This is driven from the home screen's composition, which is
+        // disposed and rebuilt every time Detail is pushed and popped - so an unguarded call
+        // fired on the way back from a detail page too, clearing the pending focus restore and
+        // stranding focus at the top of the feed instead of on the card the user had opened.
+        if (sourceId == lastSourceId) return
+
+        val isFirstFeed = lastSourceId == null
+        lastSourceId = sourceId
+
+        // Nothing to discard before the first feed has loaded, and clearing here would throw
+        // away artwork already requested for it.
+        if (isFirstFeed) return
+
+        focusJob?.cancel()
+        _focused.value = null
+        _artwork.value = emptyMap()
+        requestedRows.clear()
+        _lastOpened.value = null
+    }
+
+    /** The source the retained state belongs to, so a switch can be told from a recomposition. */
+    private var lastSourceId: Long? = null
+
+    /**
      * Which card's detail page was opened last, as "<row>::<card key>", or null.
      *
      * Held here because this survives navigation while the home screen's composition does
