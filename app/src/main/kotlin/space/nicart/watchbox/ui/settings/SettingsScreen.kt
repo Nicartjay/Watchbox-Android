@@ -71,6 +71,7 @@ import space.nicart.watchbox.data.local.POSTER_SCALE_MIN
 import space.nicart.watchbox.data.local.UI_SCALE_MAX
 import space.nicart.watchbox.data.local.UI_SCALE_MIN
 import space.nicart.watchbox.data.local.ExtensionRepo
+import space.nicart.watchbox.data.remote.SubtitleProvider
 import space.nicart.watchbox.ui.player.SubtitleBackground
 import space.nicart.watchbox.ui.player.subtitleStyle
 import space.nicart.watchbox.core.ui.LocalLayoutMetrics
@@ -446,6 +447,51 @@ fun SettingsScreen(
                     checked = settings.subtitleBold,
                     onCheckedChange = viewModel::setSubtitleBold,
                 )
+            }
+
+            // ---------------------------------------------- online subtitles
+            item(key = "subtitle-online-label") {
+                SettingsGroupLabel(stringResource(R.string.settings_subtitle_online))
+            }
+
+            item(key = "subtitle-online") {
+                SettingsCard {
+                    Text(
+                        text = stringResource(R.string.settings_subtitle_provider),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = tokens.colors.textMuted,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    SubtitleProviderRow(
+                        selected = settings.subtitleProvider,
+                        onSelect = viewModel::setSubtitleProvider,
+                    )
+
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        // The trade-off is stated rather than left to be discovered: one
+                        // provider needs no setup but misses titles, the other covers more
+                        // but has to be registered for and is rate-limited.
+                        text = when (settings.subtitleProvider) {
+                            SubtitleProvider.OPEN_SUBTITLES_LEGACY ->
+                                stringResource(R.string.settings_subtitle_provider_free_note)
+                            SubtitleProvider.OPEN_SUBTITLES_API ->
+                                stringResource(R.string.settings_subtitle_provider_api_note)
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tokens.colors.textMuted,
+                    )
+
+                    // The key field only appears for the provider that needs one, so the
+                    // keyless path stays a single choice with nothing else to fill in.
+                    if (settings.subtitleProvider == SubtitleProvider.OPEN_SUBTITLES_API) {
+                        Spacer(Modifier.height(14.dp))
+                        SubtitleApiKeyField(
+                            saved = settings.subtitleApiKey,
+                            onSave = viewModel::setSubtitleApiKey,
+                        )
+                    }
+                }
             }
 
             // -------------------------------------------------------- data

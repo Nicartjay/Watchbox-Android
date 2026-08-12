@@ -128,6 +128,24 @@
     <string name="player_skip_outro">Skip Outro</string>
     <string name="player_subtitle_appearance">Subtitle appearance</string>
     <string name="player_subtitles_off">Off</string>
+    <string name="player_subtitle_search">Search online</string>
+    <string name="player_subtitle_searching">Searching…</string>
+    <string name="player_subtitle_search_empty">No subtitles found for this episode.</string>
+    <string name="player_subtitle_search_failed">Could not download that subtitle.</string>
+    <string name="player_subtitle_search_unsupported">This title has no IMDb or TMDB match, so it cannot be searched.</string>
+    <string name="player_subtitle_search_retry">Search again</string>
+
+    <!-- Settings: online subtitles -->
+    <string name="settings_subtitle_online">Online subtitles</string>
+    <string name="settings_subtitle_provider">Search provider</string>
+    <string name="settings_subtitle_provider_free">Free (no key)</string>
+    <string name="settings_subtitle_provider_api">OpenSubtitles API</string>
+    <string name="settings_subtitle_provider_free_note">Searches by IMDb id. Works without setup, but only covers titles with an IMDb match.</string>
+    <string name="settings_subtitle_provider_api_note">Larger catalogue and searches by TMDB id, so it also covers titles with no IMDb match. Needs a free API key and limits downloads per day.</string>
+    <string name="settings_subtitle_api_key">API key</string>
+    <string name="settings_subtitle_api_key_hint">Paste your OpenSubtitles API key</string>
+    <string name="settings_subtitle_api_key_missing">A key is required for this provider.</string>
+    <string name="settings_subtitle_api_key_set">Key saved</string>
 
     <!-- Settings -->
     <string name="settings_appearance">Appearance</string>

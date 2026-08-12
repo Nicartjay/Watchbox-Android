@@ -14,8 +14,48 @@ import space.nicart.watchbox.data.local.WatchHistoryEntry
 import space.nicart.watchbox.domain.AnimeDetail
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.EpisodeEntry
+import space.nicart.watchbox.data.remote.SubtitleQuery
+import space.nicart.watchbox.data.remote.SubtitleResult
 import space.nicart.watchbox.domain.StreamOption
 import space.nicart.watchbox.domain.SubtitleOption
+import space.nicart.watchbox.domain.SubtitleRepository
+
+/**
+ * The online subtitle search, as a state machine.
+ *
+ * Modelled explicitly because every state needs its own UI: a spinner, a list, an explanation
+ * of why there is nothing, and a note that the title cannot be searched at all. Collapsing
+ * these into a nullable list plus a boolean loses the difference between "found nothing" and
+ * "never asked", which are not the same message.
+ */
+sealed interface SubtitleSearchState {
+    data object Idle : SubtitleSearchState
+
+    /**
+     * A subtitle was downloaded and turned on.
+     *
+     * Distinct from [Idle] so the player can close the panel on success without also closing it
+     * the moment it opens - the search starts from Idle, and "nothing has happened yet" and
+     * "the thing you asked for worked" have to be different states to act on.
+     */
+    data object Applied : SubtitleSearchState
+    data object Searching : SubtitleSearchState
+    data class Results(val results: List<SubtitleResult>) : SubtitleSearchState
+
+    /**
+     * Downloading a chosen result.
+     *
+     * Carries the list it was chosen from as well as the [id] of the chosen row, so the panel
+     * can keep showing the results with a spinner on one of them. Without the list the panel
+     * would have to blank itself mid-download and hide what the user had just picked.
+     */
+    data class Downloading(val id: String, val previous: List<SubtitleResult>) : SubtitleSearchState
+    data object Empty : SubtitleSearchState
+
+    /** The title has no id either provider can search by, so there is nothing to try. */
+    data object Unsupported : SubtitleSearchState
+    data object Failed : SubtitleSearchState
+}
 
 /** Aspect-ratio modes, cycled by the player's aspect button. */
 enum class AspectMode(val label: String) {
@@ -40,12 +80,28 @@ data class PlayerUiState(
     val locked: Boolean = false,
     val autoPlayNext: Boolean = true,
     val errorMessage: String? = null,
+    /**
+     * Subtitles fetched online, appended after the ones the source supplied.
+     *
+     * Held here rather than folded into [selectedStream] so switching quality does not discard
+     * them: the stream is replaced wholesale on a quality change, and a subtitle the user went
+     * looking for should outlive that.
+     */
+    val externalSubtitles: List<SubtitleOption> = emptyList(),
+    val subtitleSearch: SubtitleSearchState = SubtitleSearchState.Idle,
 ) {
     val title: String get() = detail?.title.orEmpty()
 
     val episodeLabel: String? get() = episode?.displayName
 
-    val subtitles: List<SubtitleOption> get() = selectedStream?.subtitles.orEmpty()
+    /**
+     * Every selectable subtitle: the source's own, then anything fetched online.
+     *
+     * Order matters and is relied on by [selectedSubtitleIndex] - appending keeps existing
+     * indices valid, so adding a track cannot silently change which one is playing.
+     */
+    val subtitles: List<SubtitleOption>
+        get() = selectedStream?.subtitles.orEmpty() + externalSubtitles
 
     val episodes: List<EpisodeEntry> get() = detail?.episodes.orEmpty()
 
@@ -76,6 +132,7 @@ data class PlayerUiState(
  */
 class PlayerViewModel(
     private val repository: AnimeRepository,
+    private val subtitles: SubtitleRepository,
     private val store: WatchBoxStore,
     private val sourceId: Long,
     private val animeUrl: String,
@@ -87,11 +144,22 @@ class PlayerViewModel(
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
     private var resolveJob: Job? = null
+    private var subtitleJob: Job? = null
     private var lastHistoryWrite = 0L
+
+    /**
+     * The user's preferred subtitle language, cached from settings.
+     *
+     * Kept as a field because the search runs from a click and cannot suspend to read the
+     * store first. Refreshed whenever a selection writes it back, so it stays current without
+     * observing the whole settings flow.
+     */
+    private var subtitleLanguage: String = DEFAULT_SUBTITLE_LANGUAGE
 
     init {
         viewModelScope.launch {
             val settings = store.currentSettings()
+            subtitleLanguage = settings.subtitleLanguage
             _uiState.value = _uiState.value.copy(autoPlayNext = settings.autoPlayNext)
             loadDetail()
         }
@@ -181,7 +249,116 @@ class PlayerViewModel(
     fun selectSubtitle(index: Int) {
         _uiState.value = _uiState.value.copy(selectedSubtitleIndex = index)
         val language = _uiState.value.subtitles.getOrNull(index)?.language
+        // Only a real language updates the search default: "off" is a state, not a language,
+        // and letting it through would make a later search have nothing to look for.
+        language?.takeIf { it.isNotBlank() }?.let { subtitleLanguage = it }
         viewModelScope.launch { store.setSubtitleLanguage(language ?: "off") }
+    }
+
+    /**
+     * Searches online for subtitles matching the episode being played.
+     *
+     * Only ever user-initiated. An automatic search on every playback start would spend a
+     * request per episode to replace tracks the source already supplied correctly, and an
+     * online release is matched to a specific encode - it is as likely to be out of sync as
+     * it is to be an improvement.
+     */
+    fun searchSubtitles() {
+        subtitleJob?.cancel()
+
+        val state = _uiState.value
+        val detail = state.detail
+        val episode = state.episode
+        val isSeries = detail != null && !detail.isMovie
+
+        // Read from the last known settings rather than awaited: this runs on a click, and
+        // "off" is a real stored value meaning the user turned subtitles off - not a language
+        // to search for.
+        val language = subtitleLanguage.takeIf { it.isNotBlank() && !it.equals("off", true) }
+            ?: DEFAULT_SUBTITLE_LANGUAGE
+
+        val query = SubtitleQuery(
+            imdbId = detail?.imdbId,
+            tmdbId = detail?.tmdbId,
+            // A film is a single entry with no season. Sending season/episode for one filters
+            // every result away, because the catalogue has no such entry to match.
+            season = if (isSeries) episode?.season ?: 1 else null,
+            episode = if (isSeries) episode?.number?.toInt() else null,
+            language = language,
+            title = state.title,
+        )
+
+        if (query.isUnusable) {
+            _uiState.value = state.copy(subtitleSearch = SubtitleSearchState.Unsupported)
+            return
+        }
+
+        _uiState.value = state.copy(subtitleSearch = SubtitleSearchState.Searching)
+
+        subtitleJob = viewModelScope.launch {
+            val results = subtitles.search(query)
+            _uiState.value = _uiState.value.copy(
+                subtitleSearch = if (results.isEmpty()) {
+                    SubtitleSearchState.Empty
+                } else {
+                    SubtitleSearchState.Results(results)
+                },
+            )
+        }
+    }
+
+    /**
+     * Downloads a chosen result and selects it immediately.
+     *
+     * Selecting it is the point: a user who picked a subtitle from a list wants to see it, not
+     * to then find it in a second list and turn it on.
+     */
+    fun applySubtitle(result: SubtitleResult) {
+        subtitleJob?.cancel()
+
+        subtitleJob = viewModelScope.launch {
+            val shown = (_uiState.value.subtitleSearch as? SubtitleSearchState.Results)
+                ?.results
+                .orEmpty()
+
+            _uiState.value = _uiState.value.copy(
+                subtitleSearch = SubtitleSearchState.Downloading(result.id, shown),
+            )
+
+            val option = subtitles.download(result)
+            if (option == null) {
+                _uiState.value = _uiState.value.copy(
+                    subtitleSearch = SubtitleSearchState.Failed,
+                )
+                return@launch
+            }
+
+            val current = _uiState.value
+            // Replaces any earlier download rather than accumulating: each is an attempt at
+            // the same thing, and a panel filling up with near-identical release names makes
+            // the working one harder to find.
+            val external = current.externalSubtitles.filterNot { it.url == option.url } + option
+            val sourceCount = current.selectedStream?.subtitles?.size ?: 0
+
+            _uiState.value = current.copy(
+                externalSubtitles = external,
+                selectedSubtitleIndex = sourceCount + external.lastIndex,
+                subtitleSearch = SubtitleSearchState.Applied,
+            )
+        }
+    }
+
+    /** Acknowledges the Applied state so a later search does not re-close its own panel. */
+    fun onSubtitleApplied() {
+        if (_uiState.value.subtitleSearch is SubtitleSearchState.Applied) {
+            _uiState.value = _uiState.value.copy(subtitleSearch = SubtitleSearchState.Idle)
+        }
+    }
+
+    /** Closes the search, discarding results but keeping anything already downloaded. */
+    fun dismissSubtitleSearch() {
+        subtitleJob?.cancel()
+        _uiState.value = _uiState.value.copy(subtitleSearch = SubtitleSearchState.Idle)
     }
 
     fun setSpeed(speed: Float) {
@@ -200,7 +377,20 @@ class PlayerViewModel(
 
     fun goToEpisode(episode: EpisodeEntry) {
         if (episode.url == _uiState.value.episode?.url) return
-        _uiState.value = _uiState.value.copy(episode = episode, resumeMs = 0L)
+
+        // Downloaded subtitles are dropped with the episode. They are timed against one
+        // specific release, so carrying them over would leave the next episode showing the
+        // previous one's dialogue - worse than no subtitles, because it looks like it works.
+        subtitleJob?.cancel()
+        subtitles.clearCache()
+
+        _uiState.value = _uiState.value.copy(
+            episode = episode,
+            resumeMs = 0L,
+            externalSubtitles = emptyList(),
+            selectedSubtitleIndex = -1,
+            subtitleSearch = SubtitleSearchState.Idle,
+        )
         resolve(episode)
     }
 
@@ -271,8 +461,12 @@ class PlayerViewModel(
     companion object {
         private const val NO_STREAM = "No playable stream found."
 
+        /** Fallback when the stored preference is absent or is the "off" sentinel. */
+        private const val DEFAULT_SUBTITLE_LANGUAGE = "en"
+
         fun factory(
             repository: AnimeRepository,
+            subtitles: SubtitleRepository,
             store: WatchBoxStore,
             sourceId: Long,
             animeUrl: String,
@@ -282,6 +476,7 @@ class PlayerViewModel(
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = PlayerViewModel(
                 repository = repository,
+                subtitles = subtitles,
                 store = store,
                 sourceId = sourceId,
                 animeUrl = animeUrl,

@@ -291,6 +291,7 @@ class AnimeRepository(
                 backdropUrl = art?.backdropUrl,
                 logoUrl = art?.logoUrl,
                 tmdbId = art?.tmdbId,
+                imdbId = art?.imdbId,
                 year = art?.year,
                 rating = art?.rating ?: 0.0,
                 description = details.description?.takeIf { it.hasSummary() }

@@ -324,6 +324,10 @@ fun PlayerScreen(
     var gestureLevel by remember { mutableFloatStateOf(0f) }
     var playbackError by remember { mutableStateOf<String?>(null) }
 
+    // The player's current track list, mirrored into state so the subtitle-selection effect
+    // re-runs when a sideloaded track finishes parsing.
+    var tracks by remember { mutableStateOf<androidx.media3.common.Tracks?>(null) }
+
     // --- player listener
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
@@ -345,6 +349,13 @@ fun PlayerScreen(
             override fun onPlayerError(error: PlaybackException) {
                 playbackError = error.errorCodeName
                 android.util.Log.e(TAG, "playback error: ${error.errorCodeName}", error)
+            }
+
+            // Text tracks arrive asynchronously - a sideloaded subtitle is fetched and parsed
+            // after preparation - so the selection effect has to re-run when they land rather
+            // than read them once.
+            override fun onTracksChanged(newTracks: androidx.media3.common.Tracks) {
+                tracks = newTracks
             }
 
             // Video-surface diagnostics. A black screen with working audio means
@@ -384,8 +395,16 @@ fun PlayerScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // --- load / swap media whenever the selected stream changes
-    LaunchedEffect(state.selectedStream?.url) {
+    // --- load / swap media whenever the selected stream or the subtitle set changes
+    //
+    // Keyed on the subtitle URLs as well as the stream. External subtitles are attached to the
+    // MediaItem, so a newly downloaded one only becomes selectable if the item is rebuilt -
+    // keyed on the stream alone it silently would not appear until the quality changed.
+    //
+    // Rebuilding restarts playback from zero, so the current position is captured and restored.
+    // `positionMs` is already the live ticker value, which makes this a seek back to where the
+    // viewer was rather than a jump to the resume point they had passed.
+    LaunchedEffect(state.selectedStream?.url, state.subtitles.map { it.url }) {
         val stream = state.selectedStream ?: return@LaunchedEffect
         val resumeFrom = if (positionMs > 0) positionMs else state.resumeMs
 
@@ -404,19 +423,55 @@ fun PlayerScreen(
     // --- speed
     LaunchedEffect(state.speed) { exoPlayer.setPlaybackSpeed(state.speed) }
 
+    // Closes the search once a download has succeeded. Keyed on the dedicated Applied state
+    // rather than Idle: the search begins from Idle, so testing for that would dismiss the
+    // panel in the same frame it opened.
+    LaunchedEffect(state.subtitleSearch) {
+        if (state.subtitleSearch is SubtitleSearchState.Applied) {
+            if (openPanel == PlayerPanel.SUBTITLE_SEARCH) openPanel = PlayerPanel.NONE
+            viewModel.onSubtitleApplied()
+        }
+    }
+
     // --- subtitle selection
-    LaunchedEffect(state.selectedSubtitleIndex, state.selectedStream?.url) {
-        val subtitle = state.subtitles.getOrNull(state.selectedSubtitleIndex)
-        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-            .buildUpon()
-            .setTrackTypeDisabled(
-                androidx.media3.common.C.TRACK_TYPE_TEXT,
-                subtitle == null,
+    //
+    // Selected by track rather than by language. Language is not a unique key: two downloaded
+    // English releases both report "en", so `setPreferredTextLanguage` would always resolve to
+    // whichever Media3 saw first and the second could never be chosen. An override names the
+    // exact track group, which is the only way to tell same-language tracks apart.
+    //
+    // Text groups are matched positionally against `state.subtitles` because that is the order
+    // they were handed to the MediaItem in. Anything already embedded in the stream itself is
+    // skipped, since it has no entry in our list to correspond to.
+    LaunchedEffect(state.selectedSubtitleIndex, state.selectedStream?.url, tracks) {
+        val wanted = state.selectedSubtitleIndex.takeIf { it >= 0 }
+
+        val textGroups = tracks?.groups.orEmpty()
+            .filter { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT }
+
+        val builder = exoPlayer.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_TEXT)
+            .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, wanted == null)
+
+        // Sideloaded configurations are appended after the stream's own text tracks, so the
+        // tail of the list lines up with ours.
+        val offset = (textGroups.size - state.subtitles.size).coerceAtLeast(0)
+        val group = wanted?.let { textGroups.getOrNull(it + offset) }
+
+        if (group != null) {
+            builder.addOverride(
+                androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0),
             )
-            .apply {
-                subtitle?.language?.takeIf { it.isNotBlank() }?.let(::setPreferredTextLanguage)
-            }
-            .build()
+        } else if (wanted != null) {
+            // The chosen track has not been parsed yet - a remote subtitle is fetched lazily.
+            // Falling back to the language keeps it working; the override lands once the
+            // track list arrives and this effect re-runs.
+            state.subtitles.getOrNull(wanted)?.language
+                ?.takeIf { it.isNotBlank() }
+                ?.let(builder::setPreferredTextLanguage)
+        }
+
+        exoPlayer.trackSelectionParameters = builder.build()
     }
 
     // --- position ticker + throttled history writes
@@ -795,6 +850,17 @@ fun PlayerScreen(
                 openPanel = PlayerPanel.NONE
             },
             onOpenSubtitleSettings = { openPanel = PlayerPanel.SUBTITLE_STYLE },
+            onSearchSubtitles = {
+                // Opened before the search starts so the panel can show it running, rather
+                // than the user pressing a row and seeing nothing happen for a second.
+                openPanel = PlayerPanel.SUBTITLE_SEARCH
+                viewModel.searchSubtitles()
+            },
+            onApplySubtitle = { result ->
+                viewModel.applySubtitle(result)
+                // Left open: the download can fail, and this panel is where that is reported.
+                // It closes itself when the subtitle is playing.
+            },
             subtitleStyle = subtitleStyle,
             // The panel stays open after each change so the effect can be seen on
             // the video behind it and adjusted again without reopening.
@@ -826,9 +892,17 @@ private fun PlayerUiState.toCastMedia(): CastMedia {
         subtitle = episodeLabel,
         artworkUrl = detail?.posterUrl,
         durationMs = 0L,
-        subtitles = subtitles.map {
-            CastSubtitle(url = it.url, label = it.label, language = it.language)
-        },
+        // Downloaded subtitles are not cast. A receiver fetches them itself, so a file:// path
+        // on this device is unreachable to it, and the searched catalogues serve SubRip, which
+        // the receiver ignores even when reachable. Either way the track would appear in the
+        // receiver's menu and show nothing, so only the stream's own tracks are offered.
+        //
+        // Source-supplied tracks are passed through untouched, including non-WebVTT ones: that
+        // is long-standing behaviour, and filtering by extension here would also drop the
+        // extensionless URLs that do work.
+        subtitles = subtitles
+            .filterNot { it.isExternal }
+            .map { CastSubtitle(url = it.url, label = it.label, language = it.language) },
         isMovie = episodes.size <= 1,
     )
 }

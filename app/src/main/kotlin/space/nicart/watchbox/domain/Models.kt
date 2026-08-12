@@ -97,6 +97,8 @@ data class AnimeDetail(
     val backdropUrl: String? = null,
     val logoUrl: String? = null,
     val tmdbId: Int? = null,
+    /** IMDb id, when TMDB matched one. Used to look up subtitles online. */
+    val imdbId: String? = null,
     val year: String? = null,
     val rating: Double = 0.0,
     val description: String,
@@ -229,7 +231,19 @@ data class StreamOption(
     val isHls: Boolean get() = url.contains(".m3u8", ignoreCase = true)
 }
 
-data class SubtitleOption(val label: String, val url: String, val language: String)
+data class SubtitleOption(
+    val label: String,
+    val url: String,
+    val language: String,
+    /**
+     * True for a subtitle the user fetched online rather than one the source supplied.
+     *
+     * Marked so the player can tell them apart in the panel, and so they can be dropped when
+     * the episode changes - an external track is matched to one specific release and is worse
+     * than nothing on a different one.
+     */
+    val isExternal: Boolean = false,
+)
 
 // ------------------------------------------------------------------ mapping
 

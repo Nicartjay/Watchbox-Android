@@ -124,6 +124,15 @@ enum class PlayerPanel {
      * to adjust against the video you are watching.
      */
     SUBTITLE_STYLE,
+
+    /**
+     * Online subtitle search, opened from the subtitle panel.
+     *
+     * Separate from [SUBTITLES] because it is a list of candidates to download rather than
+     * tracks to switch between: mixing fetchable results into the selectable ones would make
+     * it unclear which rows are already playing and which cost a download.
+     */
+    SUBTITLE_SEARCH,
     SPEED,
     EPISODES,
 }
@@ -520,13 +529,14 @@ private fun ProgressControls(
                             onClick = { onOpenPanel(PlayerPanel.QUALITY) },
                         )
                     }
-                    if (state.subtitles.isNotEmpty()) {
-                        ActionPill(
-                            icon = Icons.Rounded.ClosedCaption,
-                            label = stringResource(R.string.player_subtitles),
-                            onClick = { onOpenPanel(PlayerPanel.SUBTITLES) },
-                        )
-                    }
+                    // Always shown, even with no tracks. The panel is now also the way to
+                    // search online, and a source supplying none is precisely when that is
+                    // wanted - hiding the pill made it unreachable in that exact case.
+                    ActionPill(
+                        icon = Icons.Rounded.ClosedCaption,
+                        label = stringResource(R.string.player_subtitles),
+                        onClick = { onOpenPanel(PlayerPanel.SUBTITLES) },
+                    )
                     if (state.episodes.size > 1) {
                         ActionPill(
                             icon = Icons.Filled.VideoLibrary,

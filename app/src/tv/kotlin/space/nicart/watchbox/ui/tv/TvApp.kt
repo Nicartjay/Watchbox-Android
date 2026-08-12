@@ -107,6 +107,7 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
                 key = "player-${route.sourceId}-${route.episodeUrl}",
                 factory = PlayerViewModel.factory(
                     container.repository,
+                    container.subtitleRepository,
                     container.store,
                     route.sourceId,
                     route.animeUrl,

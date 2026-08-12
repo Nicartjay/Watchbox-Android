@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import space.nicart.watchbox.core.ui.AppTheme
 import space.nicart.watchbox.data.local.AppSettings
 import space.nicart.watchbox.data.local.WatchBoxStore
+import space.nicart.watchbox.data.remote.SubtitleProvider
 import space.nicart.watchbox.ui.player.SubtitleBackground
 import space.nicart.watchbox.ui.player.SubtitleEdgeWidth
 import space.nicart.watchbox.ui.player.SubtitleSize
@@ -143,6 +144,14 @@ class SettingsViewModel(
 
     fun setSubtitleBackgroundOpacity(opacity: Float) {
         viewModelScope.launch { store.setSubtitleBackgroundOpacity(opacity) }
+    }
+
+    fun setSubtitleProvider(provider: SubtitleProvider) {
+        viewModelScope.launch { store.setSubtitleProvider(provider) }
+    }
+
+    fun setSubtitleApiKey(key: String) {
+        viewModelScope.launch { store.setSubtitleApiKey(key) }
     }
 
     fun setUiScale(scale: Float) {

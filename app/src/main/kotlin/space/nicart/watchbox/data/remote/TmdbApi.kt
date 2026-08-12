@@ -116,7 +116,10 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
         val body = request(
             path = "${type.path}/$id",
             params = mapOf(
-                "append_to_response" to "images",
+                // external_ids rides along on the request we already make, so the IMDb id
+                // costs nothing extra. Subtitle providers key on IMDb, not TMDB, and this
+                // is the only place the two are ever linked.
+                "append_to_response" to "images,external_ids",
                 // Language-neutral logos are usually the clean, text-only ones.
                 "include_image_language" to "en,ja,null",
             ),
@@ -129,6 +132,7 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
             tmdbId = id,
             type = type,
             title = dto.displayTitle,
+            imdbId = dto.resolvedImdbId,
             backdropUrl = image(dto.backdropPath, BACKDROP_SIZE),
             // Full resolution, for the TV home's full-screen hero. w1280 is narrower
             // than the panel it fills there, so it visibly upscales.
@@ -348,6 +352,13 @@ data class TmdbArtwork(
     val tmdbId: Int,
     val type: TmdbType,
     val title: String,
+    /**
+     * IMDb id, when TMDB has one. Null is common for obscure titles.
+     *
+     * Carried because subtitle providers index by IMDb rather than TMDB, and this lookup is
+     * the only point where the app sees both.
+     */
+    val imdbId: String? = null,
     val backdropUrl: String?,
     /** The same backdrop at full resolution, for a full-bleed hero. */
     val heroBackdropUrl: String?,
@@ -409,8 +420,21 @@ private data class DetailsResponse(
     @SerialName("number_of_seasons") val numberOfSeasons: Int = 0,
     val genres: List<Genre>? = null,
     val images: Images? = null,
+    /** Present on movies at the top level. TV series carry it under external_ids only. */
+    @SerialName("imdb_id") val imdbId: String? = null,
+    @SerialName("external_ids") val externalIds: ExternalIds? = null,
 ) {
     val displayTitle: String get() = name ?: title ?: ""
+
+    /**
+     * The IMDb id, from wherever this response happens to carry it.
+     *
+     * Movies expose `imdb_id` at the top level; TV series only inside `external_ids`. Blanks
+     * are treated as absent because TMDB returns an empty string rather than null for titles
+     * it has no IMDb match for.
+     */
+    val resolvedImdbId: String?
+        get() = (imdbId ?: externalIds?.imdbId)?.takeIf { it.isNotBlank() }
 
     val year: String? get() = (firstAirDate ?: releaseDate)
         ?.take(4)
@@ -434,6 +458,9 @@ private data class Genre(val name: String = "")
 
 @Serializable
 private data class Images(val logos: List<ImageEntry>? = null)
+
+@Serializable
+private data class ExternalIds(@SerialName("imdb_id") val imdbId: String? = null)
 
 @Serializable
 private data class ImageEntry(

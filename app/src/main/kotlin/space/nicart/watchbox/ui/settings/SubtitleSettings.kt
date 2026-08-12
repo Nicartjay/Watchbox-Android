@@ -16,21 +16,40 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import space.nicart.watchbox.R
+import space.nicart.watchbox.core.ui.LocalLayoutMetrics
+import space.nicart.watchbox.core.ui.adaptiveFocus
+import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.wb
+import space.nicart.watchbox.data.remote.SubtitleProvider
 import space.nicart.watchbox.ui.components.WbChip
 import space.nicart.watchbox.ui.player.SUBTITLE_TEXT_COLORS
 import space.nicart.watchbox.ui.player.SubtitleBackground
@@ -157,6 +176,152 @@ fun SubtitleSizeRow(
         }
     }
 }
+
+/**
+ * Which online catalogue the player searches.
+ *
+ * Two chips rather than a toggle: the labels have to name the providers, because the
+ * difference between them is not a degree of the same thing.
+ */
+@Composable
+fun SubtitleProviderRow(
+    selected: SubtitleProvider,
+    onSelect: (SubtitleProvider) -> Unit,
+) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(SubtitleProvider.entries.size) { index ->
+            val provider = SubtitleProvider.entries[index]
+            WbChip(
+                label = stringResource(
+                    when (provider) {
+                        SubtitleProvider.OPEN_SUBTITLES_LEGACY ->
+                            R.string.settings_subtitle_provider_free
+                        SubtitleProvider.OPEN_SUBTITLES_API ->
+                            R.string.settings_subtitle_provider_api
+                    },
+                ),
+                selected = provider == selected,
+                onClick = { onSelect(provider) },
+            )
+        }
+    }
+}
+
+/**
+ * The OpenSubtitles API key.
+ *
+ * Kept as a draft until committed so a half-typed key is never saved and used for a search.
+ * The saved value is not echoed back into the field - it is a credential, and there is nothing
+ * useful to do with it on screen beyond confirming that one is set.
+ */
+@Composable
+fun SubtitleApiKeyField(
+    saved: String,
+    onSave: (String) -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+    val metrics = LocalLayoutMetrics.current
+    val focus = remember { FocusRequester() }
+
+    var draft by remember { mutableStateOf("") }
+    var editing by remember { mutableStateOf(false) }
+
+    Text(
+        text = stringResource(R.string.settings_subtitle_api_key),
+        style = MaterialTheme.typography.labelMedium,
+        color = tokens.colors.textMuted,
+    )
+    Spacer(Modifier.height(6.dp))
+
+    // On TV a TextField that takes focus on entry raises the IME, which then swallows every
+    // D-pad press and makes the rest of the screen unreachable. Pressing OK on this row is
+    // what hands focus to the field. Same convention as the repository field.
+    if (metrics.isTv && !editing) {
+        SubtitleKeyRow(
+            label = when {
+                draft.isNotBlank() -> draft.masked()
+                saved.isNotBlank() -> stringResource(R.string.settings_subtitle_api_key_set)
+                else -> stringResource(R.string.settings_subtitle_api_key_hint)
+            },
+            onClick = { editing = true },
+        )
+        return
+    }
+
+    OutlinedTextField(
+        value = draft,
+        onValueChange = { draft = it },
+        placeholder = {
+            Text(
+                text = if (saved.isNotBlank()) {
+                    stringResource(R.string.settings_subtitle_api_key_set)
+                } else {
+                    stringResource(R.string.settings_subtitle_api_key_hint)
+                },
+                color = tokens.colors.textMuted,
+            )
+        },
+        singleLine = true,
+        shape = RoundedCornerShape(12.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = tokens.colors.surface,
+            unfocusedContainerColor = tokens.colors.surface,
+            focusedBorderColor = tokens.colors.borderDefault,
+            unfocusedBorderColor = tokens.colors.borderSubtle,
+            focusedTextColor = tokens.colors.textPrimary,
+            unfocusedTextColor = tokens.colors.textPrimary,
+            cursorColor = tokens.colors.accent,
+        ),
+        // Done commits, so a remote's OK saves the key without having to reach a button.
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(
+            onDone = {
+                onSave(draft)
+                draft = ""
+                editing = false
+            },
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .focusRequester(focus),
+    )
+
+    LaunchedEffect(editing) {
+        if (editing) runCatching { focus.requestFocus() }
+    }
+}
+
+/** Row that stands in for the key field on TV until the user opens it. */
+@Composable
+private fun SubtitleKeyRow(label: String, onClick: () -> Unit) {
+    val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
+            .clip(RoundedCornerShape(12.dp))
+            .background(tokens.colors.surface)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = tokens.colors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** Shows only the tail of a key, so a shoulder-surfer sees nothing useful. */
+private fun String.masked(): String =
+    if (length <= MASK_VISIBLE) "•".repeat(length) else "•".repeat(MASK_VISIBLE) + takeLast(MASK_VISIBLE)
+
+private const val MASK_VISIBLE = 4
 
 /**
  * Background style options, one per row.

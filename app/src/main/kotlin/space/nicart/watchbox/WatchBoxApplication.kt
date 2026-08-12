@@ -17,7 +17,9 @@ import space.nicart.watchbox.data.remote.UpdateInstaller
 import space.nicart.watchbox.extension.ExtensionInstaller
 import space.nicart.watchbox.extension.ExtensionManager
 import space.nicart.watchbox.extension.ExtensionRepoApi
+import space.nicart.watchbox.data.remote.SubtitleApi
 import space.nicart.watchbox.domain.AnimeRepository
+import space.nicart.watchbox.domain.SubtitleRepository
 import space.nicart.watchbox.extension.installExtensionInjekt
 
 /**
@@ -109,6 +111,13 @@ class AppContainer(
     )
 
     val repository = AnimeRepository(extensionManager, tmdbApi)
+
+    /** Online subtitle search, on the shared app-level client. */
+    val subtitleRepository = SubtitleRepository(
+        context = application,
+        api = SubtitleApi(plainClient),
+        store = store,
+    )
 
     /**
      * Casting. One per process because it owns the local proxy socket and the

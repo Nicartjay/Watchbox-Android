@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 import space.nicart.watchbox.core.ui.AppTheme
+import space.nicart.watchbox.data.remote.SubtitleProvider
 import space.nicart.watchbox.ui.player.SubtitleBackground
 import space.nicart.watchbox.ui.player.SubtitleEdgeWidth
 import space.nicart.watchbox.ui.player.SubtitleSize
@@ -67,6 +68,11 @@ class WatchBoxStore(context: Context) {
                     SubtitleEdgeWidth.MEDIUM,
                 ),
                 subtitleLanguage = prefs[Keys.SUB_LANG] ?: "en",
+                subtitleProvider = enumOrDefault(
+                    prefs[Keys.SUB_PROVIDER],
+                    SubtitleProvider.OPEN_SUBTITLES_LEGACY,
+                ),
+                subtitleApiKey = prefs[Keys.SUB_API_KEY].orEmpty(),
                 lastServerId = prefs[Keys.LAST_SERVER],
                 tvSourceId = prefs[Keys.TV_SOURCE],
             )
@@ -192,6 +198,10 @@ class WatchBoxStore(context: Context) {
         it[Keys.SUB_EDGE_WIDTH] = width.name
     }
     suspend fun setSubtitleLanguage(lang: String) = store.edit { it[Keys.SUB_LANG] = lang }
+    suspend fun setSubtitleProvider(provider: SubtitleProvider) = store.edit {
+        it[Keys.SUB_PROVIDER] = provider.name
+    }
+    suspend fun setSubtitleApiKey(key: String) = store.edit { it[Keys.SUB_API_KEY] = key.trim() }
     suspend fun setLastServerId(id: String?) = store.edit { prefs ->
         if (id == null) prefs.remove(Keys.LAST_SERVER) else prefs[Keys.LAST_SERVER] = id
     }
@@ -322,6 +332,8 @@ class WatchBoxStore(context: Context) {
         val UI_SCALE = floatPreferencesKey("ui_scale")
         val POSTER_SCALE = floatPreferencesKey("poster_scale")
         val SUB_LANG = stringPreferencesKey("subtitle_language")
+        val SUB_PROVIDER = stringPreferencesKey("subtitle_provider")
+        val SUB_API_KEY = stringPreferencesKey("subtitle_api_key")
         val LAST_SERVER = stringPreferencesKey("last_server_id")
         val TV_SOURCE = longPreferencesKey("tv_selected_source")
         val HISTORY = stringPreferencesKey("watch_history")
@@ -353,6 +365,10 @@ data class AppSettings(
     /** Multiplier applied to poster and card sizes only. */
     val posterScale: Float = 1f,
     val subtitleLanguage: String = "en",
+    /** Which online catalogue the subtitle search uses. */
+    val subtitleProvider: SubtitleProvider = SubtitleProvider.OPEN_SUBTITLES_LEGACY,
+    /** Key for the OpenSubtitles REST API. Empty means that provider is unavailable. */
+    val subtitleApiKey: String = "",
     val lastServerId: String? = null,
     /**
      * The source chosen in the TV navigation rail.

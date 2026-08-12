@@ -30,7 +30,9 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.foundation.layout.Spacer
@@ -50,6 +52,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,6 +62,7 @@ import space.nicart.watchbox.core.ui.adaptiveFocus
 import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.core.ui.wbType
+import space.nicart.watchbox.data.remote.SubtitleResult
 import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.domain.StreamOption
 import kotlinx.coroutines.delay
@@ -80,6 +84,8 @@ fun PlayerPanels(
     onSelectSpeed: (Float) -> Unit,
     onSelectEpisode: (EpisodeEntry) -> Unit,
     onOpenSubtitleSettings: () -> Unit,
+    onSearchSubtitles: () -> Unit,
+    onApplySubtitle: (SubtitleResult) -> Unit,
     subtitleStyle: SubtitleStyle,
     onSetSubtitleSize: (SubtitleSize) -> Unit,
     onSetSubtitleBackground: (SubtitleBackground) -> Unit,
@@ -154,11 +160,27 @@ fun PlayerPanels(
 
                         Spacer(Modifier.height(12.dp))
 
+                        // Offered even when the source supplied tracks: the usual reason to
+                        // come here is that the ones on offer are absent, wrong or out of sync.
+                        PanelActionRow(
+                            label = stringResource(R.string.player_subtitle_search),
+                            onClick = onSearchSubtitles,
+                            icon = Icons.Rounded.Search,
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
                         PanelActionRow(
                             label = stringResource(R.string.player_subtitle_appearance),
                             onClick = onOpenSubtitleSettings,
                         )
                     }
+
+                    PlayerPanel.SUBTITLE_SEARCH -> SubtitleSearchPanel(
+                        search = state.subtitleSearch,
+                        onApply = onApplySubtitle,
+                        onRetry = onSearchSubtitles,
+                    )
 
                     PlayerPanel.SPEED -> PanelList(
                         title = stringResource(R.string.player_speed),
@@ -212,6 +234,185 @@ private fun PlayerPanelSurface(
     }
 }
 
+/**
+ * Results from an online subtitle search.
+ *
+ * Every state of the search draws something, because a panel that opens empty while a request
+ * is in flight is indistinguishable from one that is broken. Selecting a row downloads it and
+ * turns it on in one step - a user who picked from this list wants to see that subtitle, not to
+ * then find it again in the track list.
+ */
+@Composable
+private fun SubtitleSearchPanel(
+    search: SubtitleSearchState,
+    onApply: (SubtitleResult) -> Unit,
+    onRetry: () -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Text(
+            text = stringResource(R.string.player_subtitle_search),
+            style = MaterialTheme.typography.headlineSmall,
+            color = tokens.colors.textPrimary,
+            fontWeight = FontWeight.SemiBold,
+        )
+
+        Spacer(Modifier.height(16.dp))
+
+        when (search) {
+            is SubtitleSearchState.Searching -> PanelNotice(
+                text = stringResource(R.string.player_subtitle_searching),
+                busy = true,
+            )
+
+            is SubtitleSearchState.Empty -> PanelNotice(
+                text = stringResource(R.string.player_subtitle_search_empty),
+                actionLabel = stringResource(R.string.player_subtitle_search_retry),
+                onAction = onRetry,
+            )
+
+            is SubtitleSearchState.Unsupported -> PanelNotice(
+                text = stringResource(R.string.player_subtitle_search_unsupported),
+            )
+
+            is SubtitleSearchState.Failed -> PanelNotice(
+                text = stringResource(R.string.player_subtitle_search_failed),
+                actionLabel = stringResource(R.string.player_subtitle_search_retry),
+                onAction = onRetry,
+            )
+
+            is SubtitleSearchState.Results -> SubtitleResultList(
+                results = search.results,
+                downloadingId = null,
+                onApply = onApply,
+            )
+
+            // The list stays on screen during a download, with a spinner on the chosen row:
+            // replacing it with a bare spinner would hide what was picked, and the download is
+            // brief enough that the flash of an empty panel is worse than the wait.
+            is SubtitleSearchState.Downloading -> SubtitleResultList(
+                results = search.previous,
+                downloadingId = search.id,
+                onApply = onApply,
+            )
+
+            // Applied is transient - the player closes this panel on seeing it - so there is
+            // nothing to draw for either of these.
+            SubtitleSearchState.Idle,
+            SubtitleSearchState.Applied,
+            -> Unit
+        }
+    }
+}
+
+/** One tappable search result. */
+@Composable
+private fun SubtitleResultList(
+    results: List<SubtitleResult>,
+    downloadingId: String?,
+    onApply: (SubtitleResult) -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        items(results, key = { it.id }) { result ->
+            val interaction = rememberFocusInteraction()
+            val busy = result.id == downloadingId
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(
+                        interactionSource = interaction,
+                        indication = LocalIndication.current,
+                        // Locked during a download so a second press cannot start a competing
+                        // request that would finish out of order.
+                        enabled = downloadingId == null,
+                    ) { onApply(result) }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = result.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = tokens.colors.textPrimary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        // Download count is the only quality signal these catalogues give that
+                        // is not self-reported, so it is worth the second line.
+                        text = buildString {
+                            append(result.languageName.ifBlank { result.language }.uppercase())
+                            if (result.downloads > 0) append("  ·  ${result.downloads} ↓")
+                            if (result.hearingImpaired) append("  ·  HI")
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tokens.colors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                if (busy) {
+                    CircularProgressIndicator(
+                        color = tokens.colors.accent,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** A line of explanation, optionally with a spinner or a retry action. */
+@Composable
+private fun PanelNotice(
+    text: String,
+    busy: Boolean = false,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
+) {
+    val tokens = MaterialTheme.wb
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (busy) {
+                CircularProgressIndicator(
+                    color = tokens.colors.accent,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = tokens.colors.textMuted,
+            )
+        }
+
+        if (actionLabel != null && onAction != null) {
+            PanelActionRow(
+                label = actionLabel,
+                onClick = onAction,
+                icon = Icons.Rounded.Search,
+            )
+        }
+    }
+}
+
 @Composable
 private fun PanelList(
     title: String,
@@ -222,7 +423,10 @@ private fun PanelList(
 ) {
     val tokens = MaterialTheme.wb
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    // Honours the caller's modifier. It used to hardcode fillMaxSize and drop the parameter,
+    // which made the subtitle panel's list take the whole drawer and push the action rows
+    // beneath it off-screen - "Subtitle appearance" was unreachable whenever a track existed.
+    Column(modifier = modifier.fillMaxWidth()) {
         Text(
             text = title,
             style = MaterialTheme.typography.headlineSmall,
@@ -233,7 +437,10 @@ private fun PanelList(
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
+                // fill = false so a short list takes only the height it needs and leaves room
+                // for whatever the caller puts below it. A plain weight(1f) claims the entire
+                // share even when there is one entry, which is what hid the action rows.
+                .weight(1f, fill = false)
                 .padding(top = 16.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -355,7 +562,11 @@ private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
  * and making it look selectable would suggest it is another subtitle track.
  */
 @Composable
-private fun PanelActionRow(label: String, onClick: () -> Unit) {
+private fun PanelActionRow(
+    label: String,
+    onClick: () -> Unit,
+    icon: ImageVector = Icons.Rounded.Tune,
+) {
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
 
@@ -375,7 +586,7 @@ private fun PanelActionRow(label: String, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Icon(
-            imageVector = Icons.Rounded.Tune,
+            imageVector = icon,
             contentDescription = null,
             tint = tokens.colors.accent,
             modifier = Modifier.size(18.dp),
