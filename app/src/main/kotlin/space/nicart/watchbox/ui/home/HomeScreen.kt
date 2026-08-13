@@ -61,8 +61,11 @@ import space.nicart.watchbox.ui.navigation.WbNavBarScrollState
  * Keeps the Nuvio layout — hero running edge-to-edge under the status bar, no top
  * app bar, 12dp-spaced rails below — but every row is fed by an installed
  * extension. There is no cross-source trending feed in this ecosystem, so the
- * hero is drawn from the first source's popular list and each source contributes
- * one rail.
+ * hero is drawn from the first source's own rail and each source contributes one.
+ *
+ * That rail is Latest where the source supports it, falling back to Popular - see
+ * `AnimeRepository.homeRow`. The hero follows whichever it is rather than fetching a second
+ * list, so it stays consistent with the row directly beneath it.
  */
 @Composable
 fun HomeScreen(

@@ -49,7 +49,7 @@ class AnimeRepository(
 
         val rows = coroutineScope {
             sources.take(MAX_ROWS)
-                .map { source -> async { source.popularRow() } }
+                .map { source -> async { source.homeRow() } }
                 .mapNotNull { it.await() }
         }
 
@@ -128,6 +128,57 @@ class AnimeRepository(
             tmdb.lookupById(id, type)?.let { return it }
         }
         return tmdb.lookup(title, preferMovie = preferMovie)
+    }
+
+    /**
+     * The home rail for one source: its latest updates, falling back to popular.
+     *
+     * Latest is preferred because the home screen is somewhere people return to for what has
+     * appeared since last time, and a popularity chart barely moves between visits.
+     *
+     * The fallback is not optional. `supportsLatest` is part of the extension ABI and plenty of
+     * sources report false, so a straight switch would drop those sources off the home screen
+     * entirely - and if none of the installed sources supported it, [homeFeed] would treat the
+     * empty result as a failure and show its error state.
+     *
+     * A source that claims support can still return nothing, so an empty page falls back too:
+     * the claim is the extension's word, not a guarantee.
+     *
+     * The title says which list is being shown. Silently labelling a popularity chart "Latest"
+     * would be worse than either row on its own.
+     */
+    private suspend fun AnimeCatalogueSource.homeRow(): AnimeRow? {
+        val claimsLatest = runCatching { supportsLatest }.getOrDefault(false)
+
+        if (claimsLatest) {
+            val latest = guarded(what = "latest($name)", sourceId = id) {
+                val page = withTimeout(SOURCE_TIMEOUT_MS) { getLatestUpdates(1) }
+                val items = page.animes.map { it.toCard(this) }
+                if (items.isEmpty()) return@guarded null
+
+                AnimeRow(
+                    sourceId = id,
+                    sourceName = name,
+                    title = "Latest on $name",
+                    items = items,
+                )
+            }
+
+            if (latest != null) {
+                android.util.Log.i(TAG, "home row for $name: latest")
+                return latest
+            }
+        }
+
+        // Logged so which list a source ended up on is answerable without a screenshot. A
+        // successful row is otherwise silent, and "latest was requested" and "latest was
+        // actually shown" are different claims - the fallback is invisible from the outside.
+        android.util.Log.i(
+            TAG,
+            "home row for $name: popular" +
+                if (claimsLatest) " (latest returned nothing)" else " (no latest support)",
+        )
+        return popularRow()
     }
 
     private suspend fun AnimeCatalogueSource.popularRow(): AnimeRow? = guarded(
