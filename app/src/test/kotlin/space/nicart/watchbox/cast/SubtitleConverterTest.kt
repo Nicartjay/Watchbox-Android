@@ -131,6 +131,21 @@ class SubtitleConverterTest {
         assertTrue(converted.contains("Well, hello there"), converted)
     }
 
+    /**
+     * The proxy now converts by content rather than by filename.
+     *
+     * A source's subtitle URL very often has no extension at all - the path is an opaque token -
+     * so a name-based check passed SubRip through untouched and the receiver silently showed
+     * nothing. Converting unconditionally is safe because WebVTT input is returned as-is.
+     */
+    @Test
+    fun `subrip with no filename hint is still converted`() {
+        val converted = SubtitleConverter.toWebVtt(subrip)
+
+        assertTrue(converted.startsWith("WEBVTT"))
+        assertTrue(converted.contains("00:00:06.000 --> 00:00:12.074"), converted)
+    }
+
     @Test
     fun `empty input still yields a valid header`() {
         assertTrue(SubtitleConverter.toWebVtt("").startsWith("WEBVTT"))

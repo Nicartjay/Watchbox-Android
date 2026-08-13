@@ -386,6 +386,16 @@ fun PlayerScreen(
     val brightness = remember(activityForBrightness) {
         BrightnessController(activityForBrightness)
     }
+
+    // Released when the player closes, so the dim level does not follow the user out.
+    //
+    // The window belongs to the Activity, not to this screen, and this app runs every screen in
+    // one Activity - so nothing destroys the window on leaving the player and the override
+    // persisted across the whole app. There is no brightness gesture outside the player, which
+    // left no way to undo it short of killing the app.
+    DisposableEffect(brightness) {
+        onDispose { brightness.release() }
+    }
     val volume = remember { VolumeController(context) }
     var activeGesture by remember { mutableStateOf(VerticalGesture.NONE) }
     var gestureLevel by remember { mutableFloatStateOf(0f) }

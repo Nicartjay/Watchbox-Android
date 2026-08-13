@@ -43,6 +43,14 @@ data class CastState(
     /** Chromecast and DLNA devices in one list, Chromecast first. */
     val devices: List<CastDevice> = emptyList(),
     val isDiscovering: Boolean = false,
+    /**
+     * Id of the device currently being connected to, or null.
+     *
+     * Connecting is slow and entirely silent: selecting a route, waiting for the SDK to launch
+     * the receiver app, probing the playlist and loading can take several seconds, during which
+     * the picker looked completely inert and invited a second tap on a different device.
+     */
+    val connectingDeviceId: String? = null,
     val errorMessage: String? = null,
     /**
      * Where the receiver actually is, polled while a session is live.
@@ -156,6 +164,7 @@ class CastManager(
                     isCasting = true,
                     deviceName = chromecast.deviceName,
                     protocol = CastProtocol.CHROMECAST,
+                    connectingDeviceId = null,
                 )
                 startProgressPolling()
             } else if (active === chromecast) {
@@ -169,6 +178,7 @@ class CastManager(
                     durationMs = 0L,
                     isRemotePlaying = false,
                     protocol = null,
+                    connectingDeviceId = null,
                 )
             }
         }
@@ -269,6 +279,8 @@ class CastManager(
             return
         }
 
+        _state.value = _state.value.copy(connectingDeviceId = device.id, errorMessage = null)
+
         scope.launch {
             val connected = awaitChromecastSession()
             if (!connected) {
@@ -298,6 +310,7 @@ class CastManager(
                     deviceName = chromecast.deviceName ?: device.name,
                     errorMessage = null,
                     protocol = CastProtocol.CHROMECAST,
+                    connectingDeviceId = null,
                     // Seeded from where the phone was, so the seek bar is right immediately
                     // rather than sitting at zero until the first poll answers.
                     positionMs = positionMs,
@@ -323,6 +336,8 @@ class CastManager(
     }
 
     private fun castToDlna(device: CastDevice, media: CastMedia, positionMs: Long) {
+        _state.value = _state.value.copy(connectingDeviceId = device.id, errorMessage = null)
+
         scope.launch {
             val renderer = renderers[device.id]
             if (renderer == null) {
@@ -355,6 +370,7 @@ class CastManager(
                     deviceName = renderer.friendlyName,
                     errorMessage = null,
                     protocol = CastProtocol.DLNA,
+                    connectingDeviceId = null,
                     positionMs = positionMs,
                     isRemotePlaying = true,
                 )
@@ -502,14 +518,19 @@ class CastManager(
     ): CastMedia? {
         val streamNeedsProxy = needsProxy(media.headers, _state.value.forceProxy)
 
-        // Local subtitle files need the proxy whatever the video needs: they live in this app's
-        // cache, and a receiver on another device cannot open a file:// path. This is checked
-        // separately because a stream requiring no headers used to return immediately, which
-        // would have left a downloaded subtitle unreachable on exactly the sources that cast
-        // most easily.
-        val localSubtitles = media.subtitles.count { it.isLocalFile }
+        // Every subtitle goes through the proxy, whatever the video needs.
+        //
+        // Local files obviously must: a receiver on another device cannot open a file:// path.
+        // But a source's own subtitle URL needs it too, for two reasons that are invisible
+        // until several tracks exist. The CDN usually wants the same Referer as the video, which
+        // a receiver cannot send, and the file is normally SubRip, which the receiver ignores
+        // outright - so switching tracks appeared to do nothing at all.
+        //
+        // Checked separately from the stream because a stream needing no headers returned early,
+        // which would leave subtitles unrelayed on exactly the sources that cast most easily.
+        val subtitleCount = media.subtitles.size
 
-        if (!streamNeedsProxy && localSubtitles == 0) return media
+        if (!streamNeedsProxy && subtitleCount == 0) return media
 
         // Falls back to the general outbound address when the receiver's own
         // address is unknown. A Chromecast route does not always expose one, and
@@ -522,20 +543,25 @@ class CastManager(
             return if (streamNeedsProxy) null else media
         }
 
-        val subtitles = media.subtitles.map { subtitle ->
-            if (!subtitle.isLocalFile) return@map subtitle
+        // WebVTT for Chromecast, SubRip for DLNA: each ignores the other's format.
+        val asWebVtt = protocol == CastProtocol.CHROMECAST
 
-            val file = runCatching { java.io.File(java.net.URI(subtitle.url)) }.getOrNull()
-            val published = file?.takeIf { it.isFile }?.let {
-                // WebVTT for Chromecast, SubRip for DLNA: the two receivers want opposite
-                // formats, and serving the wrong one is silently ignored by both.
-                proxy.publishSubtitle(it, asWebVtt = protocol == CastProtocol.CHROMECAST)
+        val subtitles = media.subtitles.map { subtitle ->
+            val published = if (subtitle.isLocalFile) {
+                runCatching { java.io.File(java.net.URI(subtitle.url)) }
+                    .getOrNull()
+                    ?.takeIf { it.isFile }
+                    ?.let { proxy.publishSubtitle(it, asWebVtt) }
+            } else {
+                // The stream's headers, not the subtitle's: they come from the same source and
+                // the same CDN check applies, and a subtitle carries none of its own.
+                proxy.publishRemoteSubtitle(subtitle.url, media.headers, asWebVtt)
             }
 
             if (published == null) {
                 Log.w(TAG, "could not publish subtitle: ${subtitle.label}")
-                // Dropped rather than passed through: a file:// URL the receiver cannot fetch
-                // would appear in its track menu and silently show nothing.
+                // Dropped rather than passed through: a URL the receiver cannot fetch would
+                // appear in its track menu and silently show nothing.
                 null
             } else {
                 subtitle.copy(url = published, isLocalFile = false)
@@ -545,7 +571,7 @@ class CastManager(
         if (!streamNeedsProxy) {
             // The video is handed over directly and only the subtitles go through us, which
             // keeps the phone out of the video path where it does not need to be.
-            Log.i(TAG, "casting direct, $localSubtitles subtitle(s) via local proxy")
+            Log.i(TAG, "casting direct, $subtitleCount subtitle(s) via local proxy")
             return media.copy(subtitles = subtitles)
         }
 
@@ -648,6 +674,7 @@ class CastManager(
             durationMs = 0L,
             isRemotePlaying = false,
             protocol = null,
+            connectingDeviceId = null,
         )
     }
 
@@ -665,6 +692,7 @@ class CastManager(
             durationMs = 0L,
             isRemotePlaying = false,
             protocol = null,
+            connectingDeviceId = null,
         )
     }
 

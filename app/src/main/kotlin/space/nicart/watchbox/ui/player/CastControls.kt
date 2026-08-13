@@ -279,6 +279,8 @@ fun CastPanel(
                                         label = device.name,
                                         selected = false,
                                         onClick = { onSelectDevice(device) },
+                                        connecting = state.connectingDeviceId == device.id,
+                                        enabled = state.connectingDeviceId == null,
                                     )
                                 }
                             }
@@ -292,6 +294,8 @@ fun CastPanel(
                                         label = device.name,
                                         selected = false,
                                         onClick = { onSelectDevice(device) },
+                                        connecting = state.connectingDeviceId == device.id,
+                                        enabled = state.connectingDeviceId == null,
                                     )
                                 }
                             }
@@ -339,15 +343,20 @@ private fun CastRow(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
+    connecting: Boolean = false,
+    enabled: Boolean = true,
 ) {
     val tokens = MaterialTheme.wb
+    val onColor = if (selected) tokens.colors.onAccent else tokens.colors.textPrimary
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(if (selected) tokens.colors.accent else tokens.colors.surfaceCard)
-            .clickable(onClick = onClick)
+            // Disabled while a connection is in flight. Selecting a second device mid-handshake
+            // starts a competing session, and the two then race to load.
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -361,10 +370,22 @@ private fun CastRow(
         Text(
             text = label,
             style = MaterialTheme.typography.titleMedium,
-            color = if (selected) tokens.colors.onAccent else tokens.colors.textPrimary,
+            color = onColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
         )
+
+        if (connecting) {
+            Spacer(Modifier.weight(1f))
+            // Sized to the text, not the row: a full-size indicator would change the row
+            // height and make the list jump as it appears.
+            CircularProgressIndicator(
+                color = onColor,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(16.dp),
+            )
+        }
     }
 }
 

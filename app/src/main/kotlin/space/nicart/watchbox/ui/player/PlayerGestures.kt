@@ -8,12 +8,16 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Screen brightness for the player window only.
+ * Screen brightness for the player only.
  *
- * Deliberately window-local rather than a change to the system setting: a video
- * player dimming the whole device, permanently, would be hostile, and writing
- * system brightness needs WRITE_SETTINGS. Android restores the system value
- * automatically when the window goes away.
+ * Deliberately window-local rather than a change to the system setting: a video player dimming
+ * the whole device permanently would be hostile, and writing system brightness needs
+ * WRITE_SETTINGS.
+ *
+ * The override must be released explicitly - see [release]. Android only restores the system
+ * value when the *window* is destroyed, and this app has one Activity for every screen, so
+ * leaving the player does not destroy anything. A brightness set here therefore outlived the
+ * player and applied to the whole app, with no gesture anywhere else to undo it.
  */
 class BrightnessController(private val activity: Activity?) {
 
@@ -43,6 +47,24 @@ class BrightnessController(private val activity: Activity?) {
     /** Resolves the starting point for a gesture. */
     fun currentOrDefault(): Float =
         if (level == INITIAL_UNKNOWN) DEFAULT_START else level
+
+    /**
+     * Hands brightness back to the system.
+     *
+     * BRIGHTNESS_OVERRIDE_NONE is the documented "follow the system" value, so this restores the
+     * device's own brightness - including automatic brightness - rather than guessing at a level
+     * to set. Safe to call when nothing was ever changed.
+     */
+    fun release() {
+        val activity = activity ?: return
+
+        activity.window?.let { window ->
+            window.attributes = window.attributes.apply {
+                screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+        }
+        level = INITIAL_UNKNOWN
+    }
 
     private companion object {
         const val INITIAL_UNKNOWN = -1f

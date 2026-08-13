@@ -64,8 +64,23 @@ class CastProxyServer(
 
     val isRunning: Boolean get() = socket?.isClosed == false
 
-    /** Local subtitle files published for the receiver, by id. */
-    private val subtitles = ConcurrentHashMap<String, java.io.File>()
+    /** Subtitles published for the receiver, by id. */
+    private val subtitles = ConcurrentHashMap<String, PublishedSubtitle>()
+
+    /**
+     * A subtitle the receiver can fetch from us.
+     *
+     * Either a file in this app's cache or a remote URL that needs headers. Both go through the
+     * proxy for the same two reasons: a receiver cannot send a `Referer`, and it only accepts
+     * WebVTT - so a source's own `.srt` link fails whether or not it is reachable.
+     */
+    data class PublishedSubtitle(
+        val file: java.io.File? = null,
+        val url: String? = null,
+        val headers: Map<String, String> = emptyMap(),
+        /** Used to decide conversion when a remote URL carries no usable extension. */
+        val name: String = url ?: file?.name.orEmpty(),
+    )
 
     data class ProxiedStream(
         val id: String,
@@ -157,11 +172,28 @@ class CastProxyServer(
      * The URL always ends `.vtt`: receivers sniff the extension, and the body is converted to
      * WebVTT on the way out regardless of what the file holds.
      */
-    fun publishSubtitle(file: java.io.File, asWebVtt: Boolean): String? {
+    fun publishSubtitle(file: java.io.File, asWebVtt: Boolean): String? =
+        publishSubtitle(PublishedSubtitle(file = file), asWebVtt)
+
+    /**
+     * Publishes a remote subtitle so the receiver fetches it through us.
+     *
+     * Source-supplied subtitles were handed over as their original CDN URL. That fails twice: the
+     * CDN often requires the same `Referer` as the video, which a receiver cannot send, and the
+     * file is usually SubRip, which the receiver ignores. Relaying fixes both - the headers are
+     * added here and the body is converted on the way out.
+     */
+    fun publishRemoteSubtitle(
+        url: String,
+        headers: Map<String, String>,
+        asWebVtt: Boolean,
+    ): String? = publishSubtitle(PublishedSubtitle(url = url, headers = headers), asWebVtt)
+
+    private fun publishSubtitle(entry: PublishedSubtitle, asWebVtt: Boolean): String? {
         val host = boundHost ?: return null
         val id = nextId.getAndIncrement().toString()
 
-        subtitles[id] = file
+        subtitles[id] = entry
 
         // The extension decides the conversion, because receivers sniff the path and the two
         // protocols want opposite things: a Cast receiver accepts only WebVTT, while DLNA
@@ -266,12 +298,12 @@ class CastProxyServer(
             // Local subtitle file, converted to WebVTT on the way out.
             path.startsWith("/sub/") -> {
                 val id = path.removePrefix("/sub/").substringBefore('.')
-                val file = subtitles[id]
-                if (file == null || !file.isFile) {
+                val entry = subtitles[id]
+                if (entry == null) {
                     writeStatus(output, 404, "Not Found")
                 } else {
                     writeSubtitle(
-                        file = file,
+                        entry = entry,
                         request = request,
                         output = output,
                         asWebVtt = path.endsWith(".vtt", ignoreCase = true),
@@ -432,21 +464,37 @@ class CastProxyServer(
      * file on disk, since the header and timestamp rewrites change the byte count.
      */
     private fun writeSubtitle(
-        file: java.io.File,
+        entry: PublishedSubtitle,
         request: HttpRequest,
         output: OutputStream,
         asWebVtt: Boolean,
     ) {
         val converted = runCatching {
-            val raw = file.readText()
-            if (asWebVtt && SubtitleConverter.needsConversion(file.name)) {
-                SubtitleConverter.toWebVtt(raw)
-            } else {
-                raw
+            val raw = when {
+                entry.file != null -> entry.file.readText()
+
+                entry.url != null -> {
+                    val builder = Request.Builder().url(entry.url)
+                    entry.headers.forEach { (name, value) -> builder.header(name, value) }
+                    client.newCall(builder.build()).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            error("upstream ${response.code}")
+                        }
+                        response.body.string()
+                    }
+                }
+
+                else -> error("no source")
             }
+
+            // Converted whenever WebVTT was asked for and the text is not already WebVTT.
+            // Judged from the content rather than the name: a source's subtitle URL frequently
+            // has no extension at all, so a name check alone would pass SubRip through
+            // unconverted and the receiver would silently show nothing.
+            if (asWebVtt) SubtitleConverter.toWebVtt(raw) else raw
         }.getOrElse {
-            Log.w(TAG, "could not read subtitle: ${it.javaClass.simpleName}")
-            writeStatus(output, 500, "Internal Server Error")
+            Log.w(TAG, "could not read subtitle: ${it.javaClass.simpleName}: ${it.message}")
+            writeStatus(output, 502, "Bad Gateway")
             return
         }
 
