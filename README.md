@@ -5,7 +5,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/Nicartjay/Watchbox-Android?style=for-the-badge&label=Release&color=6C5CE7&logo=github)](https://github.com/Nicartjay/Watchbox-Android/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/Nicartjay/Watchbox-Android/total?style=for-the-badge&color=6C5CE7&logo=android&logoColor=white)](https://github.com/Nicartjay/Watchbox-Android/releases)
 [![Stars](https://img.shields.io/github/stars/Nicartjay/Watchbox-Android?style=for-the-badge&color=6C5CE7&logo=github)](https://github.com/Nicartjay/Watchbox-Android/stargazers)
-[![License](https://img.shields.io/github/license/Nicartjay/Watchbox-Android?style=for-the-badge&color=6C5CE7)](#-license)
+[![License](https://img.shields.io/github/license/Nicartjay/Watchbox-Android?style=for-the-badge&color=6C5CE7)](LICENSE)
 [![Issues](https://img.shields.io/github/issues/Nicartjay/Watchbox-Android?style=for-the-badge&color=6C5CE7&logo=github)](https://github.com/Nicartjay/Watchbox-Android/issues)
 
 [![Platform](https://img.shields.io/badge/Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#%EF%B8%8F-download)
@@ -460,13 +460,12 @@ Yes — different package names, so they coexist. They do not share library or s
 
 ## 📜 License
 
-Released under the **[GNU GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.en.html)**,
-which is required rather than chosen: the design system is ported from GPL-3.0 code.
+Released under the **[GNU GPL-3.0](LICENSE)**, which is required rather than chosen:
+the design system is ported from GPL-3.0 code, and the GPL is copyleft.
 
-> [!NOTE]
-> GitHub reports this repository as GPL-3.0, but **no `LICENSE` file is committed**.
-> Adding the full GPL-3.0 text at the repository root is outstanding — until then the
-> licence is asserted here and in the repository metadata only.
+In short — you may use, study, modify and redistribute this, including commercially,
+provided derivative works stay under the GPL-3.0 and ship their source. See
+[`LICENSE`](LICENSE) for the terms that actually govern.
 
 ### Credits
 
