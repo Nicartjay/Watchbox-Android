@@ -10,6 +10,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import kotlin.random.Random
 import kotlinx.coroutines.withTimeout
 import space.nicart.watchbox.data.remote.TmdbApi
 import space.nicart.watchbox.data.remote.TmdbArtwork
@@ -66,17 +67,49 @@ class AnimeRepository(
             error(detail)
         }
 
-        // Only the hero is enriched: it is the one place a wide backdrop and a
-        // title logo are actually shown, and enriching whole rails would mean a
-        // TMDB request per poster.
+        // The spotlight is drawn at random from every source, not from the head of one row.
+        //
+        // Taking the first row's opening titles meant the same handful every launch - a
+        // catalogue's ordering barely moves - and no other source was ever represented.
+        //
+        // Deduplicated by key before sampling: the same title routinely appears in several
+        // catalogues, and a carousel repeating it looks broken. Shuffled then taken, so the
+        // pick is uniform across the whole pool rather than favouring whichever source
+        // happened to return first.
+        //
+        // Seeded per calendar day rather than left to chance. The feed reloads whenever the
+        // installed extension set changes, and an unseeded shuffle would silently swap the
+        // cards under the carousel while the user was looking at it - the pager is keyed on
+        // item count, so a same-length reshuffle does not reset the position, it just changes
+        // what each page shows. A daily seed keeps the selection stable within a session and
+        // still gives a different spotlight tomorrow.
         val hero = coroutineScope {
-            rows.first().items.take(MAX_HERO)
+            val pool = rows.asSequence()
+                .flatMap { it.items.asSequence() }
+                .distinctBy { it.key }
+                .toList()
+
+            pool.shuffled(Random(heroSeed()))
+                .take(MAX_HERO)
+                // Only the hero is enriched: it is the one place a wide backdrop and a title
+                // logo are actually shown, and enriching whole rails would mean a TMDB request
+                // per poster.
                 .map { card -> async { card.enriched() } }
                 .awaitAll()
         }
 
         HomeFeed(hero = hero, rows = rows)
     }
+
+    /**
+     * Shuffle seed for the spotlight: stable for a calendar day.
+     *
+     * Derived from the local date so the carousel does not reorder itself mid-session, and so
+     * two launches on the same day agree. `currentTimeMillis` is deliberate rather than a
+     * monotonic clock - the intent is "today", which is a wall-clock notion.
+     */
+    private fun heroSeed(): Long =
+        System.currentTimeMillis() / MILLIS_PER_DAY
 
     /**
      * Enriches one card on demand.
@@ -161,6 +194,7 @@ class AnimeRepository(
                     sourceName = name,
                     title = "Latest on $name",
                     items = items,
+                    isLatest = true,
                 )
             }
 
@@ -648,6 +682,9 @@ class AnimeRepository(
         )
         const val MAX_ROWS = 12
         const val MAX_HERO = 6
+
+        /** Length of the spotlight's shuffle window. */
+        const val MILLIS_PER_DAY = 24L * 60 * 60 * 1000
     }
 }
 
