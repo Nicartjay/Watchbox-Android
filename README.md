@@ -1,128 +1,265 @@
 # WatchBox for Android
 
-A native Android anime client built with Kotlin and Jetpack Compose. Content comes
-entirely from **user-installed Aniyomi-compatible extensions** — the app ships no
-sources, no extension repository, and hosts no media of its own.
+### A native anime, movie and series client for Android phones, tablets and TV
 
-The interface is a deliberate port of
-[NuvioMobile](https://github.com/NuvioMedia/NuvioMobile)'s design system — same
-tokens, typography, spacing, poster metrics, floating pill navigation and player
-chrome.
+[![Latest Release](https://img.shields.io/github/v/release/Nicartjay/Watchbox-Android?style=for-the-badge&label=Release&color=6C5CE7&logo=github)](https://github.com/Nicartjay/Watchbox-Android/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Nicartjay/Watchbox-Android/total?style=for-the-badge&color=6C5CE7&logo=android&logoColor=white)](https://github.com/Nicartjay/Watchbox-Android/releases)
+[![Stars](https://img.shields.io/github/stars/Nicartjay/Watchbox-Android?style=for-the-badge&color=6C5CE7&logo=github)](https://github.com/Nicartjay/Watchbox-Android/stargazers)
+[![License](https://img.shields.io/github/license/Nicartjay/Watchbox-Android?style=for-the-badge&color=6C5CE7)](#-license)
+[![Issues](https://img.shields.io/github/issues/Nicartjay/Watchbox-Android?style=for-the-badge&color=6C5CE7&logo=github)](https://github.com/Nicartjay/Watchbox-Android/issues)
+
+[![Platform](https://img.shields.io/badge/Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#%EF%B8%8F-download)
+[![Platform](https://img.shields.io/badge/Android_TV-6C5CE7?style=for-the-badge&logo=youtube&logoColor=white)](#%EF%B8%8F-download)
+[![Kotlin](https://img.shields.io/badge/Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](#-tech-stack)
+[![Compose](https://img.shields.io/badge/Jetpack_Compose-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white)](#-tech-stack)
+
+[**Overview**](#-overview) ·
+[**Download**](#%EF%B8%8F-download) ·
+[**First run**](#-first-run) ·
+[**Features**](#-features) ·
+[**Casting**](#-casting) ·
+[**Build**](#-build) ·
+[**Architecture**](#-architecture) ·
+[**FAQ**](#-faq) ·
+[**License**](#-license)
 
 ---
 
-## Features
+## 🎬 Overview
 
-- **Home** — hero pager with auto-advance and parallax, Continue Watching, My
-  List, and one rail per installed source
-- **Browse** — a grid of installed sources led by their extension icons, each
-  opening paged Popular/Latest grids with per-source search and the source's own
-  filters
-- **Extensions** — multiple repositories, each independently switchable; search
-  and filter by language, adult content and repository; per-extension settings for
-  extensions that expose them; load failures surfaced rather than hidden
-- **Detail** — parallax hero with a multi-stop scrim, collapsing floating header,
-  expanding action row, and the episode list
-- **Player** — Media3/ExoPlayer with HLS + MP4, quality/subtitle/speed pickers,
-  episode switcher, aspect-ratio cycling, tap and drag gestures, brightness and
-  volume swipes, and a lock mode
-- **Casting** — Chromecast and DLNA in one device list, with a local
-  header-injecting proxy for streams whose CDN requires a `Referer`, plus a
-  hand-off to Web Video Caster for receivers this app does not speak
-- **Subtitles** — size, background style (none, outline, drop shadow, box,
-  full-width band), outline/shadow width, colour and opacity, adjustable from
-  Settings or from inside the player
-- **Search** — debounced search across every installed source at once, grouped
-  per source, or narrowed to a single source
-- **Library** — My List, in-progress, and full history
-- **Settings** — seven accent themes, AMOLED black, auto-play-next, repository
-  management, subtitle appearance, and an 18+ toggle
+WatchBox is a native Android client for anime, movies and series, written in Kotlin
+and Jetpack Compose.
 
-### Android TV and tablets
+Content comes entirely from **user-installed Aniyomi-compatible extensions**. The app
+ships no sources, no extension repository, and hosts no media of its own — it is the
+player and the library, and you decide what it reads from.
 
-A separate build with its own UI, not the phone layout stretched. It is the
-recommended build on a tablet as well as a television — both have the screen area it
-is designed around:
+| 📺 Two real UIs | 🔌 Extension-driven | 📡 Cast anywhere | 💬 Subtitles |
+|---|---|---|---|
+| Separate phone and big-screen builds | Aniyomi lib 12–15 | Chromecast + DLNA | Search, download, style |
+
+> [!NOTE]
+> The interface is a deliberate port of
+> [NuvioMobile](https://github.com/NuvioMedia/NuvioMobile)'s design system — the same
+> tokens, typography, spacing, poster metrics, floating pill navigation and player
+> chrome.
+
+---
+
+## ⬇️ Download
+
+Grab the latest build from the **[Releases](https://github.com/Nicartjay/Watchbox-Android/releases/latest)**
+page. Two APKs per release — pick by **screen size**, not by whether the device is
+"mobile":
+
+| APK | Recommended for |
+|---|---|
+| 📱 `watchbox-X.Y.Z.apk` | Phones — portrait-first, thumb-reachable, touch affordances |
+| 📺 `watchbox-X.Y.Z-tv.apk` | **Tablets**, Android TV, Google TV, TV boxes |
+
+> [!TIP]
+> **On a tablet, install the TV APK.** A tablet has the screen area the big-screen UI
+> is drawn for: landscape 16:9 cards, a focus-following backdrop, larger posters and a
+> left navigation rail instead of a bottom bar. The phone APK on a tablet is just the
+> phone layout given more room.
+
+The two use different package names, so **both can be installed side by side** — worth
+doing on a tablet to compare before settling on one.
+
+<details>
+<summary><b>Two things to know before installing the TV build on a tablet</b></summary>
+
+Neither of these is a bug:
+
+- **It is landscape-only.** Locked to `sensorLandscape`, so it will not rotate to
+  portrait. If you hold your tablet in portrait, use the phone APK.
+- **Affordance is focus-based, not touch-based.** Taps work — every control is
+  genuinely clickable — but the highlight and scale follow *focus*, and ripples are
+  switched off because they are invisible at three metres. A tap therefore acts
+  without lighting up. With a keyboard, remote or D-pad attached, it behaves exactly
+  as it does on a television.
+
+</details>
+
+<details>
+<summary><b>Switching between the two builds</b></summary>
+
+The in-app updater picks its APK from the build's own form factor, decided at compile
+time, and matches release assets by filename. A tablet running the TV build therefore
+keeps getting TV builds, which is what you want. It also means:
+
+- Switching between them is a manual uninstall and reinstall — the differing package
+  names make them separate apps, not an upgrade path. Library and settings do not
+  carry across.
+- Renaming release assets by hand sends devices the wrong build. The `-tv` suffix is
+  load-bearing.
+
+</details>
+
+**Requirements:** Android 7.0 (API 24) or newer. `targetSdk` is 36.
+
+> [!TIP]
+> WatchBox checks GitHub Releases for new versions and can update itself from
+> **`Settings → Check for updates`**.
+
+---
+
+## 🚀 First run
+
+**The app ships with no extension repository.** Bundling one would decide on your
+behalf which third-party index the app fetches from, so you add your own:
+
+1. Open an `aniyomi://add-repo?url=...` link — repositories advertise themselves this
+   way and the app adds them automatically, **or**
+2. paste the URL under **Settings → Extension repositories**.
+
+Both the repository root and a direct link to its `index.min.json` are accepted; they
+normalise to the same entry. Multiple repositories can be configured and switched on
+or off independently.
+
+---
+
+## ✨ Features
+
+| Area | What it does |
+|---|---|
+| 🏠 **Home** | Spotlight carousel drawn at random from every installed source, Continue Watching, My List, and one rail per source |
+| 🔍 **Search** | Debounced search across every source at once, grouped per source, or narrowed to one |
+| 🧩 **Extensions** | Multiple repositories, each switchable; filter by language, adult content and repository; per-extension settings; load failures surfaced rather than hidden |
+| 📄 **Detail** | Parallax hero with a multi-stop scrim, collapsing floating header, expanding action row, episode list |
+| ▶️ **Player** | Media3/ExoPlayer with HLS + MP4, quality/subtitle/speed pickers, episode switcher, aspect cycling, gesture seek, brightness and volume swipes, lock mode |
+| 💬 **Subtitles** | Online search and download, plus size, background style, outline width, colour and opacity — adjustable from Settings or inside the player |
+| 📡 **Casting** | Chromecast and DLNA in one list, with a header-injecting local proxy and a Web Video Caster hand-off |
+| 📚 **Library** | My List, in-progress, and full watch history |
+| ⚙️ **Settings** | Seven accent themes, display scaling, auto-play-next, repository management, subtitle appearance and provider, 18+ toggle |
+
+<details>
+<summary><b>📺 Android TV and tablets — a separate build, not a stretched layout</b></summary>
 
 - **Leanback launcher entry** with a banner, so it appears on the TV home screen
 - **Left navigation rail** that expands on focus, replacing the bottom pill — which
   sat inside the overscan region a television can physically crop
 - **Backdrop that follows focus**, using TMDB backdrops and title logos; landscape
   16:9 cards rather than portrait posters
-- **Full D-pad navigation**, with visible focus at three-metre viewing distance
-- **Remote playback control** — directional seek, media transport keys, and Back
-  that hides the controls before leaving
+- **Full D-pad navigation**, with focus visible at three-metre viewing distance
+- **Remote playback control** — directional seek on the timeline, media transport
+  keys, and Back that hides the controls before leaving
 - **Voice search**, because typing a title with a remote is nobody's preference
 
-Landscape-only, and its highlight follows focus rather than touch — see
-[Install](#install) for what that means on a tablet.
+</details>
 
-### Phones
+<details>
+<summary><b>📱 Phones — and what happens on a tablet</b></summary>
 
 The phone build carries the touch layout: bottom pill navigation, portrait posters,
-and a single-pane detail screen. It also adapts upward if you run it on a tablet
-anyway — a navigation rail and two-pane detail above 1000dp, with column counts and
-padding scaling with width from one shared definition — so nothing is broken there,
-it is simply the smaller-screen design given more room.
+single-pane detail. It also adapts upward if you run it on a tablet anyway — a
+navigation rail and two-pane detail above 1000dp, with column counts and padding
+scaling from one shared definition. Nothing is broken there; it is simply the
+smaller-screen design given more room.
 
-## Install
+</details>
 
-Two APKs per release. Pick by screen, not by whether the device is "mobile":
+---
 
-| File | For | Why |
-|---|---|---|
-| `watchbox-<version>.apk` | Phones | Portrait-first, thumb-reachable, touch affordances |
-| `watchbox-<version>-tv.apk` | **Tablets**, Android TV, Google TV, TV boxes | Big-screen layout: landscape, larger artwork, fewer targets per row |
+## 📡 Casting
 
-**On a tablet, install the TV APK.** A tablet has the screen area the TV UI is drawn
-for, and it is the better experience on one: landscape 16:9 cards, a focus-following
-backdrop, larger posters and a left navigation rail instead of a bottom bar. The
-phone APK on a tablet is the phone layout given more room.
+Two protocols, listed together in one picker:
 
-Two things to know before you do, because neither is a bug report:
+- **Chromecast** — via the Cast SDK and `MediaRouter`, using Google's Default Media
+  Receiver (`CC1AD845`)
+- **DLNA/UPnP** — via SSDP discovery and SOAP AVTransport
 
-- **The TV build is landscape-only.** It is locked to `sensorLandscape`, so it will
-  not rotate to portrait on a tablet. If you hold your tablet in portrait, use the
-  phone APK.
-- **Affordance is focus-based, not touch-based.** Taps work — every control is
-  genuinely clickable — but the highlight and scale follow *focus*, and ripples are
-  switched off because they are invisible at three metres. A tap therefore acts
-  without lighting up. With a Bluetooth keyboard, remote or D-pad attached, the UI
-  behaves exactly as it does on a television.
+Casting is **pull-based**: you hand the receiver a URL and it opens its own connection.
+Neither Cast's `LOAD` nor DLNA's `SetAVTransportURI` carries request headers, so a
+receiver cannot send the `Referer` that extension CDNs require. A local proxy therefore
+relays those streams — the TV fetches from your phone, and your phone fetches upstream
+with the headers. Streams needing no headers skip the proxy entirely.
 
-Grab them from [Releases](../../releases/latest), or download the debug artifacts
-from any [CI run](../../actions/workflows/ci.yml).
+<details>
+<summary><b>Details that are easy to get wrong</b></summary>
 
-The two use different package names, so both can be installed side by side — worth
-doing on a tablet to compare the two before settling on one.
+Each of these silently returns zero devices, or plays nothing at all:
 
-### Updates after switching
+- **`NEARBY_WIFI_DEVICES` is required on Android 13+.** Without it the router reports
+  no routes. It is requested when the cast panel opens.
+- **A multicast lock is required for SSDP.** Android's Wi-Fi driver filters multicast
+  in hardware without one, and SSDP is entirely multicast.
+- **The SSDP socket must join the multicast group.** Several Samsung and LG models
+  reply to the group rather than the requester, so a plain `DatagramSocket` never
+  sees them.
+- **HLS manifests must be rewritten at every level.** A receiver fetches segments,
+  variant playlists and encryption keys itself.
+- **The segment format must be declared.** A Cast receiver assumes MPEG2-TS; handed
+  fragmented MP4 without being told, it reports the duration, downloads segments and
+  never renders a frame.
+- **Subtitle format differs per protocol.** Chromecast accepts only WebVTT; DLNA
+  renderers are built around SubRip and commonly ignore WebVTT. The proxy converts to
+  whichever the receiver wants.
 
-The in-app updater picks its APK from the build's own form factor, decided at compile
-time, and matches release assets by filename. A tablet running the TV build therefore
-keeps getting TV builds, which is what you want. It also means:
+</details>
 
-- Switching between the two is a manual uninstall and reinstall, since the differing
-  package names make them separate apps rather than an upgrade path. Library and
-  settings do not carry across.
-- Renaming release assets by hand sends devices the wrong build. The `-tv` suffix is
-  load-bearing.
+> [!WARNING]
+> **Most DLNA TVs cannot play HLS.** That is a receiver limitation — those sources
+> generally need Chromecast, or the Web Video Caster hand-off. Seeking is also limited
+> on proxied HLS, because the proxy deliberately does not advertise byte-range support
+> for rewritten manifests.
 
-`minSdk` is 24 (Android 7.0); `targetSdk` is 36.
+**Chromecast needs genuine Google Play Services.** Devices with a sideloaded or
+spoofed GMS register no cast route providers, so no Chromecast will ever be found.
+DLNA works there, since it needs no Google services.
 
-### First run
+---
 
-**The app ships with no extension repository.** Bundling one would decide on your
-behalf which third-party index the app fetches from, so you add your own:
+## 🔌 How extensions work
 
-- Open an `aniyomi://add-repo?url=...` link — repositories advertise themselves
-  this way, and the app adds them automatically, or
-- paste the URL under **Settings → Extension repositories**.
+This is the part worth understanding before changing anything.
 
-Both the repository root and a direct link to its `index.min.json` are accepted;
-they normalise to the same entry.
+Aniyomi-family extension APKs are compiled `compileOnly` against the Aniyomi source
+API and **bundle none of it**. Disassembling one shows a single class extending
+`eu.kanade.tachiyomi.animesource.online.AnimeHttpSource` — which is not in the APK.
+It is resolved at runtime from the host, so **this app is the extension runtime
+library**.
 
-## Build
+Three consequences:
+
+1. **The `eu.kanade.tachiyomi.*` tree is a fixed ABI.** Class names, member names,
+   signatures and even Kotlin file-facade names (`RequestsKt`, `OkHttpExtensionsKt`)
+   are load-bearing. Renaming any of them still compiles, then fails at runtime with
+   `NoSuchMethodError`.
+2. **Dependency versions are constraints, not preferences.** rxjava 1.3.8, okhttp
+   5.3.2, jsoup 1.22.1 and `androidx.preference` are what extensions were compiled
+   against.
+3. **R8 must be told to keep all of it.** Nothing references the tree statically, so
+   R8 deletes it by default — the first release build shipped 4,861 classes and zero
+   `eu.kanade.tachiyomi` ones while the debug build worked fine.
+
+Two checks guard this, both wired into CI:
+
+```bash
+python3 tools/verify-extension-abi.py               # compiled classes
+python3 tools/verify-release-abi.py <release.apk>   # after minification
+```
+
+**Supported API:** library versions **12–15**. Lib 16 is deliberately rejected — it
+made `getSeasonList` abstract and replaced the video contract with `Hoster`, so a 16
+extension would call members this app does not implement.
+
+<details>
+<summary><b>Known limitations</b></summary>
+
+- **Cloudflare-protected sources will not work.** Solving those needs a WebView to run
+  the JS challenge. `cloudflareClient` exists for ABI compatibility but is not a
+  solver, so affected sources fail rather than hang.
+- **Extensions are private to this app.** Stored in internal storage rather than
+  installed system-wide, which avoids needing `REQUEST_INSTALL_PACKAGES` and
+  `QUERY_ALL_PACKAGES` — but means they are not shared with other Aniyomi clients.
+- **No downloads and no tracker sync.**
+
+</details>
+
+---
+
+## 🛠 Build
 
 Requires **JDK 17** and the Android SDK (platform 36, build-tools 36.0.0).
 
@@ -137,124 +274,33 @@ echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties
 ./gradlew :app:assembleMobileDebug
 ```
 
-The APKs land in `app/build/outputs/apk/mobile/debug/` and
-`app/build/outputs/apk/tv/debug/`.
+APKs land in `app/build/outputs/apk/mobile/debug/` and `app/build/outputs/apk/tv/debug/`.
 
-### Configuration
+Task names are flavor-aware: `assembleRelease` does not exist — use
+`assembleMobileRelease` / `assembleTvRelease`.
+
+<details>
+<summary><b>Configuration</b></summary>
 
 Everything has a working default, so no configuration is needed to build.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `WATCHBOX_REPO_URL` | yuzono/anime-repo | Seed value for `BuildConfig.DEFAULT_REPO_URL` |
+| `WATCHBOX_REPO_URL` | yuzono/anime-repo | Seed for `BuildConfig.DEFAULT_REPO_URL` |
 | `WATCHBOX_VERSION_NAME` | current version in `app/build.gradle.kts` | Version name |
 | `WATCHBOX_VERSION_CODE` | `1` locally; CI run number in releases | Version code |
 | `TMDB_API_KEY` | a working shared key | Artwork and metadata enrichment |
 
-`WATCHBOX_REPO_URL` no longer pre-configures a repository — nothing reads it at
-runtime any more, since repositories are added by the user. It survives as a build
-constant for forks that want to hardcode one.
+Nothing reads `WATCHBOX_REPO_URL` at runtime any more, since repositories are added by
+the user. It survives as a build constant for forks that want to hardcode one.
 
-## How extensions work
+</details>
 
-This is the part worth understanding before changing anything.
+<details>
+<summary><b>Releasing</b></summary>
 
-Aniyomi-family extension APKs are compiled `compileOnly` against the Aniyomi
-source API and **bundle none of it**. Disassembling one shows a single class:
-
-```
-AnimePahe  extends    eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
-           implements eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
-```
-
-Neither of those is in the APK. They are resolved at runtime from the host
-application — so **this app is the extension runtime library**. That has three
-consequences:
-
-1. **The `eu.kanade.tachiyomi.*` tree under `app/src/main/kotlin/` is a fixed
-   ABI.** Class names, member names, signatures and even Kotlin file-facade names
-   (`RequestsKt`, `OkHttpExtensionsKt`) are load-bearing. Renaming any of them
-   still compiles and then fails at runtime with `NoSuchMethodError`.
-
-2. **Dependency versions are constraints, not preferences.** rxjava 1.3.8,
-   okhttp 5.3.2, jsoup 1.22.1 and `androidx.preference` are what the extensions
-   were compiled against.
-
-3. **R8 must be told to keep all of it.** Nothing in this app references the tree
-   statically, so R8 deletes it by default. That is not theoretical — the first
-   release build shipped 4,861 classes and zero `eu.kanade.tachiyomi` ones while
-   the debug build worked fine.
-
-Two checks guard this, both wired into CI:
-
-```bash
-python3 tools/verify-extension-abi.py                    # compiled classes
-python3 tools/verify-release-abi.py <release.apk>        # after minification
-```
-
-The published `aniyomi-extensions-lib` artifact cannot be used here: every method
-body in it is `throw Exception("Stub!")`, in the same way `android.jar` is a
-compile-only facade. The ABI in this repo is an independent implementation written
-against signatures extracted from real extension APKs with `dexdump`.
-
-### Supported extension API
-
-Library versions **12–15**, which covers every extension in the default
-repository (all report 14). Lib 16 is deliberately rejected: it made
-`getSeasonList` abstract and replaced the video contract with `Hoster`, so a 16
-extension would call members this app does not implement.
-
-### Known limitations
-
-- **Cloudflare-protected sources will not work.** Solving those needs a WebView to
-  run the JS challenge. `cloudflareClient` exists for ABI compatibility but is
-  not a solver, so affected sources fail rather than hang.
-- **Extensions are private to this app.** They are stored in internal storage
-  rather than installed system-wide, which avoids needing
-  `REQUEST_INSTALL_PACKAGES` and `QUERY_ALL_PACKAGES` but means they are not
-  shared with other Aniyomi clients.
-- **No downloads and no tracker sync.**
-
-## Casting
-
-Two protocols, listed together in one picker:
-
-- **Chromecast**, via the Cast SDK and `MediaRouter`, using Google's Default Media
-  Receiver (`CC1AD845`).
-- **DLNA/UPnP**, via SSDP discovery and SOAP AVTransport.
-
-Casting is **pull-based**: you hand the receiver a URL and it opens its own
-connection. Neither Cast's `LOAD` nor DLNA's `SetAVTransportURI` carries request
-headers, so a receiver cannot send the `Referer` that extension CDNs require. A
-local proxy therefore relays those streams — the TV fetches from your phone, and
-your phone fetches upstream with the headers. Streams needing no headers skip the
-proxy entirely, keeping the phone out of the data path.
-
-For HLS the manifest is rewritten as it passes through, because a receiver fetches
-segments, variant playlists and encryption keys itself; proxying only the manifest
-fixes nothing.
-
-Three details are easy to get wrong and each one silently returns zero devices:
-
-- **`NEARBY_WIFI_DEVICES` is required on Android 13+.** Without it the router
-  reports no routes at all. It is requested when the cast panel opens.
-- **A multicast lock is required for SSDP.** Android's Wi-Fi driver filters
-  multicast in hardware without one, and SSDP is entirely multicast.
-- **The SSDP socket must join the multicast group.** Several Samsung and LG models
-  reply to the group rather than to the requester, so a plain `DatagramSocket`
-  never sees them.
-
-Two caveats worth knowing before reporting a bug:
-
-- **Most DLNA TVs cannot play HLS at all.** That is a receiver limitation — those
-  sources generally need Chromecast, or the Web Video Caster hand-off.
-- **Seeking is limited on proxied HLS,** because the proxy deliberately does not
-  advertise byte-range support for rewritten manifests.
-
-## Releasing
-
-`.github/workflows/release.yml` builds a minified release APK and publishes it.
-Run it from the **Actions** tab with one of three modes:
+`.github/workflows/release.yml` builds a minified release APK and publishes it. Run it
+from the **Actions** tab with one of three modes:
 
 | Mode | Effect |
 |---|---|
@@ -262,52 +308,34 @@ Run it from the **Actions** tab with one of three modes:
 | `draft` | Build and create a **draft** GitHub Release |
 | `publish` | Build and publish the Release |
 
-Pushing a `v*` tag (e.g. `v1.1.0`) publishes automatically and takes the version
-from the tag name. `versionCode` is derived from the workflow run number so it
-always increases, which Android requires for in-place upgrades — releases so far
-run 16, 17, 18 against version names 2.7.0, 2.8.0, 2.9.0. A local build defaults
-to `1`, so a locally built APK will not install over a released one.
+Pushing a `v*` tag (e.g. `v3.5.4`) publishes automatically and takes the version from
+the tag name. `versionCode` comes from the workflow run number so it always increases,
+which Android requires for in-place upgrades. A local build defaults to `1`, so a
+locally built APK will not install over a released one.
 
-### Signing
+**Signing.** The release keystore (`release.jks`) is committed, with store/key password
+and alias both `watchbox`. That is deliberate, and the reason is upgrade compatibility
+rather than secrecy: Android refuses an update whose signature differs from the
+installed copy, and a debug-key fallback cannot work in CI because every runner
+generates its own debug key.
 
-The release keystore (`release.jks`) is **committed to this repo**, and its
-passwords are below:
+The trade-off is that anyone can build an APK Android treats as an update to this one.
+Fine for a personal build. To move the key into CI secrets, set
+`WATCHBOX_KEYSTORE_BASE64`, `WATCHBOX_KEYSTORE_PASSWORD`, `WATCHBOX_KEY_ALIAS` and
+`WATCHBOX_KEY_PASSWORD` — when all four are present they override the committed
+keystore. Changing keys breaks in-place upgrades for existing installs.
 
-| Field | Value |
-|---|---|
-| Store / key password | `watchbox` |
-| Alias | `watchbox` |
-| Key | RSA 4096, valid until 2056 |
+The workflow fails the build if an APK ends up debug-signed, so a dead-end release
+cannot be published by accident.
 
-That is deliberate, and the reason is upgrade compatibility rather than secrecy.
-Android refuses to install an update whose signature differs from the installed
-copy, and a debug-key fallback cannot work in CI because every runner is a fresh
-VM that generates its own debug key — two consecutive release builds would be
-signed with different keys and neither could update the other.
+</details>
 
-The trade-off is that anyone can build an APK that Android treats as an update to
-this one. That is fine for a personal build. If you ever distribute this more
-widely, move the key into CI secrets:
+---
 
-```bash
-keytool -genkeypair -v -keystore release.jks -storetype PKCS12 \
-  -keyalg RSA -keysize 4096 -validity 10950 -alias watchbox
+## 🏗 Architecture
 
-base64 -i release.jks | pbcopy   # paste into WATCHBOX_KEYSTORE_BASE64
-```
-
-Then set `WATCHBOX_KEYSTORE_BASE64`, `WATCHBOX_KEYSTORE_PASSWORD`,
-`WATCHBOX_KEY_ALIAS` and `WATCHBOX_KEY_PASSWORD` as repository secrets — when all
-four are present they override the committed keystore, no code change needed.
-Be aware that changing keys breaks in-place upgrades for existing installs.
-
-The workflow fails the build if an APK ends up debug-signed, so a dead-end
-release cannot be published by accident.
-
-## Architecture
-
-Single-module Android app, no Kotlin Multiplatform. Plain layering with a
-hand-rolled service locator (`AppContainer`) instead of Hilt or Koin.
+Single-module Android app, no Kotlin Multiplatform. Plain layering with a hand-rolled
+service locator (`AppContainer`) instead of Hilt or Koin.
 
 ```
 app/src/
@@ -316,7 +344,7 @@ app/src/
 └── tv/kotlin/                    TV screens + leanback manifest and banner
 
 app/src/main/kotlin/
-├── eu/kanade/tachiyomi/          THE EXTENSION ABI — see above, do not rename
+├── eu/kanade/tachiyomi/          THE EXTENSION ABI — do not rename
 │   ├── animesource/              AnimeSource, AnimeHttpSource, models
 │   └── network/                  NetworkHelper, Requests, interceptors
 └── space/nicart/watchbox/
@@ -325,93 +353,142 @@ app/src/main/kotlin/
     ├── data/local/               DataStore: history, watchlist, settings, repos
     ├── domain/                   UI models + AnimeRepository
     ├── extension/                Loader, classloader, repo index, installer
-    └── ui/
-        ├── components/           Poster cards, shelves, skeletons, search field
-        ├── navigation/           Routes + floating pill nav bar
-        ├── source/               Per-extension settings bridge
-        └── home/ browse/ detail/ player/ search/ library/ settings/ extensions/
+    └── ui/                       home, browse, detail, player, search, library,
+                                  settings, extensions, components, navigation
 ```
 
-### Notable choices
+<details>
+<summary><b>Notable choices</b></summary>
 
 - **Parent-last classloading.** Extensions bundle their own copies of common
-  libraries, so their dex is searched before the host's — with a parent-first
-  fallback on `LinkageError`, since a few only link that way.
-- **Every extension call is guarded.** Third-party code runs in-process, and it
-  is linked at runtime, so failures arrive as `NoSuchMethodError` rather than
-  `Exception`. One bad source degrades to an empty rail instead of taking down
-  the feed.
+  libraries, so their dex is searched before the host's — with a parent-first fallback
+  on `LinkageError`, since a few only link that way.
+- **Every extension call is guarded.** Third-party code runs in-process and is linked
+  at runtime, so failures arrive as `NoSuchMethodError` rather than `Exception`. One
+  bad source degrades to an empty rail instead of taking down the feed.
 - **Per-source search results.** Relevance is not comparable across sources, so
   merging would bury good matches.
-- **Identity is `sourceId` + source-relative `url`.** There is no global id in
-  this ecosystem, and titles change between fetches.
-- **Repository fetches report per-repository failures.** With several configured,
-  one unreachable repo must not hide the extensions the others listed — and
-  "not in any repo" is only concluded when every repository actually answered.
+- **Identity is `sourceId` + source-relative `url`.** There is no global id in this
+  ecosystem, and titles change between fetches.
 - **Subtitles are drawn in Compose, not by Media3's `SubtitleView`.**
-  `SubtitlePainter` hardcodes the outline to 2dp and `CaptionStyleCompat` exposes
-  no width, so an outline-width setting is impossible without rendering the cues.
+  `SubtitlePainter` hardcodes the outline to 2dp and `CaptionStyleCompat` exposes no
+  width, so an outline-width setting is impossible without rendering the cues.
 - **Two flavors rather than one combined APK.** A single build carrying both
-  `LAUNCHER` and `LEANBACK_LAUNCHER` works, but it ships the TV UI to every phone and
-  makes the two impossible to install side by side. Separate builds also let a big
-  screen choose the big-screen UI: a tablet installs the TV APK deliberately, rather
-  than having the layout picked for it by a width check.
-- **The TV APK stays installable on touch devices.** `android.software.leanback` is
-  declared `required="false"` and `LAUNCHER` is kept alongside `LEANBACK_LAUNCHER`, so
-  the TV build installs and opens on a tablet. Requiring leanback would make it
-  uninstallable there, which is why it is not required.
+  `LAUNCHER` and `LEANBACK_LAUNCHER` works, but ships the TV UI to every phone and
+  makes the two impossible to install side by side.
 - **Form factor is tracked separately from width.** A 1080p television and a 1080p
   tablet report near-identical dp widths yet need opposite treatments: the TV is read
-  at three metres with a D-pad and needs *fewer, larger* targets. Sizing off width
-  alone gets the TV wrong every time.
-- **Focus affordance lives in the shared components,** gated on form factor. On a
-  touchscreen the finger is the cursor, so an outline left after a tap reads as a
-  rendering fault; on a TV, invisible focus is unusable.
+  at three metres with a D-pad and needs *fewer, larger* targets.
+- **Cast SDK calls are marshalled to the main thread.** `RemoteMediaClient` guards 56
+  methods with `checkMainThread`, and so do `CastContext.getCastState` and
+  `SessionManager.getCurrentCastSession`. Never return an SDK object from that hop —
+  only a resolved value, or the guard fires on the next dereference.
 
-### Testing
+</details>
 
-143 unit tests, run in CI. They deliberately cover only pure logic whose failures
-are *silent* on a device — HLS URI rewriting, DLNA SOAP envelopes, gesture maths,
-filter application, deep-link parsing, subtitle style values — because those break
-in ways that look like missing data rather than errors. Anything better checked by
-looking at the screen is not unit-tested.
+<details>
+<summary><b>Testing</b></summary>
 
 ```bash
-./gradlew :app:testMobileDebugUnitTest
+./gradlew :app:testMobileDebugUnitTest :app:testTvDebugUnitTest
 ```
 
-Flavor-aware task names. `assembleRelease` no longer exists; use
-`assembleMobileRelease` and `assembleTvRelease`, or `assembleMobileDebug` /
-`assembleTvDebug`.
+776 unit tests, run in CI. They deliberately cover only pure logic whose failures are
+*silent* on a device — HLS URI rewriting, DLNA SOAP envelopes, subtitle conversion,
+cast stream selection, gesture maths, filter application, deep-link parsing — because
+those break in ways that look like missing data rather than errors. Anything better
+checked by looking at the screen is not unit-tested.
 
-## Tech stack
+</details>
 
-Kotlin 2.1 · Compose BOM 2025.05 · Material 3 · Navigation-Compose (typed
-routes) · Media3 1.6 · Ktor 3.1 · Coil 2.7 · DataStore · kotlinx.serialization ·
+---
+
+## 🧰 Tech stack
+
+Kotlin 2.1 · Compose BOM 2025.05 · Material 3 · Navigation-Compose (typed routes) ·
+Media3 1.6 · Ktor 3.1 · Coil 2.7 · DataStore · kotlinx.serialization ·
 play-services-cast 22 · androidx.mediarouter 1.7
 
-Extension runtime: okhttp 5.3.2 · rxjava 1.3.8 · jsoup 1.22.1 · Injekt ·
+**Extension runtime:** okhttp 5.3.2 · rxjava 1.3.8 · jsoup 1.22.1 · Injekt ·
 androidx.preference
 
-## Legal
+---
 
-WatchBox is a client interface. It ships no sources and does not host, store or
-distribute any content. All content is provided by extensions the user chooses to
-install, and the app is not affiliated with those extensions or the sites they
-read from.
+## ❓ FAQ
 
-Installing an extension runs third-party code inside this app's process, with its
-network access. Only install extensions from repositories you trust.
+**Does WatchBox host or stream any content?**
+No. It ships no sources and hosts nothing. All content comes from extensions you
+choose to install, from repositories you choose to add.
 
-## Credits
+**Which APK should I download?**
+Phones: `watchbox-X.Y.Z.apk`. Tablets, Android TV and TV boxes:
+`watchbox-X.Y.Z-tv.apk`. On a tablet the TV build is the better experience.
 
-The design system — colour tokens, spacing scale, typography, poster metrics,
-navigation pill and player chrome — is ported from
-[NuvioMobile](https://github.com/NuvioMedia/NuvioMobile) (GPL-3.0). Typeface is
-JetBrains Sans (Apache-2.0).
+**Why are there no extensions after installing?**
+The app ships with no repository on purpose — see [First run](#-first-run).
 
-The extension ABI reproduces the interface defined by
-[Aniyomi](https://github.com/aniyomiorg/aniyomi) (Apache-2.0) so that existing
-extensions can link against it. The implementation is this project's own, written
-against signatures observed in published extension APKs; no Aniyomi source was
-copied.
+**Why does a source show nothing?**
+Most often the source is Cloudflare-protected, or its host is unreachable. Failures
+are surfaced per source rather than hidden, so the rail reports rather than silently
+emptying.
+
+**Chromecast finds no devices — why?**
+Chromecast discovery needs genuine Google Play Services. Devices with a sideloaded or
+spoofed GMS register no cast routes at all. DLNA still works.
+
+**Can I install both builds at once?**
+Yes — different package names, so they coexist. They do not share library or settings.
+
+---
+
+## ⚠️ Disclaimer
+
+> [!IMPORTANT]
+> **WatchBox is a client interface.** It ships no sources and does not host, store or
+> distribute any content.
+
+- **Content** — everything is provided by extensions the user chooses to install. The
+  app is not affiliated with those extensions or the sites they read from.
+- **Third-party code** — installing an extension runs third-party code inside this
+  app's process, with its network access. Only install extensions from repositories
+  you trust.
+- **Responsibility** — users are responsible for how they use the app and any
+  third-party services they interact with, and for complying with applicable law and
+  copyright. Concerns about an extension belong with its author, not this project.
+
+---
+
+## 📜 License
+
+Released under the **[GNU GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.en.html)**,
+which is required rather than chosen: the design system is ported from GPL-3.0 code.
+
+> [!NOTE]
+> GitHub reports this repository as GPL-3.0, but **no `LICENSE` file is committed**.
+> Adding the full GPL-3.0 text at the repository root is outstanding — until then the
+> licence is asserted here and in the repository metadata only.
+
+### Credits
+
+- **[NuvioMobile](https://github.com/NuvioMedia/NuvioMobile)** (GPL-3.0) — the design
+  system: colour tokens, spacing scale, typography, poster metrics, navigation pill
+  and player chrome.
+- **[Aniyomi](https://github.com/aniyomiorg/aniyomi)** (Apache-2.0) — the extension
+  ABI reproduces its interface so existing extensions can link against it. The
+  implementation is this project's own, written against signatures observed in
+  published extension APKs; no Aniyomi source was copied.
+- **Typeface** — JetBrains Sans (Apache-2.0).
+- **Metadata and artwork** — [TMDB](https://www.themoviedb.org/). This product uses
+  the TMDB API but is not endorsed or certified by TMDB.
+
+---
+
+<div align="center">
+
+**WatchBox**
+
+[⭐ Star the repo](https://github.com/Nicartjay/Watchbox-Android) ·
+[⬇️ Download](https://github.com/Nicartjay/Watchbox-Android/releases/latest) ·
+[🐛 Report an issue](https://github.com/Nicartjay/Watchbox-Android/issues)
+
+</div>
