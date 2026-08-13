@@ -64,6 +64,9 @@ class CastProxyServer(
 
     val isRunning: Boolean get() = socket?.isClosed == false
 
+    /** Local subtitle files published for the receiver, by id. */
+    private val subtitles = ConcurrentHashMap<String, java.io.File>()
+
     data class ProxiedStream(
         val id: String,
         val upstreamUrl: String,
@@ -110,6 +113,7 @@ class CastProxyServer(
         scope?.cancel()
         scope = null
         streams.clear()
+        subtitles.clear()
         boundHost = null
         boundPort = 0
     }
@@ -141,6 +145,29 @@ class CastProxyServer(
         // before trusting Content-Type.
         val suffix = if (isHls) ".m3u8" else ".mp4"
         return "http://$host:$boundPort/s/$id$suffix"
+    }
+
+    /**
+     * Publishes a local subtitle file and returns a URL the receiver can fetch.
+     *
+     * Downloaded subtitles live in this app's cache as `file://` paths, which a receiver on
+     * another device cannot open - it fetches subtitles itself, over HTTP. Serving them through
+     * the proxy that is already running for the video is what makes them reachable.
+     *
+     * The URL always ends `.vtt`: receivers sniff the extension, and the body is converted to
+     * WebVTT on the way out regardless of what the file holds.
+     */
+    fun publishSubtitle(file: java.io.File, asWebVtt: Boolean): String? {
+        val host = boundHost ?: return null
+        val id = nextId.getAndIncrement().toString()
+
+        subtitles[id] = file
+
+        // The extension decides the conversion, because receivers sniff the path and the two
+        // protocols want opposite things: a Cast receiver accepts only WebVTT, while DLNA
+        // renderers are built around SubRip and commonly ignore WebVTT outright.
+        val suffix = if (asWebVtt) "vtt" else "srt"
+        return "http://$host:$boundPort/sub/$id.$suffix"
     }
 
     // ------------------------------------------------------------ connections
@@ -211,6 +238,14 @@ class CastProxyServer(
     private fun route(request: HttpRequest, output: OutputStream) {
         val path = request.path.substringBefore('?')
 
+        // Answered before routing: a preflight names no resource of ours.
+        if (request.method == "OPTIONS") {
+            writePreflight(output)
+            return
+        }
+
+        Log.d(TAG, "${request.method} ${path.take(80)} range=${request.headers["range"]}")
+
         when {
             // Segment/key fetches rewritten out of an HLS manifest.
             path.startsWith("/seg/") -> {
@@ -225,6 +260,22 @@ class CastProxyServer(
                     writeStatus(output, 404, "Not Found")
                 } else {
                     relay(target, stream, request, output, rewriteManifest = false)
+                }
+            }
+
+            // Local subtitle file, converted to WebVTT on the way out.
+            path.startsWith("/sub/") -> {
+                val id = path.removePrefix("/sub/").substringBefore('.')
+                val file = subtitles[id]
+                if (file == null || !file.isFile) {
+                    writeStatus(output, 404, "Not Found")
+                } else {
+                    writeSubtitle(
+                        file = file,
+                        request = request,
+                        output = output,
+                        asWebVtt = path.endsWith(".vtt", ignoreCase = true),
+                    )
                 }
             }
 
@@ -249,11 +300,38 @@ class CastProxyServer(
     }
 
     /**
+     * Answers a CORS preflight.
+     *
+     * The Default Media Receiver is a Chromium page driving Media Source Extensions, so its
+     * fetches are subject to browser CORS rules - unlike a DLNA renderer, which has no such
+     * notion. An unanswered `OPTIONS` fell through to 404, and the browser then refused the
+     * request that followed.
+     */
+    private fun writePreflight(output: OutputStream) {
+        writeHeaders(
+            output = output,
+            status = 204,
+            reason = "No Content",
+            contentType = "text/plain",
+            contentLength = 0,
+            extra = mapOf(
+                "Access-Control-Allow-Methods" to "GET, HEAD, OPTIONS",
+                "Access-Control-Allow-Headers" to "*",
+                "Access-Control-Max-Age" to "86400",
+            ),
+        )
+    }
+
+    /**
      * Fetches [url] upstream with the session's headers and relays it.
      *
      * `Range` is forwarded so the receiver can seek in progressive MP4, and the
-     * upstream status is passed through unchanged — a 206 must stay a 206 or
+     * upstream status is passed through unchanged - a 206 must stay a 206 or
      * seeking silently breaks.
+     *
+     * Only the entry-point manifest is rewritten. A nested rewrite was tried and reverted:
+     * every source seen in practice publishes a single-level media playlist, so it solved a
+     * problem no real stream had while adding a content-type guess to every segment fetch.
      */
     private fun relay(
         url: String,
@@ -271,9 +349,22 @@ class CastProxyServer(
             .build()
             .newCall(builder.build())
 
-        call.execute().use { response ->
+        // Logged rather than swallowed: an upstream failure here is invisible to the receiver,
+        // which simply stops requesting, so this is the only record that anything went wrong.
+        runCatching { call.execute() }
+            .onFailure {
+                Log.w(TAG, "upstream fetch failed: ${it.javaClass.simpleName}: ${it.message}")
+            }
+            .getOrThrow()
+            .use { response ->
             // okhttp 5 guarantees a non-null body, so there is nothing to guard.
             val body = response.body
+
+            Log.d(
+                TAG,
+                "upstream ${response.code} ct=${response.header("Content-Type")} " +
+                    "rewrite=$rewriteManifest",
+            )
 
             if (rewriteManifest) {
                 // Manifests are small, so buffering to rewrite is fine; media
@@ -333,6 +424,46 @@ class CastProxyServer(
         }
     }
 
+    /**
+     * Writes a subtitle file to the receiver as WebVTT.
+     *
+     * Buffered rather than streamed: subtitle files are tens of kilobytes, and the conversion
+     * needs the whole text anyway. The declared length must match the converted body, not the
+     * file on disk, since the header and timestamp rewrites change the byte count.
+     */
+    private fun writeSubtitle(
+        file: java.io.File,
+        request: HttpRequest,
+        output: OutputStream,
+        asWebVtt: Boolean,
+    ) {
+        val converted = runCatching {
+            val raw = file.readText()
+            if (asWebVtt && SubtitleConverter.needsConversion(file.name)) {
+                SubtitleConverter.toWebVtt(raw)
+            } else {
+                raw
+            }
+        }.getOrElse {
+            Log.w(TAG, "could not read subtitle: ${it.javaClass.simpleName}")
+            writeStatus(output, 500, "Internal Server Error")
+            return
+        }
+
+        val bytes = converted.toByteArray(Charsets.UTF_8)
+
+        writeHeaders(
+            output = output,
+            status = 200,
+            reason = "OK",
+            contentType = if (asWebVtt) "text/vtt; charset=utf-8" else "text/srt; charset=utf-8",
+            contentLength = bytes.size.toLong(),
+            extra = mapOf("Cache-Control" to "no-cache"),
+        )
+
+        if (request.method != "HEAD") output.write(bytes)
+    }
+
     // ---------------------------------------------------------------- writing
 
     private fun writeHeaders(
@@ -350,6 +481,10 @@ class CastProxyServer(
             // The Cast receiver is a web page, so subtitle and manifest fetches
             // are subject to browser CORS rules.
             append("Access-Control-Allow-Origin: *").append(CRLF)
+            // Without this a browser-based receiver cannot read the length or range of a
+            // response, which Media Source Extensions needs to buffer at all.
+            append("Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges")
+                .append(CRLF)
             append("Connection: close").append(CRLF)
             extra.forEach { (name, value) ->
                 append(name).append(": ").append(value).append(CRLF)
@@ -378,3 +513,4 @@ class CastProxyServer(
 /** Percent-encodes a URL for embedding in a proxy path segment. */
 internal fun String.pathEncoded(): String =
     URLEncoder.encode(this, "UTF-8").replace("+", "%20")
+

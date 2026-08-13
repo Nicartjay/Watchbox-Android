@@ -110,11 +110,16 @@ internal object DlnaSoap {
             }
             append(">${media.url.xmlEscaped()}</res>")
 
-            subtitle?.let {
-                append("""<res protocolInfo="http-get:*:text/srt:*">""")
-                append(it.url.xmlEscaped())
-                append("</res>")
-            }
+            // Deliberately no second <res> for the subtitle.
+            //
+            // A DIDL item's <res> elements are alternative representations of the item, not
+            // parts of it. A renderer offered two picks one - and some pick the subtitle,
+            // which is why adding a subtitle made the video and audio disappear and left only
+            // text on screen. The sec:CaptionInfo elements above are the correct way to attach
+            // a sidecar subtitle, and they are what Samsung and most others actually read.
+            //
+            // This path was unreachable until subtitles started being published for DLNA, so
+            // the fault shipped dormant rather than being introduced by that change alone.
 
             append("</item></DIDL-Lite>")
         }

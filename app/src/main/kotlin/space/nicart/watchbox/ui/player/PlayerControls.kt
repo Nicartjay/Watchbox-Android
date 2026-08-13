@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Pause
@@ -68,6 +69,7 @@ import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.LocalLayoutMetrics
 import space.nicart.watchbox.core.ui.adaptiveFocus
 import space.nicart.watchbox.core.ui.rememberFocusInteraction
+import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.core.ui.wbType
 import space.nicart.watchbox.domain.formatTimecode
 
@@ -160,6 +162,7 @@ fun PlayerControlsOverlay(
     onCycleAspect: () -> Unit,
     onOpenPanel: (PlayerPanel) -> Unit,
     isCasting: Boolean = false,
+    castDeviceName: String? = null,
     onOpenCast: () -> Unit = {},
     /**
      * Claims focus for the play button when the controls appear.
@@ -209,6 +212,7 @@ fun PlayerControlsOverlay(
                 onBack = onBack,
                 onToggleLock = onToggleLock,
                 isCasting = isCasting,
+                castDeviceName = castDeviceName,
                 onOpenCast = onOpenCast,
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -254,6 +258,7 @@ private fun PlayerHeader(
     onBack: () -> Unit,
     onToggleLock: () -> Unit,
     isCasting: Boolean,
+    castDeviceName: String?,
     onOpenCast: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -285,6 +290,31 @@ private fun PlayerHeader(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            // Inside the header's Column, so it is laid out with the title rather than floated
+            // over the screen. The overlay's centred block hides while the controls are up, so
+            // this is what keeps the receiver named during scrubbing - and being part of the
+            // normal layout, it cannot collide with anything.
+            if (isCasting && !castDeviceName.isNullOrBlank()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.CastConnected,
+                        contentDescription = null,
+                        tint = MaterialTheme.wb.colors.accent,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.cast_now_casting, castDeviceName),
+                        style = type.labelSm,
+                        color = MaterialTheme.wb.colors.accent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
             state.detail?.sourceName?.let { server ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(

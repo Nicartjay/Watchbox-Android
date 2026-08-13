@@ -6,6 +6,7 @@ import android.os.Looper
 import android.util.Log
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import com.google.android.gms.cast.MediaError
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
@@ -16,6 +17,7 @@ import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.CastState
 import com.google.android.gms.cast.framework.SessionManagerListener
+import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.common.images.WebImage
@@ -44,6 +46,13 @@ import com.google.android.gms.common.images.WebImage
  *
  * The hop lives in this class rather than at the call sites so the mistake cannot be made
  * again by adding a method: there is nowhere in here that touches the SDK directly.
+ *
+ * One rule makes that hold: **never return an SDK object from a hop, only a resolved value.**
+ * A `CastSession` fetched on the main thread is no safer to touch afterwards, because the guard
+ * is on its own methods - `getCastDevice`, `getRemoteMediaClient` and seven others. 3.5.1 kept
+ * crashing for exactly that reason: the session was fetched correctly and then dereferenced
+ * back on IO. Every member here therefore resolves down to a String, Long, Boolean or null
+ * before the hop returns.
  */
 class ChromecastTransport(private val context: Context) : CastTransport {
 
@@ -51,6 +60,22 @@ class ChromecastTransport(private val context: Context) : CastTransport {
     private var sessionListener: SessionManagerListener<CastSession>? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * Reports playback faults the load call itself cannot.
+     *
+     * A single instance, registered per load and unregistered on stop: registering a new
+     * anonymous callback on every load would accumulate them for the life of the session.
+     */
+    private val mediaCallback = object : RemoteMediaClient.Callback() {
+        override fun onMediaError(error: MediaError) {
+            Log.w(
+                TAG,
+                "receiver media error: reason=${error.reason} " +
+                    "detailed=${error.detailedErrorCode} type=${error.type}",
+            )
+        }
+    }
 
     /**
      * Runs [block] on the main thread and waits for its result.
@@ -84,9 +109,6 @@ class ChromecastTransport(private val context: Context) : CastTransport {
     private fun onMainAsync(block: () -> Unit) {
         mainHandler.post { runCatching(block) }
     }
-
-    private val session: CastSession?
-        get() = onMain(null) { castContext?.sessionManager?.currentCastSession }
 
     override val isAvailable: Boolean get() = castContext != null
 
@@ -140,25 +162,48 @@ class ChromecastTransport(private val context: Context) : CastTransport {
         }
 
         sessionListener = listener
-        castContext?.sessionManager?.addSessionManagerListener(
-            listener,
-            CastSession::class.java,
-        )
+
+        // Also main-thread-guarded. Called from Application.onCreate today, which is already
+        // the main thread - the hop makes that a property of this class rather than of its
+        // caller, so moving the call later cannot reintroduce the crash.
+        onMainAsync {
+            castContext?.sessionManager?.addSessionManagerListener(
+                listener,
+                CastSession::class.java,
+            )
+        }
     }
 
-    fun release() {
+    /**
+     * Detaches the session listener.
+     *
+     * Hopped like everything else: `removeSessionManagerListener` is main-thread-guarded too.
+     * Nothing calls this off the main thread today, but it is public and the guard throws, so
+     * relying on the caller's thread would leave the same latent crash behind.
+     */
+    fun release() = onMainAsync {
         sessionListener?.let {
             castContext?.sessionManager?.removeSessionManagerListener(it, CastSession::class.java)
         }
         sessionListener = null
     }
 
-    /** Host of the connected device, so the proxy can bind a reachable interface. */
-    override fun connectedDeviceHost(): String? =
-        session?.castDevice?.inetAddress?.hostAddress
+    /**
+     * Host of the connected device, so the proxy can bind a reachable interface.
+     *
+     * The whole chain is resolved inside the hop, down to the String. Fetching the session on
+     * the main thread and then reading `castDevice` off it was still a violation - the guard is
+     * on `CastSession.getCastDevice`, not on obtaining the session - and that is precisely how
+     * 3.5.1 still crashed after the first round of this fix.
+     */
+    override fun connectedDeviceHost(): String? = onMain(null) {
+        castContext?.sessionManager?.currentCastSession?.castDevice?.inetAddress?.hostAddress
+    }
 
     override val deviceName: String?
-        get() = session?.castDevice?.friendlyName
+        get() = onMain(null) {
+            castContext?.sessionManager?.currentCastSession?.castDevice?.friendlyName
+        }
 
     override suspend fun load(media: CastMedia, positionMs: Long): Boolean {
         // Built off the main thread - these are plain data objects - then handed over in one
@@ -194,6 +239,21 @@ class ChromecastTransport(private val context: Context) : CastTransport {
             .apply {
                 if (tracks.isNotEmpty()) setMediaTracks(tracks)
                 media.durationMs.takeIf { it > 0 }?.let { setStreamDuration(it) }
+
+                // Only the *video* format is declared, and only for video content.
+                //
+                // setHlsSegmentFormat is the AUDIO segment format - its permitted values are
+                // AAC, AC3, MP3, E-AC3 and TS - whereas setHlsVideoSegmentFormat takes the
+                // video one. Setting both made the receiver build an audio-only SourceBuffer
+                // (`codecs="mp4a.40.2"`), so the H.264 video failed its very first append with
+                // "Video stream codec h264 doesn't match SourceBuffer codecs" and the pipeline
+                // stopped after ~1s.
+                //
+                // Without it the receiver assumes MPEG2-TS instead, and a fragmented-MP4 stream
+                // buffers segments for ever without rendering a frame. So it does have to be
+                // declared - just on the video channel only.
+                HlsFormat.videoSegmentFormat(media.hlsSegmentFormat)
+                    ?.let { setHlsVideoSegmentFormat(it) }
             }
             .build()
 
@@ -202,18 +262,49 @@ class ChromecastTransport(private val context: Context) : CastTransport {
             .setAutoplay(true)
             .setCurrentTime(positionMs)
             .apply {
-                // Activate the first track so subtitles are on by default when
-                // the user had them enabled locally.
-                if (tracks.isNotEmpty()) {
-                    setActiveTrackIds(longArrayOf(SUBTITLE_TRACK_ID_BASE))
+                // Whichever track the viewer had on locally, not simply the first.
+                //
+                // The index is validated against the track list because subtitles that could not
+                // be published are dropped on the way here, so a stale index would activate the
+                // wrong track or one that does not exist.
+                val active = media.selectedSubtitleIndex
+                    .takeIf { it >= 0 && it < tracks.size }
+
+                if (active != null) {
+                    setActiveTrackIds(longArrayOf(SUBTITLE_TRACK_ID_BASE + active))
                 }
             }
             .build()
 
+        // Records the declared format: getting it wrong stalls the receiver silently, so this
+        // is the line that makes such a failure diagnosable at all.
+        Log.i(
+            TAG,
+            "loading ${media.subtitles.size} subtitle track(s), " +
+                "hlsVideoSegmentFormat=${HlsFormat.videoSegmentFormat(media.hlsSegmentFormat)}",
+        )
         return onMain(false) {
             val client = castContext?.sessionManager?.currentCastSession?.remoteMediaClient
                 ?: return@onMain false
-            client.load(request)
+            // The receiver's own verdict, which used to be discarded. `load()` returning a
+            // PendingResult that nobody read is why a stalled cast produced no diagnostic at
+            // all: the session connected, the media loaded, and the app had nothing to say.
+            client.load(request).setResultCallback { result ->
+                val status = result.status
+                if (!status.isSuccess) {
+                    Log.w(
+                        TAG,
+                        "receiver rejected load: code=${status.statusCode} " +
+                            "${status.statusMessage} mediaError=${result.mediaError?.reason}",
+                    )
+                }
+            }
+
+            // Kept for the whole session so a decode failure after a successful load is
+            // reported. This is the case that looks like a hang rather than an error: the
+            // receiver buffers segments and never renders a frame.
+            client.registerCallback(mediaCallback)
+
             true
         }.also { if (!it) Log.w(TAG, "load failed or no session") }
     }
@@ -227,7 +318,9 @@ class ChromecastTransport(private val context: Context) : CastTransport {
     }
 
     override fun stop() = onMainAsync {
-        castContext?.sessionManager?.currentCastSession?.remoteMediaClient?.stop()
+        val client = castContext?.sessionManager?.currentCastSession?.remoteMediaClient
+        runCatching { client?.unregisterCallback(mediaCallback) }
+        client?.stop()
         castContext?.sessionManager?.endCurrentSession(true)
     }
 
@@ -244,6 +337,26 @@ class ChromecastTransport(private val context: Context) : CastTransport {
     override fun durationMs(): Long = onMain(0L) {
         castContext?.sessionManager?.currentCastSession
             ?.remoteMediaClient?.streamDuration ?: 0L
+    }
+
+    /**
+     * Activates one text track, or none when [index] is negative.
+     *
+     * An empty array is how the Cast protocol expresses "no tracks active"; there is no separate
+     * disable call. The id arithmetic mirrors [load], where tracks are numbered from
+     * [SUBTITLE_TRACK_ID_BASE] in list order.
+     */
+    override fun setSubtitleTrack(index: Int) = onMainAsync {
+        val client = castContext?.sessionManager?.currentCastSession?.remoteMediaClient
+            ?: return@onMainAsync
+
+        val ids = if (index >= 0) {
+            longArrayOf(SUBTITLE_TRACK_ID_BASE + index)
+        } else {
+            longArrayOf()
+        }
+
+        client.setActiveMediaTracks(ids)
     }
 
     override fun isPlaying(): Boolean = onMain(false) {

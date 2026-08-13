@@ -170,6 +170,8 @@
     <string name="cast_none_found">No devices found on this network.</string>
     <string name="cast_rescan">Search again</string>
     <string name="cast_playing_on">Playing on %1$s</string>
+    <string name="cast_now_casting">Casting to %1$s</string>
+    <string name="cast_now_casting_hint">This screen is the remote control</string>
     <string name="cast_stop">Stop casting</string>
     <string name="cast_button">Cast</string>
     <string name="cast_group_chromecast">Chromecast</string>

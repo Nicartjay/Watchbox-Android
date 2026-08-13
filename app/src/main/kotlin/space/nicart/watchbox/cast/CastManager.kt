@@ -8,12 +8,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import space.nicart.watchbox.cast.dlna.DlnaDescriptionParser
 import space.nicart.watchbox.cast.dlna.DlnaRenderer
 import space.nicart.watchbox.cast.dlna.DlnaTransport
@@ -52,6 +54,15 @@ data class CastState(
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
     val isRemotePlaying: Boolean = false,
+    /**
+     * Which protocol holds the session, or null when nothing is casting.
+     *
+     * Exposed because the two receivers differ in what they can be told mid-session: Chromecast
+     * has a track-switching protocol, DLNA fixes its subtitle in the DIDL metadata at load time.
+     * The player needs to know which it is talking to before deciding whether a change is even
+     * possible.
+     */
+    val protocol: CastProtocol? = null,
     /**
      * Route the stream through this device even when it needs no headers.
      *
@@ -117,6 +128,14 @@ class CastManager(
     /** Mirrors the receiver's clock into [state]; runs only while a session is live. */
     private var progressJob: Job? = null
 
+    /**
+     * The subtitle tracks handed to the receiver, in the order it knows them.
+     *
+     * Held because the player's list and the receiver's can differ: a subtitle that could not be
+     * published is dropped, so the player's index is not the receiver's track number.
+     */
+    private var loadedSubtitles: List<CastSubtitle> = emptyList()
+
     val isCasting: Boolean get() = active?.isConnected == true
 
     fun initialise() {
@@ -136,6 +155,7 @@ class CastManager(
                 _state.value = _state.value.copy(
                     isCasting = true,
                     deviceName = chromecast.deviceName,
+                    protocol = CastProtocol.CHROMECAST,
                 )
                 startProgressPolling()
             } else if (active === chromecast) {
@@ -148,6 +168,7 @@ class CastManager(
                     positionMs = 0L,
                     durationMs = 0L,
                     isRemotePlaying = false,
+                    protocol = null,
                 )
             }
         }
@@ -256,7 +277,15 @@ class CastManager(
             }
 
             active = chromecast
-            val prepared = prepare(media, chromecast.connectedDeviceHost() ?: device.host)
+
+            // Probed from the original CDN URL, before the proxy rewrites it: the format is a
+            // property of the stream, and asking the proxy for it would just relay this anyway.
+            val withFormat = media.copy(hlsSegmentFormat = detectHlsFormat(media))
+            val prepared = prepare(
+                media = withFormat,
+                deviceHost = chromecast.connectedDeviceHost() ?: device.host,
+                protocol = CastProtocol.CHROMECAST,
+            )
             if (prepared == null) {
                 fail("Could not reach this device from your network.")
                 active = null
@@ -268,6 +297,7 @@ class CastManager(
                     isCasting = true,
                     deviceName = chromecast.deviceName ?: device.name,
                     errorMessage = null,
+                    protocol = CastProtocol.CHROMECAST,
                     // Seeded from where the phone was, so the seek bar is right immediately
                     // rather than sitting at zero until the first poll answers.
                     positionMs = positionMs,
@@ -312,7 +342,7 @@ class CastManager(
                 Log.w(TAG, "casting HLS to a DLNA renderer; most cannot decode it")
             }
 
-            val prepared = prepare(media, device.host)
+            val prepared = prepare(media, device.host, CastProtocol.DLNA)
             if (prepared == null) {
                 fail("Could not reach this device from your network.")
                 active = null
@@ -324,6 +354,7 @@ class CastManager(
                     isCasting = true,
                     deviceName = renderer.friendlyName,
                     errorMessage = null,
+                    protocol = CastProtocol.DLNA,
                     positionMs = positionMs,
                     isRemotePlaying = true,
                 )
@@ -347,7 +378,8 @@ class CastManager(
             active = chromecast
             val host = chromecast.connectedDeviceHost()
 
-            val prepared = prepare(media, host)
+            val withFormat = media.copy(hlsSegmentFormat = detectHlsFormat(media))
+            val prepared = prepare(withFormat, host, CastProtocol.CHROMECAST)
             if (prepared == null) {
                 fail("Could not reach this device from your network.")
                 return@launch
@@ -366,6 +398,87 @@ class CastManager(
     }
 
     /**
+     * Fetches the playlist and works out its segment format.
+     *
+     * Done here, before the load request is built, because the receiver has to be told the format
+     * up front - and only the manifest can say what it is. One extra request, against the CDN the
+     * player is already streaming from, so the cost is negligible next to a stalled cast.
+     *
+     * Fetched with the stream's own headers: these CDNs check `Referer`, and an unauthenticated
+     * request would come back 403 and yield nothing to inspect.
+     *
+     * Follows a master playlist one level down, since a master lists variants rather than
+     * segments. Any failure returns null, which leaves the receiver on its default.
+     */
+    private suspend fun detectHlsFormat(media: CastMedia): String? {
+        if (!media.isHls) return null
+
+        val manifest = fetchText(media.url, media.headers) ?: return null
+
+        HlsFormat.segmentFormat(manifest)?.let {
+            Log.i(TAG, "hls segment format: $it")
+            return it
+        }
+
+        if (!HlsFormat.isMaster(manifest)) return null
+
+        val variant = HlsFormat.firstVariantUri(manifest) ?: return null
+        val variantUrl = HlsFormat.resolve(variant, media.url)
+        val variantManifest = fetchText(variantUrl, media.headers) ?: return null
+
+        return HlsFormat.segmentFormat(variantManifest)
+    }
+
+    /**
+     * Reads a text body, capped in size.
+     *
+     * The cap matters because this URL is only *believed* to be a playlist - if a source
+     * mislabels a video file as HLS, reading the whole body would pull hundreds of megabytes
+     * into memory. A playlist that exceeds the cap is still usable: the format markers are near
+     * the top, so a truncated read answers the question just as well.
+     */
+    private suspend fun fetchText(url: String, headers: Map<String, String>): String? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val request = Request.Builder().url(url).apply {
+                    headers.forEach { (name, value) -> header(name, value) }
+                }.build()
+
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        Log.w(TAG, "manifest probe got ${response.code}")
+                        return@use null
+                    }
+
+                    // peekBody, not readByteArray: the latter demands *exactly* the requested
+                    // count and throws EOFException on a shorter body. These CDNs reply with
+                    // chunked encoding, so contentLength() is -1 and the cap was always the
+                    // full 512 KB - which every real manifest is smaller than. Every probe
+                    // threw, no format was ever detected, and the declaration silently never
+                    // happened.
+                    response.peekBody(MANIFEST_READ_LIMIT_BYTES).string()
+                        .takeIf { it.isNotBlank() }
+                }
+            }.onFailure {
+                Log.w(TAG, "manifest probe failed: ${it.javaClass.simpleName}")
+            }.getOrNull()
+        }
+
+    /**
+     * Prepares [media] and records the subtitle list the receiver will know.
+     *
+     * A wrapper rather than an assignment at each `return`: the implementation has three exit
+     * paths, and recording separately at each is how one gets missed - leaving a mid-session
+     * track change resolving against a stale list.
+     */
+    private fun prepare(
+        media: CastMedia,
+        deviceHost: String?,
+        protocol: CastProtocol,
+    ): CastMedia? = prepareMedia(media, deviceHost, protocol)
+        ?.also { loadedSubtitles = it.subtitles }
+
+    /**
      * Rewrites [media] to be fetchable by a receiver.
      *
      * When the stream needs no headers it is passed through untouched, so the
@@ -378,16 +491,63 @@ class CastManager(
      * or to the address that obtained it, neither of which shows up as a request header here.
      * Those fail on the receiver with nothing to distinguish them from an unreachable device,
      * so the user is given the switch rather than left guessing.
+     *
+     * Local subtitle files are republished here too, which is why this runs even for a stream
+     * that needs no relaying of its own.
      */
-    private fun prepare(media: CastMedia, deviceHost: String?): CastMedia? {
-        if (!needsProxy(media.headers, _state.value.forceProxy)) return media
+    private fun prepareMedia(
+        media: CastMedia,
+        deviceHost: String?,
+        protocol: CastProtocol,
+    ): CastMedia? {
+        val streamNeedsProxy = needsProxy(media.headers, _state.value.forceProxy)
+
+        // Local subtitle files need the proxy whatever the video needs: they live in this app's
+        // cache, and a receiver on another device cannot open a file:// path. This is checked
+        // separately because a stream requiring no headers used to return immediately, which
+        // would have left a downloaded subtitle unreachable on exactly the sources that cast
+        // most easily.
+        val localSubtitles = media.subtitles.count { it.isLocalFile }
+
+        if (!streamNeedsProxy && localSubtitles == 0) return media
 
         // Falls back to the general outbound address when the receiver's own
         // address is unknown. A Chromecast route does not always expose one, and
         // failing outright here would block casting any header-requiring stream
         // to it - whereas the LAN address is almost always the right interface.
         val host = deviceHost ?: CastNetwork.outboundAddress() ?: return null
-        if (!proxy.isRunning && proxy.start(host) == null) return null
+        if (!proxy.isRunning && proxy.start(host) == null) {
+            // Only fatal when the video itself needed relaying. A subtitle that cannot be
+            // published is worth losing to keep the video playing.
+            return if (streamNeedsProxy) null else media
+        }
+
+        val subtitles = media.subtitles.map { subtitle ->
+            if (!subtitle.isLocalFile) return@map subtitle
+
+            val file = runCatching { java.io.File(java.net.URI(subtitle.url)) }.getOrNull()
+            val published = file?.takeIf { it.isFile }?.let {
+                // WebVTT for Chromecast, SubRip for DLNA: the two receivers want opposite
+                // formats, and serving the wrong one is silently ignored by both.
+                proxy.publishSubtitle(it, asWebVtt = protocol == CastProtocol.CHROMECAST)
+            }
+
+            if (published == null) {
+                Log.w(TAG, "could not publish subtitle: ${subtitle.label}")
+                // Dropped rather than passed through: a file:// URL the receiver cannot fetch
+                // would appear in its track menu and silently show nothing.
+                null
+            } else {
+                subtitle.copy(url = published, isLocalFile = false)
+            }
+        }.filterNotNull()
+
+        if (!streamNeedsProxy) {
+            // The video is handed over directly and only the subtitles go through us, which
+            // keeps the phone out of the video path where it does not need to be.
+            Log.i(TAG, "casting direct, $localSubtitles subtitle(s) via local proxy")
+            return media.copy(subtitles = subtitles)
+        }
 
         val proxied = proxy.publish(
             upstreamUrl = media.url,
@@ -405,7 +565,71 @@ class CastManager(
                 "casting via local proxy (source requires headers)"
             },
         )
-        return media.copy(url = proxied)
+        return media.copy(url = proxied, subtitles = subtitles)
+    }
+
+    /**
+     * Reloads the current media onto the receiver already holding the session.
+     *
+     * The only way to change the subtitle set on a receiver whose track list is fixed at load
+     * time: Chromecast can switch between tracks it already has, but neither protocol can be
+     * handed a *new* one without loading again. DLNA cannot even switch, since its subtitle lives
+     * in the DIDL metadata.
+     *
+     * Resumes from the receiver's own position, so the viewer keeps their place. Nothing happens
+     * when no session is live - this is a refresh, never a way to start casting.
+     */
+    fun reloadCurrent(media: CastMedia) {
+        val transport = active ?: return
+        val resumeFrom = _state.value.positionMs.coerceAtLeast(0L)
+
+        scope.launch {
+            val protocol = _state.value.protocol ?: return@launch
+
+            val withFormat = if (protocol == CastProtocol.CHROMECAST) {
+                media.copy(hlsSegmentFormat = detectHlsFormat(media))
+            } else {
+                media
+            }
+
+            val prepared = prepare(withFormat, transport.connectedDeviceHost(), protocol)
+                ?: return@launch
+
+            if (transport.load(prepared, resumeFrom)) {
+                _state.value = _state.value.copy(
+                    positionMs = resumeFrom,
+                    isRemotePlaying = true,
+                )
+                startProgressPolling()
+            } else {
+                Log.w(TAG, "reload refused by the receiver; leaving the session as it was")
+            }
+        }
+    }
+
+    /**
+     * Switches the subtitle track on the receiver, or turns them off with null.
+     *
+     * Identified by [sourceUrl] rather than by position, because the receiver's track list omits
+     * anything that could not be published and so does not line up with the player's.
+     *
+     * Silently does nothing when the url is unknown to the current session - that means the track
+     * was never sent, and asking the receiver to activate a track it does not have would clear
+     * the subtitles that are showing.
+     */
+    fun setSubtitleTrack(sourceUrl: String?) {
+        if (sourceUrl == null) {
+            active?.setSubtitleTrack(-1)
+            return
+        }
+
+        val index = loadedSubtitles.indexOfFirst { it.sourceUrl == sourceUrl }
+        if (index < 0) {
+            Log.w(TAG, "subtitle not available on the receiver; ignoring track change")
+            return
+        }
+
+        active?.setSubtitleTrack(index)
     }
 
     fun stopCasting() {
@@ -413,6 +637,7 @@ class CastManager(
         active = null
         proxy.stop()
         stopProgressPolling()
+        clearLoadedSubtitles()
 
         // The mirrored clock is cleared with the session. Left behind, the player would show
         // the receiver's last position as though it were local.
@@ -422,6 +647,7 @@ class CastManager(
             positionMs = 0L,
             durationMs = 0L,
             isRemotePlaying = false,
+            protocol = null,
         )
     }
 
@@ -438,6 +664,7 @@ class CastManager(
             positionMs = 0L,
             durationMs = 0L,
             isRemotePlaying = false,
+            protocol = null,
         )
     }
 
@@ -511,6 +738,11 @@ class CastManager(
         }
     }
 
+    /** Forgets the loaded track list; a stale one would resolve to the wrong receiver track. */
+    private fun clearLoadedSubtitles() {
+        loadedSubtitles = emptyList()
+    }
+
     private fun stopProgressPolling() {
         progressJob?.cancel()
         progressJob = null
@@ -534,5 +766,13 @@ class CastManager(
          * from one that updates twice.
          */
         const val PROGRESS_POLL_MS = 1_000L
+
+        /**
+         * How much of a playlist is read when probing its format.
+         *
+         * Generous for a playlist - a two-hour VOD manifest was 328 KB in testing - and small
+         * enough that a mislabelled video URL cannot exhaust memory.
+         */
+        const val MANIFEST_READ_LIMIT_BYTES = 512L * 1024
     }
 }

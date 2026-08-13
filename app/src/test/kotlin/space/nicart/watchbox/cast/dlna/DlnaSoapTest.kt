@@ -106,7 +106,7 @@ class DlnaSoapTest {
     }
 
     @Test
-    fun `subtitles are exposed through both res and the samsung namespace`() {
+    fun `a subtitle is attached through the samsung namespace only`() {
         val withSubs = media.copy(
             subtitles = listOf(
                 CastSubtitle(
@@ -118,10 +118,41 @@ class DlnaSoapTest {
         )
         val didl = DlnaSoap.didlLite(withSubs)
 
-        // Samsung reads its own namespace and ignores the second res element.
         assertTrue(didl.contains("sec:CaptionInfo"), didl)
         assertTrue(didl.contains("sec:CaptionInfoEx"), didl)
-        assertTrue(didl.contains("text/srt"), didl)
+    }
+
+    /**
+     * The subtitle must never appear as a second `<res>`.
+     *
+     * This test previously asserted the opposite, and the assertion was wrong. A DIDL item's
+     * `<res>` elements are *alternative representations of the item*, not its parts - so a
+     * renderer offered two picks one. Some pick the subtitle, and the television then shows
+     * text with no video and no audio.
+     *
+     * The path was unreachable until subtitles began being published for DLNA, so the fault
+     * shipped dormant and only surfaced when a subtitle was actually attached. Pinned in the
+     * negative now, because the natural instinct on reading the DIDL spec is to add it back.
+     */
+    @Test
+    fun `a subtitle is not offered as an alternative res`() {
+        val withSubs = media.copy(
+            subtitles = listOf(
+                CastSubtitle(
+                    url = "http://192.168.1.5:8909/sub.srt",
+                    label = "English",
+                    language = "en",
+                ),
+            ),
+        )
+        val didl = DlnaSoap.didlLite(withSubs)
+
+        assertEquals(
+            1,
+            Regex("<res ").findAll(didl).count(),
+            "exactly one res element is allowed, or the renderer may play the subtitle: $didl",
+        )
+        assertFalse(didl.contains("text/srt"), didl)
     }
 
     @Test

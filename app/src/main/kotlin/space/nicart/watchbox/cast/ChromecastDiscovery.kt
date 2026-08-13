@@ -115,8 +115,23 @@ class ChromecastDiscovery(private val context: Context) {
         routes.clear()
         discovered.forEach { routes[it.id] = it }
 
+        // Deduplicated by name, keeping the first of each.
+        //
+        // Ending a session leaves the router listing the same television more than once: the
+        // ids differ - so a map keyed on `route.id` treats them as separate devices - while the
+        // name is identical. Every stop added another copy, and the list grew without limit.
+        //
+        // Name is the right key because it is what the user is picking from: two rows reading
+        // "Living Room TV" are the same choice however the router numbers them. `routes` still
+        // holds every id, so whichever one is selected still resolves.
+        val unique = discovered.distinctBy { it.name.trim().lowercase() }
+
+        if (unique.size != discovered.size) {
+            Log.i(TAG, "collapsed ${discovered.size} routes to ${unique.size} by name")
+        }
+
         onDevicesChanged(
-            discovered.map { route ->
+            unique.map { route ->
                 CastDevice(
                     id = route.id,
                     name = route.name,

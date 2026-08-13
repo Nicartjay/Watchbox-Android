@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -123,6 +126,7 @@ fun TvSourcePickerPanel(
 ) {
     val tokens = MaterialTheme.wb
     val panelFocus = remember { FocusRequester() }
+    val listState = rememberLazyListState()
 
     // Closes the drawer instead of leaving the app. The picker opens from the rail on
     // the root Tabs destination, where nothing is left to pop, so an unhandled Back
@@ -134,6 +138,13 @@ fun TvSourcePickerPanel(
     // rather than the rail behind it, which is still laid out and focusable.
     LaunchedEffect(visible) {
         if (!visible) return@LaunchedEffect
+
+        // Brings the current source into view. In a list long enough to scroll it is very
+        // likely off-screen, and opening the picker on an arbitrary position gives no clue
+        // which source is actually active.
+        val current = sources.indexOfFirst { it.id == selected?.id }
+        if (current > 0) runCatching { listState.scrollToItem(current) }
+
         // Retried because requestFocus reports success even when no focusable node is
         // attached yet: the drawer is still animating in on the first frames.
         repeat(20) {
@@ -177,21 +188,38 @@ fun TvSourcePickerPanel(
                     .focusProperties { exit = { FocusRequester.Cancel } }
                     .focusGroup()
                     .padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
                     text = stringResource(R.string.tv_source_picker_title),
                     style = MaterialTheme.typography.titleLarge,
                     color = tokens.colors.textPrimary,
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(16.dp))
 
-                sources.forEach { source ->
-                    TvSourceRow(
-                        source = source,
-                        isSelected = source.id == selected?.id,
-                        onClick = { onSelect(source) },
-                    )
+                // A LazyColumn, not a plain Column.
+                //
+                // The list was laid out unscrollably, so with more sources than fit the drawer
+                // the rest were simply unreachable. A remote hid the fault: moving focus down
+                // scrolls the focused item into view automatically, whatever the container.
+                // A finger has nothing to focus with, so on the tablets this build is
+                // recommended for, the overflow could not be reached at all.
+                //
+                // Weight rather than a height: the list takes whatever the title leaves, so it
+                // scrolls at every drawer size instead of at one assumed one.
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(items = sources, key = { it.id }) { source ->
+                        TvSourceRow(
+                            source = source,
+                            isSelected = source.id == selected?.id,
+                            onClick = { onSelect(source) },
+                        )
+                    }
                 }
             }
         }

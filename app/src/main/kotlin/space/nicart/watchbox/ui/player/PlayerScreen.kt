@@ -430,6 +430,7 @@ fun PlayerScreen(
             // actually distinguish "not decoding" from "decoding into nowhere".
             override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
                 android.util.Log.i(TAG, "video size ${videoSize.width}x${videoSize.height}")
+
             }
 
             override fun onRenderedFirstFrame() {
@@ -500,6 +501,23 @@ fun PlayerScreen(
     LaunchedEffect(state.subtitleSearch) {
         if (state.subtitleSearch is SubtitleSearchState.Applied) {
             if (openPanel == PlayerPanel.SUBTITLE_SEARCH) openPanel = PlayerPanel.NONE
+
+            // A subtitle downloaded mid-session is not on the receiver at all: its track list is
+            // fixed at load time, so there is nothing to switch to. Reloading is the only way to
+            // introduce one, and it resumes from the receiver's own position so the viewer keeps
+            // their place.
+            //
+            // Both protocols, not just Chromecast: DLNA needs it more, since it cannot switch
+            // tracks at all and the DIDL metadata is only read when the media is set.
+            if (castState.isCasting) {
+                castManager.reloadCurrent(
+                    state.toCastMedia(
+                        runtimeMs = durationMs,
+                        preferProgressive = castState.protocol == CastProtocol.DLNA,
+                    ),
+                )
+            }
+
             viewModel.onSubtitleApplied()
         }
     }
@@ -603,18 +621,28 @@ fun PlayerScreen(
         }
     }
 
-    // Back peels one layer at a time, and only leaves once nothing of ours is showing.
+    // Back closes panels first, then leaves.
     //
-    // The controls case has to live here, not in mapPlayerKey: the manifest opts into
-    // enableOnBackInvokedCallback, so on API 33+ the system consumes KEYCODE_BACK before
-    // the view tree ever sees it and the DISMISS branch of the key mapping never runs
-    // for a real remote's Back. Without this, dismissing the controls exited playback.
+    // The controls are only a Back layer on a television. There, they are the focus target -
+    // dismissing them is a real action, and exiting playback because someone put the scrubber
+    // away would be wrong. On a phone they are a transient overlay that a tap already toggles,
+    // so treating them as a Back layer means the first press appears to do nothing and the
+    // gesture has to be repeated to leave.
+    //
+    // Panels and the lock stay layered on both: those are things the user opened deliberately,
+    // and dismissing them is what Back is for.
+    //
+    // This lives here rather than in mapPlayerKey because the manifest opts into
+    // enableOnBackInvokedCallback, so on API 33+ the system consumes KEYCODE_BACK before the
+    // view tree sees it and the DISMISS branch of the key mapping never runs.
     BackHandler {
+        val controlsAreABackLayer = metricsForFocus.isFocusDriven && controlsVisible
+
         when {
             castPanelOpen -> castPanelOpen = false
             openPanel != PlayerPanel.NONE -> openPanel = PlayerPanel.NONE
             state.locked -> viewModel.setLocked(false)
-            controlsVisible -> controlsVisible = false
+            controlsAreABackLayer -> controlsVisible = false
             else -> {
                 viewModel.flushProgress(exoPlayer.currentPosition, exoPlayer.duration)
                 onBack()
@@ -825,6 +853,18 @@ fun PlayerScreen(
             )
         }
 
+        // --- casting overlay
+        //
+        // Declared before the controls so they paint over it: in a Box, later children are drawn
+        // on top. The overlay's own centred block hides while the controls are up, so the two do
+        // not compete for the middle of the screen even though both are centred.
+        CastingOverlay(
+            isCasting = castState.isCasting,
+            controlsVisible = controlsVisible && !state.locked && !state.isResolving,
+            deviceName = castState.deviceName,
+            title = state.title,
+        )
+
         GestureLevelIndicator(
             gesture = activeGesture,
             level = gestureLevel,
@@ -862,6 +902,7 @@ fun PlayerScreen(
                 onCycleAspect = viewModel::cycleAspect,
                 onOpenPanel = { openPanel = it },
                 isCasting = castState.isCasting,
+                castDeviceName = castState.deviceName,
                 playFocusRequester = playFocusRequester,
                 onPlayFocusChanged = { playHasFocus = it },
                 onOpenCast = {
@@ -949,8 +990,27 @@ fun PlayerScreen(
                 viewModel.selectStream(stream)
                 openPanel = PlayerPanel.NONE
             },
-            onSelectSubtitle = {
-                viewModel.selectSubtitle(it)
+            onSelectSubtitle = { index ->
+                viewModel.selectSubtitle(index)
+
+                // Forwarded to the receiver as well while casting. The local player's track
+                // selection is invisible to it - the receiver holds its own copy of the tracks -
+                // so without this, changing subtitles mid-session changed nothing on the TV.
+                //
+                // Identified by URL rather than index: subtitles that could not be published are
+                // dropped on the way to the receiver, so the two lists do not line up.
+                if (castState.isCasting) {
+                    if (castState.protocol == CastProtocol.DLNA) {
+                        // DLNA fixes its subtitle in the DIDL metadata at load time, so there is
+                        // no track to switch - the media has to be set again with the new choice.
+                        castManager.reloadCurrent(
+                            state.toCastMedia(runtimeMs = durationMs, preferProgressive = true),
+                        )
+                    } else {
+                        castManager.setSubtitleTrack(state.subtitles.getOrNull(index)?.url)
+                    }
+                }
+
                 openPanel = PlayerPanel.NONE
             },
             onSelectSpeed = {
@@ -1043,18 +1103,22 @@ private fun PlayerUiState.toCastMedia(
         // The runtime the local player worked out, not zero. DLNA builds its metadata from
         // this, and a renderer told a stream is zero-length can refuse to seek in it at all.
         durationMs = runtimeMs.coerceAtLeast(0L),
-        // Downloaded subtitles are not cast. A receiver fetches them itself, so a file:// path
-        // on this device is unreachable to it, and the searched catalogues serve SubRip, which
-        // the receiver ignores even when reachable. Either way the track would appear in the
-        // receiver's menu and show nothing, so only the stream's own tracks are offered.
+        // Downloaded subtitles are cast too, marked so CastManager can republish them.
         //
-        // Source-supplied tracks are passed through untouched, including non-WebVTT ones: that
-        // is long-standing behaviour, and filtering by extension here would also drop the
-        // extensionless URLs that do work.
-        subtitles = subtitles
-            .filterNot { it.isExternal }
-            .map { CastSubtitle(url = it.url, label = it.label, language = it.language) },
+        // They were previously dropped, on the reasoning that a receiver cannot open a file://
+        // path and would ignore SubRip anyway. Both are true and neither is a reason to give up:
+        // the proxy already serves the video from this device, so it can serve the subtitle file
+        // as well, and converting SubRip to WebVTT on the way out is a small transformation.
+        subtitles = subtitles.map {
+            CastSubtitle(
+                url = it.url,
+                label = it.label,
+                language = it.language,
+                isLocalFile = it.url.startsWith("file:"),
+            )
+        },
         isMovie = episodes.size <= 1,
+        selectedSubtitleIndex = selectedSubtitleIndex,
     )
 }
 
