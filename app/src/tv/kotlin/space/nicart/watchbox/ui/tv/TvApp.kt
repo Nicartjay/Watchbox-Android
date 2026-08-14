@@ -108,6 +108,7 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
                 factory = PlayerViewModel.factory(
                     container.repository,
                     container.subtitleRepository,
+                    container.skipRepository,
                     container.store,
                     route.sourceId,
                     route.animeUrl,

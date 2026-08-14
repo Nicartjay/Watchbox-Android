@@ -7,6 +7,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -17,6 +19,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -83,6 +86,32 @@ private const val CONTROLS_AUTO_HIDE_MS = 3_000L
 private const val CONTROL_FOCUS_ATTEMPTS = 12
 private const val CONTROL_FOCUS_RETRY_MS = 60L
 private const val TAG = "WbPlayer"
+
+/**
+ * How long the double-tap seek readout stays after the last tap.
+ *
+ * Longer than the tap window itself, so a run of taps shows one settled total rather than
+ * flickering, and short enough not to sit over the picture once seeking has stopped.
+ */
+private const val SEEK_TAP_VISIBLE_MS = 800L
+
+/**
+ * Height of the control rows below the scrubber: the timecode row and the pill row.
+ *
+ * Measured from ProgressControls rather than guessed - the timecode row is 4dp vertical padding
+ * plus 8dp bottom plus its text, and the pill row is a 48dp target with its own padding. Not in
+ * PlayerMetrics because nothing else needs it, but kept named so the reason for the number is
+ * findable.
+ */
+private val CONTROL_STACK_HEIGHT = 92.dp
+
+/**
+ * Gap between the skip button and the top of the control stack.
+ *
+ * Without it the two sit flush: the arithmetic puts the button's bottom edge exactly on the
+ * stack's top edge, which is touching rather than clear.
+ */
+private val SKIP_CLEARANCE = 12.dp
 
 @UnstableApi
 @Composable
@@ -401,6 +430,25 @@ fun PlayerScreen(
     var gestureLevel by remember { mutableFloatStateOf(0f) }
     var playbackError by remember { mutableStateOf<String?>(null) }
 
+    /**
+     * Accumulated double-tap seek, for the on-screen feedback.
+     *
+     * Accumulated rather than reset per tap so a rapid run reads as one total - four taps show
+     * "+40s" instead of flashing "+10s" four times. [seekTapBump] restarts the decay on every
+     * tap; without a separate counter, a second tap of the same size would not re-trigger the
+     * effect and the indicator would vanish mid-run.
+     */
+    var seekTapAccumulatedMs by remember { mutableLongStateOf(0L) }
+    var seekTapOnLeft by remember { mutableStateOf(false) }
+    var seekTapBump by remember { mutableIntStateOf(0) }
+
+    // Clears the indicator once tapping stops. Keyed on the bump so each tap restarts the wait.
+    LaunchedEffect(seekTapBump) {
+        if (seekTapAccumulatedMs == 0L) return@LaunchedEffect
+        delay(SEEK_TAP_VISIBLE_MS)
+        seekTapAccumulatedMs = 0L
+    }
+
     // The player's current track list, mirrored into state so the subtitle-selection effect
     // re-runs when a sideloaded track finishes parsing.
     var tracks by remember { mutableStateOf<androidx.media3.common.Tracks?>(null) }
@@ -458,11 +506,19 @@ fun PlayerScreen(
     }
 
     // --- pause on background, flush progress
-    DisposableEffect(lifecycleOwner) {
+    //
+    // Re-keyed on the player and the setting, not just the owner. The observer closes over both,
+    // and an ExoPlayer instance is replaced whenever the stream's headers change - so an effect
+    // keyed on the owner alone would keep pausing the discarded player, and would ignore the
+    // setting being toggled mid-session. Same class of bug as the tap detector below.
+    DisposableEffect(lifecycleOwner, exoPlayer, state.backgroundPlayback) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE -> {
-                    exoPlayer.pause()
+                    // Paused unless the user asked for background playback. Progress is written
+                    // either way: leaving the app is exactly when the position must survive, and
+                    // a background session can still be killed by the system at any point.
+                    if (!state.backgroundPlayback) exoPlayer.pause()
                     viewModel.flushProgress(exoPlayer.currentPosition, exoPlayer.duration)
                 }
 
@@ -500,6 +556,15 @@ fun PlayerScreen(
         // and starting local playback then is what previously brought the phone's audio back
         // in the middle of a cast session.
         exoPlayer.playWhenReady = !castState.isCasting
+    }
+
+    // --- skip intervals
+    //
+    // Requested once the runtime is known rather than when the episode is chosen: AniSkip checks
+    // the episode length against the interval it holds, so asking with a duration of zero returns
+    // nothing at all. Keyed on the episode too, so a new episode re-asks.
+    LaunchedEffect(state.episode?.url, durationMs) {
+        if (durationMs > 0) viewModel.loadSkipTimes(durationMs)
     }
 
     // --- speed
@@ -730,7 +795,17 @@ fun PlayerScreen(
                 // inside its bounds - see controlsOwnFocus.
                 .focusRequester(playerFocusRequester)
                 .focusable(enabled = !controlsOwnFocus)
-                .pointerInput(state.locked) {
+                // Re-keyed on the player instance, not just the lock.
+                //
+                // PlayerFactory builds a new ExoPlayer whenever the stream's headers change, and
+                // an episode switch brings freshly signed URLs - so the instance is replaced. A
+                // detector keyed only on `locked` kept its original closure and went on seeking
+                // the discarded player, which is why double-tap stopped working after changing
+                // episode from the player's own episode list.
+                //
+                // durationMs is included for the same reason as the drag detector below: the
+                // clamp inside transportSeekTo reads it.
+                .pointerInput(state.locked, exoPlayer, durationMs) {
                     detectTapGestures(
                         onTap = {
                             if (state.locked) {
@@ -744,7 +819,14 @@ fun PlayerScreen(
                         onDoubleTap = { offset ->
                             if (state.locked) return@detectTapGestures
                             val forward = offset.x > size.width / 2f
-                            transportSeekBy(if (forward) 10_000L else -10_000L)
+                            val delta = if (forward) 10_000L else -10_000L
+
+                            transportSeekBy(delta)
+
+                            seekTapAccumulatedMs =
+                                accumulateSeekTap(seekTapAccumulatedMs, delta)
+                            seekTapOnLeft = !forward
+                            seekTapBump++
                         },
                     )
                 }
@@ -873,6 +955,60 @@ fun PlayerScreen(
             controlsVisible = controlsVisible && !state.locked && !state.isResolving,
             deviceName = castState.deviceName,
             title = state.title,
+        )
+
+        // --- skip intro / outro
+        //
+        // Outside the controls overlay on purpose: the controls auto-hide after three seconds and
+        // an opening runs for ninety, so a button inside them would vanish for most of its window.
+        // Position-driven, so it appears and leaves on its own.
+        //
+        // Hidden while locked or casting: locked means input is deliberately ignored, and while
+        // casting the local clock is not what the receiver is playing.
+        if (!state.locked && !castState.isCasting) {
+            // Lifted clear of the controls when they are up, and animated so it slides rather
+            // than jumping between the two positions.
+            //
+            // Derived from the same metrics the controls are built from, not a fixed number: the
+            // bottom stack is the slider plus its touch height, the timecode row and the pill
+            // row, and all of those scale with screen width. A hardcoded offset was correct on
+            // one size and overlapped on the others.
+            val controlsUp = controlsVisible && !state.isResolving
+            val skipLift by animateDpAsState(
+                targetValue = if (controlsUp) {
+                    metrics.sliderBottomOffset +
+                        metrics.sliderTouchHeight +
+                        CONTROL_STACK_HEIGHT +
+                        SKIP_CLEARANCE
+                } else {
+                    metrics.verticalPadding
+                },
+                animationSpec = tween(durationMillis = 220),
+                label = "skip-button-lift",
+            )
+
+            SkipSegmentButton(
+                intervals = state.skipIntervals,
+                positionMs = positionMs,
+                onSkip = { target -> transportSeekTo(target) },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = metrics.horizontalPadding, bottom = skipLift),
+            )
+        }
+
+        // --- double-tap seek readout
+        //
+        // On the side that was tapped, so the feedback appears under the finger that caused it.
+        // Declared before the controls so they paint over it, and outside the controls overlay so
+        // it works whether or not the controls happen to be up - a double-tap does not reveal
+        // them, which is exactly when the picture alone gives no confirmation.
+        SeekTapIndicator(
+            accumulatedMs = seekTapAccumulatedMs,
+            positionMs = positionMs,
+            modifier = Modifier
+                .align(if (seekTapOnLeft) Alignment.CenterStart else Alignment.CenterEnd)
+                .padding(horizontal = 40.dp),
         )
 
         GestureLevelIndicator(

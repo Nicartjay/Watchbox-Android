@@ -47,6 +47,7 @@ class WatchBoxStore(context: Context) {
                 repos = readRepos(prefs),
                 theme = AppTheme.fromName(prefs[Keys.THEME]),
                 autoPlayNext = prefs[Keys.AUTO_NEXT] ?: true,
+                backgroundPlayback = prefs[Keys.BACKGROUND_PLAY] ?: false,
                 preferredQuality = prefs[Keys.QUALITY] ?: "1080",
                 nsfwSourcesEnabled = prefs[Keys.NSFW] ?: false,
                 autoCheckUpdates = prefs[Keys.AUTO_UPDATE_CHECK] ?: true,
@@ -145,6 +146,9 @@ class WatchBoxStore(context: Context) {
 
     suspend fun setTheme(theme: AppTheme) = store.edit { it[Keys.THEME] = theme.name }
     suspend fun setAutoPlayNext(enabled: Boolean) = store.edit { it[Keys.AUTO_NEXT] = enabled }
+    suspend fun setBackgroundPlayback(enabled: Boolean) = store.edit {
+        it[Keys.BACKGROUND_PLAY] = enabled
+    }
     suspend fun setPreferredQuality(quality: String) = store.edit { it[Keys.QUALITY] = quality }
     suspend fun setNsfwSourcesEnabled(enabled: Boolean) = store.edit { it[Keys.NSFW] = enabled }
 
@@ -324,6 +328,7 @@ class WatchBoxStore(context: Context) {
         val REPOS = stringPreferencesKey("extension_repos")
         val THEME = stringPreferencesKey("theme")
         val AUTO_NEXT = booleanPreferencesKey("auto_play_next")
+        val BACKGROUND_PLAY = booleanPreferencesKey("background_playback")
         val QUALITY = stringPreferencesKey("preferred_quality")
         val NSFW = booleanPreferencesKey("nsfw_sources")
         val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_check_updates")
@@ -353,6 +358,17 @@ data class AppSettings(
     val repos: List<ExtensionRepo> = ExtensionRepo.DEFAULT,
     val theme: AppTheme = AppTheme.Default,
     val autoPlayNext: Boolean = true,
+    /**
+     * Keep playing when the app leaves the foreground.
+     *
+     * False by default, which is the safer of the two: a video that carries on after Home is
+     * pressed is startling, keeps the screen awake and drains battery. Someone who wants audio
+     * to continue - a music video, a podcast-style episode - can turn it on deliberately.
+     *
+     * There is no media notification, so playback cannot be controlled while backgrounded. That
+     * is stated in the setting's description rather than left to be discovered.
+     */
+    val backgroundPlayback: Boolean = false,
     val preferredQuality: String = "1080",
     val nsfwSourcesEnabled: Boolean = false,
     val autoCheckUpdates: Boolean = true,

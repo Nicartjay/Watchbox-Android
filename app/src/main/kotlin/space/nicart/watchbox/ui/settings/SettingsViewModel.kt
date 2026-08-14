@@ -120,6 +120,10 @@ class SettingsViewModel(
         viewModelScope.launch { store.setTheme(theme) }
     }
 
+    fun setBackgroundPlayback(enabled: Boolean) {
+        viewModelScope.launch { store.setBackgroundPlayback(enabled) }
+    }
+
     fun setAutoPlayNext(enabled: Boolean) {
         viewModelScope.launch { store.setAutoPlayNext(enabled) }
     }

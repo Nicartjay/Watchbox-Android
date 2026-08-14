@@ -204,6 +204,15 @@ fun SettingsScreen(
                 )
             }
 
+            item(key = "background-play") {
+                SettingsToggleRow(
+                    title = stringResource(R.string.settings_background_play),
+                    checked = settings.backgroundPlayback,
+                    onCheckedChange = viewModel::setBackgroundPlayback,
+                    summary = stringResource(R.string.settings_background_play_summary),
+                )
+            }
+
             item(key = "nsfw") {
                 SettingsToggleRow(
                     title = stringResource(R.string.settings_nsfw),
@@ -690,6 +699,13 @@ private fun SettingsToggleRow(
     title: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    /**
+     * Optional second line, for a setting whose consequence is not guessable from its name.
+     *
+     * Defaulted so the existing rows are unaffected: most of them describe themselves, and a
+     * summary on every row would be noise rather than help.
+     */
+    summary: String? = null,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val tokens = MaterialTheme.wb
@@ -707,14 +723,23 @@ private fun SettingsToggleRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            color = tokens.colors.textPrimary,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = tokens.colors.textPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            summary?.let {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tokens.colors.textMuted,
+                )
+            }
+        }
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,

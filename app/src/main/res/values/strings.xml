@@ -159,6 +159,9 @@
     <string name="settings_battery_manage">Change in system settings</string>
     <string name="settings_battery_unavailable">This device has no battery settings screen.</string>
 
+    <string name="settings_background_play">Play in background</string>
+    <string name="settings_background_play_summary">Keep playing when you leave the app. There is no notification to control playback while it runs.</string>
+
     <string name="settings_data">Data</string>
     <string name="settings_clear_history">Clear watch history</string>
     <string name="settings_clear_list">Clear My List</string>

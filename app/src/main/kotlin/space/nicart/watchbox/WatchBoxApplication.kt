@@ -20,8 +20,11 @@ import space.nicart.watchbox.data.remote.UpdateInstaller
 import space.nicart.watchbox.extension.ExtensionInstaller
 import space.nicart.watchbox.extension.ExtensionManager
 import space.nicart.watchbox.extension.ExtensionRepoApi
+import space.nicart.watchbox.data.remote.AniSkipApi
+import space.nicart.watchbox.data.remote.ArmApi
 import space.nicart.watchbox.data.remote.SubtitleApi
 import space.nicart.watchbox.domain.AnimeRepository
+import space.nicart.watchbox.domain.SkipRepository
 import space.nicart.watchbox.domain.SubtitleRepository
 import space.nicart.watchbox.extension.installExtensionInjekt
 
@@ -124,6 +127,17 @@ class AppContainer(
     val repository = AnimeRepository(extensionManager, tmdbApi)
 
     /** Online subtitle search, on the shared app-level client. */
+    /**
+     * Opening/ending timestamps, and the id mapping they need.
+     *
+     * Both reuse the plain client rather than the extensions' one: neither service is a content
+     * source, so neither wants a source's cookies or Referer.
+     */
+    val skipRepository = SkipRepository(
+        aniSkip = AniSkipApi(plainClient),
+        arm = ArmApi(plainClient),
+    )
+
     val subtitleRepository = SubtitleRepository(
         context = application,
         api = SubtitleApi(plainClient),

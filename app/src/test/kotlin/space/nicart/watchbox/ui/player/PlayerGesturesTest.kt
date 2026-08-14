@@ -121,4 +121,56 @@ class PlayerGesturesTest {
     fun `zero height is not an edge`() {
         assertFalse(isInSystemEdgeZone(y = 0f, heightPx = 0, edgePx = 48f))
     }
+
+    // ------------------------------------------------- double-tap seek readout
+
+    /**
+     * A run of taps in one direction reads as one total.
+     *
+     * Four forward taps should report "+40s", not flash "+10s" four times - the total is the
+     * number a viewer is actually judging, and a per-tap flash makes a fast run unreadable.
+     */
+    @Test
+    fun `taps in the same direction accumulate`() {
+        var total = 0L
+        repeat(4) { total = accumulateSeekTap(total, 10_000L) }
+
+        assertEquals(40_000L, total)
+    }
+
+    @Test
+    fun `backward taps accumulate too`() {
+        var total = 0L
+        repeat(3) { total = accumulateSeekTap(total, -10_000L) }
+
+        assertEquals(-30_000L, total)
+    }
+
+    /**
+     * Reversing starts over rather than netting off.
+     *
+     * A backward tap after forward ones is a correction, not part of the same run. Netting would
+     * report a figure nobody asked about - and at exactly one tap back it would read "+0s", which
+     * looks identical to the tap having been ignored.
+     */
+    @Test
+    fun `reversing direction restarts the total`() {
+        val forward = accumulateSeekTap(accumulateSeekTap(0L, 10_000L), 10_000L)
+        assertEquals(20_000L, forward)
+
+        assertEquals(-10_000L, accumulateSeekTap(forward, -10_000L))
+    }
+
+    @Test
+    fun `the first tap sets the total from zero`() {
+        assertEquals(10_000L, accumulateSeekTap(0L, 10_000L))
+        assertEquals(-10_000L, accumulateSeekTap(0L, -10_000L))
+    }
+
+    /** The sign drives the arrow direction, so it must survive accumulation. */
+    @Test
+    fun `the sign reflects the direction of travel`() {
+        assertTrue(accumulateSeekTap(0L, 10_000L) > 0)
+        assertTrue(accumulateSeekTap(-20_000L, -10_000L) < 0)
+    }
 }

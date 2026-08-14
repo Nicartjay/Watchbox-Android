@@ -18,6 +18,8 @@ import space.nicart.watchbox.data.remote.SubtitleQuery
 import space.nicart.watchbox.data.remote.SubtitleResult
 import space.nicart.watchbox.domain.StreamOption
 import space.nicart.watchbox.domain.SubtitleOption
+import space.nicart.watchbox.data.remote.SkipInterval
+import space.nicart.watchbox.domain.SkipRepository
 import space.nicart.watchbox.domain.SubtitleRepository
 
 /**
@@ -79,6 +81,8 @@ data class PlayerUiState(
     val aspectMode: AspectMode = AspectMode.FIT,
     val locked: Boolean = false,
     val autoPlayNext: Boolean = true,
+    /** Keep playing when the app is backgrounded; off by default. */
+    val backgroundPlayback: Boolean = false,
     val errorMessage: String? = null,
     /**
      * Subtitles fetched online, appended after the ones the source supplied.
@@ -89,6 +93,13 @@ data class PlayerUiState(
      */
     val externalSubtitles: List<SubtitleOption> = emptyList(),
     val subtitleSearch: SubtitleSearchState = SubtitleSearchState.Idle,
+    /**
+     * Opening/ending intervals for this episode, empty when none are known.
+     *
+     * Only anime with a TMDB-to-MAL mapping has any, so empty is the ordinary case rather than
+     * a failure - see [SkipRepository].
+     */
+    val skipIntervals: List<SkipInterval> = emptyList(),
 ) {
     val title: String get() = detail?.title.orEmpty()
 
@@ -133,6 +144,7 @@ data class PlayerUiState(
 class PlayerViewModel(
     private val repository: AnimeRepository,
     private val subtitles: SubtitleRepository,
+    private val skips: SkipRepository,
     private val store: WatchBoxStore,
     private val sourceId: Long,
     private val animeUrl: String,
@@ -145,6 +157,7 @@ class PlayerViewModel(
 
     private var resolveJob: Job? = null
     private var subtitleJob: Job? = null
+    private var skipJob: Job? = null
     private var lastHistoryWrite = 0L
 
     /**
@@ -160,7 +173,10 @@ class PlayerViewModel(
         viewModelScope.launch {
             val settings = store.currentSettings()
             subtitleLanguage = settings.subtitleLanguage
-            _uiState.value = _uiState.value.copy(autoPlayNext = settings.autoPlayNext)
+            _uiState.value = _uiState.value.copy(
+                autoPlayNext = settings.autoPlayNext,
+                backgroundPlayback = settings.backgroundPlayback,
+            )
             loadDetail()
         }
     }
@@ -348,6 +364,35 @@ class PlayerViewModel(
         }
     }
 
+    /**
+     * Loads skip intervals once the runtime is known.
+     *
+     * Called from the player after preparation rather than on episode selection, because AniSkip
+     * checks the episode length against the interval it holds - a length of zero returns nothing.
+     *
+     * Cleared first, so a stale interval from the previous episode cannot leave a button on
+     * screen that jumps to the wrong place.
+     */
+    fun loadSkipTimes(episodeLengthMs: Long) {
+        skipJob?.cancel()
+
+        if (episodeLengthMs <= 0) return
+
+        val state = _uiState.value
+        skipJob = viewModelScope.launch {
+            val intervals = skips.skipTimes(
+                detail = state.detail,
+                episode = state.episode,
+                episodeLengthMs = episodeLengthMs,
+            )
+
+            // Discarded if the episode moved on while the two lookups were in flight.
+            if (_uiState.value.episode?.url == state.episode?.url) {
+                _uiState.value = _uiState.value.copy(skipIntervals = intervals)
+            }
+        }
+    }
+
     /** Acknowledges the Applied state so a later search does not re-close its own panel. */
     fun onSubtitleApplied() {
         if (_uiState.value.subtitleSearch is SubtitleSearchState.Applied) {
@@ -393,6 +438,7 @@ class PlayerViewModel(
         // specific release, so carrying them over would leave the next episode showing the
         // previous one's dialogue - worse than no subtitles, because it looks like it works.
         subtitleJob?.cancel()
+        skipJob?.cancel()
         subtitles.clearCache()
 
         _uiState.value = _uiState.value.copy(
@@ -401,6 +447,8 @@ class PlayerViewModel(
             externalSubtitles = emptyList(),
             selectedSubtitleIndex = -1,
             subtitleSearch = SubtitleSearchState.Idle,
+            // The previous episode's opening is not this one's.
+            skipIntervals = emptyList(),
         )
         resolve(episode)
     }
@@ -478,6 +526,7 @@ class PlayerViewModel(
         fun factory(
             repository: AnimeRepository,
             subtitles: SubtitleRepository,
+            skips: SkipRepository,
             store: WatchBoxStore,
             sourceId: Long,
             animeUrl: String,
@@ -488,6 +537,7 @@ class PlayerViewModel(
             override fun <T : ViewModel> create(modelClass: Class<T>): T = PlayerViewModel(
                 repository = repository,
                 subtitles = subtitles,
+                skips = skips,
                 store = store,
                 sourceId = sourceId,
                 animeUrl = animeUrl,

@@ -504,6 +504,23 @@ private fun ProgressControls(
     val sliderInteraction = rememberFocusInteraction()
 
     Column(modifier = modifier) {
+        // Skip segments marked on the timeline, drawn behind the slider.
+        //
+        // A Box rather than a custom slider: Material3's Slider has no marker API, and replacing
+        // it would mean reimplementing its focus handling, D-pad keys and touch semantics - all of
+        // which took work to get right. Drawing underneath keeps the slider exactly as it is.
+        Box(modifier = Modifier.fillMaxWidth()) {
+            SkipSegmentMarkers(
+                intervals = state.skipIntervals,
+                durationMs = durationMs,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(metrics.sliderTouchHeight)
+                    // Matches the slider's own inset so a marker lines up with the position the
+                    // thumb reports. Material's slider reserves half a thumb at each end.
+                    .padding(horizontal = SLIDER_THUMB_INSET),
+            )
+
         Slider(
             value = if (durationMs > 0) {
                 (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
@@ -570,6 +587,7 @@ private fun ProgressControls(
                 )
                 .graphicsLayer { scaleY = metrics.sliderScaleY },
         )
+        }
 
         Row(
             modifier = Modifier
@@ -761,3 +779,12 @@ private fun Float.formatSpeed(): String =
  * that unusable.
  */
 internal const val SLIDER_SEEK_STEP_MS = 15_000L
+
+/**
+ * Horizontal inset matching Material's slider.
+ *
+ * The slider reserves half a thumb at each end so the thumb stays on screen at 0% and 100%, which
+ * means its usable track is narrower than its bounds. The markers have to use the same inset or a
+ * band drifts from the position the thumb reports for it - most visibly at the very start and end.
+ */
+private val SLIDER_THUMB_INSET = 10.dp

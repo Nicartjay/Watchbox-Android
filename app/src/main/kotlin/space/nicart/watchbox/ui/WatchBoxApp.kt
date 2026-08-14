@@ -151,6 +151,7 @@ fun WatchBoxApp(
                     factory = PlayerViewModel.factory(
                         repository = container.repository,
                         subtitles = container.subtitleRepository,
+                        skips = container.skipRepository,
                         store = container.store,
                         sourceId = route.sourceId,
                         animeUrl = route.animeUrl,
