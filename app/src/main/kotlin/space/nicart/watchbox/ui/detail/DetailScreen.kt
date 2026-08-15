@@ -85,12 +85,15 @@ fun DetailScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    // Which list the tab strip is showing, and which block of episodes.
+    // Which list the tab strip is showing.
     //
-    // Screen-local rather than in the view model: both are a view preference that should
-    // reset when the page is left, not survive it.
+    // Screen-local rather than in the view model: a view preference that should reset when
+    // the page is left, not survive it.
+    //
+    // The episode block is not held here. It belongs with the season selector, which
+    // EpisodeList owns - keeping it at this level meant the blocks were computed from every
+    // season's episodes combined while the filter ran inside, so the two disagreed.
     var detailTab by remember { mutableStateOf(DetailTab.EPISODES) }
-    var episodeRangeIndex by remember { mutableIntStateOf(0) }
 
     // Reviews are phone-only, so the layout has to know which it is.
     val isFocusDriven = LocalLayoutMetrics.current.isFocusDriven
@@ -401,38 +404,18 @@ fun DetailScreen(
                                 )
                             }
                         } else if (showEpisodes) {
-                            // Blocks of fifty for a long-running series. Nothing is shown
-                            // at or below the threshold, since a single chip is a control
-                            // that does nothing.
-                            //
-                            // Computed plainly rather than remembered: this is inside a lazy
-                            // item builder, which is not a composable scope, and the work is
-                            // a single pass over a count.
-                            val ranges = episodeRanges(detail.episodes.size)
-
-                            if (ranges.isNotEmpty()) {
-                                item(key = "episode-ranges") {
-                                    EpisodeRangeRow(
-                                        ranges = ranges,
-                                        selectedIndex = episodeRangeIndex
-                                            .coerceIn(0, ranges.lastIndex),
-                                        onSelect = { episodeRangeIndex = it },
-                                        horizontalPadding = contentPadding,
-                                        modifier = Modifier.padding(bottom = 12.dp),
-                                    )
-                                }
-                            }
-
                             item(key = "episodes") {
-                                val shown = if (ranges.isEmpty()) {
-                                    detail.episodes
-                                } else {
-                                    val range = ranges[episodeRangeIndex.coerceIn(0, ranges.lastIndex)]
-                                    detail.episodes.subList(range.fromIndex, range.toIndex + 1)
-                                }
-
+                                // The whole list is handed over, not a slice of it.
+                                //
+                                // EpisodeList owns the season selector, so slicing here as
+                                // well meant two layers cutting the same list from different
+                                // ends: the chips were computed from every season's episodes
+                                // combined, then the season filter ran inside, so picking
+                                // "51-100" on a show whose seasons are 20 episodes each
+                                // showed nothing at all. Episode blocks belong under the
+                                // season, so they live where the season is known.
                                 EpisodeList(
-                                    episodes = shown,
+                                    episodes = detail.episodes,
                                     watchedUrls = state.watchedEpisodeUrls,
                                     currentUrl = state.history?.episodeUrl,
                                     isLoading = false,

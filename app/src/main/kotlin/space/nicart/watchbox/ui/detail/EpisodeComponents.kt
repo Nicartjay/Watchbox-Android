@@ -54,6 +54,7 @@ import space.nicart.watchbox.ui.components.WbSkeletonBlock
 import space.nicart.watchbox.ui.components.WbWatchedBadge
 import java.text.DateFormat
 import java.util.Date
+import androidx.compose.runtime.mutableIntStateOf
 
 /**
  * Episode list.
@@ -118,11 +119,33 @@ fun EpisodeList(
         mutableStateOf(current ?: seasons.firstOrNull())
     }
 
-    val shown = remember(episodes, selectedSeason, seasons) {
+    val inSeason = remember(episodes, selectedSeason, seasons) {
         if (seasons.size <= 1 || selectedSeason == null) {
             episodes
         } else {
             episodes.filter { it.season == selectedSeason }
+        }
+    }
+
+    // Blocks of fifty, computed from the selected season rather than the whole show.
+    //
+    // This has to happen after the season filter, not before it. Ranges built from every
+    // season's episodes combined do not line up with what a season contains: on a show with
+    // 20-episode seasons, a "51-100" chip described episodes that were never in the list the
+    // filter produced, so selecting it showed nothing.
+    val ranges = remember(inSeason.size) { episodeRanges(inSeason.size) }
+
+    // Reset when the season changes: block 3 of season 1 has no meaning in a season with one
+    // block, and an index left pointing past the end would be clamped to a block the user
+    // did not choose.
+    var rangeIndex by remember(selectedSeason, inSeason.size) { mutableIntStateOf(0) }
+
+    val shown = remember(inSeason, ranges, rangeIndex) {
+        if (ranges.isEmpty()) {
+            inSeason
+        } else {
+            val range = ranges[rangeIndex.coerceIn(0, ranges.lastIndex)]
+            inSeason.subList(range.fromIndex, range.toIndex + 1)
         }
     }
 
@@ -137,6 +160,14 @@ fun EpisodeList(
                 horizontalPadding = horizontalPadding,
             )
         }
+
+        // Below the season selector, because the blocks describe that season's episodes.
+        EpisodeRangeRow(
+            ranges = ranges,
+            selectedIndex = rangeIndex.coerceIn(0, maxOf(ranges.lastIndex, 0)),
+            onSelect = { rangeIndex = it },
+            horizontalPadding = horizontalPadding,
+        )
 
         val hasStills = shown.any { it.stillUrl != null }
 

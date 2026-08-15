@@ -47,7 +47,6 @@ import androidx.compose.material.icons.rounded.Star
 import space.nicart.watchbox.data.remote.ProviderKind
 import space.nicart.watchbox.data.remote.TmdbExtras
 import space.nicart.watchbox.data.remote.TmdbReview
-import androidx.compose.foundation.layout.FlowRow
 import space.nicart.watchbox.data.remote.TmdbProvider
 import androidx.compose.animation.animateContentSize
 import androidx.compose.runtime.mutableStateOf
@@ -318,7 +317,7 @@ fun ProviderSection(
 ) {
     val tokens = MaterialTheme.wb
 
-    // Two columns, split by what the viewer can do rather than by TMDB's five buckets.
+    // Two groups, split by what the viewer can do rather than by TMDB's five buckets.
     //
     // Watch is anything already available - a subscription or a free ad-supported tier -
     // and Buy is anything that costs money per title, rent or purchase. That is the
@@ -343,90 +342,83 @@ fun ProviderSection(
             color = tokens.colors.textMuted,
             modifier = Modifier
                 .padding(horizontal = horizontalPadding)
-                .padding(top = 2.dp, bottom = 12.dp),
+                .padding(top = 2.dp, bottom = 10.dp),
         )
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = horizontalPadding),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            // Only a column that has something in it, and a lone column takes the whole
-            // width rather than half.
-            //
-            // An earlier version always laid out both and printed "Not available" in the
-            // empty one, which stated the obvious where the answer should be. Leaving the
-            // gap instead was no better: a half-width column with blank space beside it
-            // reads as something that failed to load.
-            if (watch.isNotEmpty()) {
-                ProviderColumn(
-                    title = stringResource(R.string.provider_column_watch),
-                    providers = watch,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            if (buy.isNotEmpty()) {
-                ProviderColumn(
-                    title = stringResource(R.string.provider_column_buy),
-                    providers = buy,
-                    modifier = Modifier.weight(1f),
-                )
-            }
+        // One row per group, label and logos together on the same line.
+        //
+        // Cards in columns put the label above its logos and forced the two groups to share
+        // the width, so a title on six services squeezed them into half a screen. A row per
+        // group gives the logos the full width and keeps the label as a short prefix.
+        //
+        // A group with nothing is omitted rather than labelled empty: whatever is shown is
+        // what exists.
+        if (watch.isNotEmpty()) {
+            ProviderRow(
+                label = stringResource(R.string.provider_column_watch),
+                providers = watch,
+                horizontalPadding = horizontalPadding,
+            )
+        }
+        if (buy.isNotEmpty()) {
+            ProviderRow(
+                label = stringResource(R.string.provider_column_buy),
+                providers = buy,
+                horizontalPadding = horizontalPadding,
+            )
         }
     }
 }
 
 /**
- * One column of provider logos.
+ * One group's label and its provider logos, on a single line.
  *
- * Only called with a non-empty list; the caller omits a column that has nothing, so there is
- * no empty state to render here.
+ * Scrolls horizontally rather than wrapping: the row now has the full width, and a title on
+ * a dozen services should not push the episode list down the page.
  */
 @Composable
-private fun ProviderColumn(
-    title: String,
+private fun ProviderRow(
+    label: String,
     providers: List<TmdbProvider>,
-    modifier: Modifier = Modifier,
+    horizontalPadding: Dp,
 ) {
     val tokens = MaterialTheme.wb
 
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(tokens.colors.surfaceCard)
-            .padding(12.dp),
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = horizontalPadding)
+            .padding(bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = title,
+            text = label,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.SemiBold,
             color = tokens.colors.textSecondary,
+            maxLines = 1,
+            // Fixed so the logos line up between the two rows regardless of label length.
+            modifier = Modifier.width(PROVIDER_LABEL_WIDTH),
         )
 
-        Spacer(Modifier.height(10.dp))
-
-        // Wraps rather than scrolls: a column is half the screen wide, so a horizontal
-        // scroller there would hide logos behind a gesture nobody would think to try.
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            providers.take(MAX_PROVIDERS_PER_COLUMN).forEach { provider ->
-                Box(
-                    modifier = Modifier
-                        .size(PROVIDER_LOGO_SIZE)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(tokens.colors.surface),
-                ) {
-                    WbAsyncImage(
-                        url = provider.logoUrl,
-                        contentDescription = provider.name,
-                        contentScale = ContentScale.Fit,
-                        fallbackLabel = provider.name.take(2),
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
+        providers.take(MAX_PROVIDERS_PER_ROW).forEach { provider ->
+            // The logo alone, with the name as its description: these are recognisable
+            // marks, and a name beside each doubles the row's width for no gain.
+            Box(
+                modifier = Modifier
+                    .size(PROVIDER_LOGO_SIZE)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(tokens.colors.surfaceCard),
+            ) {
+                WbAsyncImage(
+                    url = provider.logoUrl,
+                    contentDescription = provider.name,
+                    contentScale = ContentScale.Fit,
+                    fallbackLabel = provider.name.take(2),
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
         }
     }
@@ -528,30 +520,31 @@ fun ReviewSection(
                 // section decorative. Expanding in place keeps the page position.
                 var expanded by remember(review.content) { mutableStateOf(false) }
 
+                // Whether the collapsed form actually cuts anything off.
+                //
+                // Read from the real text's own layout, and only while it is collapsed: once
+                // expanded there is no overflow by definition, so the flag has to persist
+                // from the collapsed pass rather than being recomputed.
+                //
+                // An earlier version measured with a second, hidden Text at height(0.dp).
+                // That reported overflow for almost any content - a zero-height box overflows
+                // immediately - so Show more appeared on one-line reviews too.
+                var overflows by remember(review.content) { mutableStateOf(false) }
+
                 Text(
                     text = review.content,
                     style = MaterialTheme.typography.bodySmall,
                     color = tokens.colors.textSecondary,
                     maxLines = if (expanded) Int.MAX_VALUE else MAX_REVIEW_LINES,
                     overflow = TextOverflow.Ellipsis,
+                    onTextLayout = { layout ->
+                        if (!expanded) overflows = layout.hasVisualOverflow
+                    },
                     modifier = Modifier.animateContentSize(),
                 )
 
-                // Offered only when there is more to see. Measured from the text itself
-                // rather than guessed from a character count, which would be wrong at any
-                // font scale or screen width other than the one it was tuned on.
-                var isTruncated by remember(review.content) { mutableStateOf(false) }
-
-                Text(
-                    text = review.content,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = MAX_REVIEW_LINES,
-                    onTextLayout = { isTruncated = it.hasVisualOverflow },
-                    modifier = Modifier.height(0.dp),
-                    color = tokens.colors.textSecondary,
-                )
-
-                if (isTruncated || expanded) {
+                // Nothing to offer when the whole review already fits.
+                if (overflows) {
                     Spacer(Modifier.height(6.dp))
                     Text(
                         text = if (expanded) {
@@ -573,8 +566,11 @@ fun ReviewSection(
 /** Wide enough for a recognisable mark at a glance. */
 private val PROVIDER_LOGO_SIZE = 44.dp
 
-/** Enough for a column half the screen wide; beyond this the section dominates the page. */
-private const val MAX_PROVIDERS_PER_COLUMN = 8
+/** Wide enough that the two rows' logos align regardless of label length. */
+private val PROVIDER_LABEL_WIDTH = 56.dp
+
+/** The row scrolls, so this is a sanity cap rather than a layout constraint. */
+private const val MAX_PROVIDERS_PER_ROW = 12
 
 /** Enough to be representative without turning the page into a comment thread. */
 private const val MAX_REVIEWS = 3
