@@ -5,6 +5,8 @@ import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.LocalIndication
 import space.nicart.watchbox.core.ui.adaptiveFocus
 import space.nicart.watchbox.core.ui.rememberFocusInteraction
@@ -61,6 +63,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.wb
+import space.nicart.watchbox.domain.Studio
 import space.nicart.watchbox.domain.AnimeDetail
 import space.nicart.watchbox.ui.components.WbAsyncImage
 import space.nicart.watchbox.ui.components.WbBackButton
@@ -600,8 +603,101 @@ fun DetailMetaInfo(
                 modifier = Modifier.clickable { expanded = !expanded },
             )
         }
+
+        // Studio logos, when TMDB matched the title and has artwork for them.
+        if (detail.studios.any { it.logoUrl != null }) {
+            Spacer(Modifier.height(4.dp))
+            StudioLogoRow(studios = detail.studios)
+        }
+
+        // Facts the source packed into its description as markdown. Shown as labelled
+        // rows rather than left in the synopsis, where the markers rendered verbatim.
+        if (detail.infoFields.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            detail.infoFields.take(MAX_INFO_FIELDS).forEach { (label, value) ->
+                InfoFieldRow(label = label, value = value)
+            }
+        }
     }
 }
+
+/**
+ * Studio logos in a row, capped and scrollable.
+ *
+ * Only studios TMDB has a logo for are shown. A name-only fallback would mix text and
+ * images in one row for no gain - the studio name, when it matters, is already in the
+ * info fields below.
+ *
+ * Logos are white-on-transparent PNGs, so they need no tinting but do need a light
+ * backing to stay visible on the dark surface.
+ */
+@Composable
+private fun StudioLogoRow(studios: List<Studio>) {
+    val tokens = MaterialTheme.wb
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+    ) {
+        studios.filter { it.logoUrl != null }
+            .take(MAX_STUDIO_LOGOS)
+            .forEach { studio ->
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(tokens.colors.textPrimary.copy(alpha = 0.90f))
+                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    WbAsyncImage(
+                        url = studio.logoUrl,
+                        contentDescription = studio.name,
+                        contentScale = ContentScale.Fit,
+                        // Over a light plate, so a filled placeholder would flash a
+                        // dark block on every load.
+                        transparentPlaceholder = true,
+                        modifier = Modifier.height(STUDIO_LOGO_HEIGHT),
+                    )
+                }
+            }
+    }
+}
+
+/** One `Label  Value` row from a source's markdown metadata. */
+@Composable
+private fun InfoFieldRow(label: String, value: String) {
+    val tokens = MaterialTheme.wb
+
+    Row(
+        modifier = Modifier.padding(top = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = tokens.colors.textMuted,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelLarge,
+            color = tokens.colors.textSecondary,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/** Logos render small; taller would dominate the synopsis above them. */
+private val STUDIO_LOGO_HEIGHT = 18.dp
+
+/** Enough for the studios that matter without a scrolling wall of co-producers. */
+private const val MAX_STUDIO_LOGOS = 5
+
+/** Sources can emit a long tail of labels; the useful ones come first. */
+private const val MAX_INFO_FIELDS = 5
 
 private val TMDB_BLUE = Color(0xFF01B4E4)
 
