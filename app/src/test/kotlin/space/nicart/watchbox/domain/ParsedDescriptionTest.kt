@@ -179,6 +179,48 @@ class ParsedDescriptionTest {
         assertEquals(1, parsed.links.size)
     }
 
+    // ------------------------------------------------------- star rating
+
+    @Test
+    fun `a leading star line is pulled out of the summary`() {
+        // Anikoto's shape: a rating, a blank line, then the synopsis. Left in place it was
+        // the opening sentence and pushed the real text out of the collapsed three lines.
+        val parsed = parseDescription("★★★★☆ 7.16\n\nFourth season. Suzuki Iruma becomes a demon.")
+
+        assertEquals("★★★★☆ 7.16", parsed.starRating)
+        assertEquals("Fourth season. Suzuki Iruma becomes a demon.", parsed.summary)
+    }
+
+    @Test
+    fun `stars without a number are still recognised`() {
+        assertEquals("★★★☆☆", parseDescription("★★★☆☆\n\nA synopsis.").starRating)
+    }
+
+    @Test
+    fun `a star inside a sentence is left alone`() {
+        // Punctuation, not a rating - so the line stays in the prose.
+        val parsed = parseDescription("She earned a ★ for bravery in the final act.")
+
+        assertEquals("", parsed.starRating)
+        assertTrue("★" in parsed.summary)
+    }
+
+    @Test
+    fun `a description with no stars reports none`() {
+        val parsed = parseDescription("Just a plain synopsis with no rating.")
+
+        assertEquals("", parsed.starRating)
+        assertEquals("Just a plain synopsis with no rating.", parsed.summary)
+    }
+
+    @Test
+    fun `a star line after the synopsis is not treated as the rating`() {
+        // Only a leading line is a rating; further down it is part of the text.
+        val parsed = parseDescription("A synopsis first.\n\n★★★★☆ 7.16")
+
+        assertEquals("", parsed.starRating)
+    }
+
     @Test
     fun `blank and null input is safe`() {
         assertEquals("", parseDescription(null).summary)

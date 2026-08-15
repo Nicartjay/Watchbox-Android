@@ -512,6 +512,7 @@ class AnimeRepository(
                 description = parsed.summary.ifBlank { art?.overview.orEmpty() },
                 infoFields = parsed.fields,
                 infoLinks = parsed.links,
+                sourceStarRating = parsed.starRating,
                 author = details.author?.takeIf { it.isNotBlank() },
                 artist = details.artist?.takeIf { it.isNotBlank() },
                 genres = details.getGenres()?.takeIf { it.isNotEmpty() }

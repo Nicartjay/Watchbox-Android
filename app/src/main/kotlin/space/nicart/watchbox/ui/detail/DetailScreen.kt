@@ -456,7 +456,11 @@ fun DetailScreen(
                             ) { card ->
                                 WbPosterCard(
                                     card = card,
-                                    subtitle = card.sourceName,
+                                    // The year, not the source name. Suggestions come from
+                                    // the same source as the title being viewed, so the name
+                                    // repeated under every card said nothing - while the year
+                                    // distinguishes a remake or a sequel from the original.
+                                    subtitle = card.year,
                                     onClick = { onOpenAnime(card) },
                                 )
                             }

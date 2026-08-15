@@ -43,6 +43,14 @@ data class ParsedDescription(
      * produce two identical chips.
      */
     val links: List<Pair<String, String>> = emptyList(),
+    /**
+     * A star rating the source printed into its description, e.g. `★★★★☆ 7.16`.
+     *
+     * Pulled out so it can be rendered as a rating rather than as the opening sentence of
+     * the synopsis. Several sources lead with one, which meant the summary began with a row
+     * of glyphs and the real text was pushed out of the collapsed three lines.
+     */
+    val starRating: String = "",
 ) {
     fun field(name: String): String? =
         fields.firstOrNull { it.first.equals(name, ignoreCase = true) }?.second
@@ -61,6 +69,13 @@ private val LABEL_PATTERN = Regex("""^\*\*([^*]{1,40}?)\*\*:?\s*""")
 
 /** A markdown link: `[text](url)`. */
 private val LINK_PATTERN = Regex("""\[([^]]*)]\((https?://[^)]*)\)""")
+
+/**
+ * A star rating on its own line: filled and hollow stars, optionally followed by a number.
+ *
+ * Anchored to the whole line so a star used as punctuation mid-sentence is left alone.
+ */
+private val STAR_RATING = Regex("""^[★☆]{1,10}\s*[\d.]*\s*$""")
 
 /** A horizontal rule, which sources use to separate metadata from the synopsis. */
 private val RULE_PATTERN = Regex("""^\s*-{3,}\s*$""")
@@ -119,7 +134,16 @@ fun parseDescription(raw: String?): ParsedDescription {
         }
     }
 
+    // A leading star line is a rating, not prose. Matched only at the start, because a
+    // star inside a sentence is punctuation rather than a score.
+    val starLine = proseLines
+        .firstOrNull { it.isNotBlank() }
+        ?.trim()
+        ?.takeIf { STAR_RATING.matches(it) }
+        .orEmpty()
+
     val summary = proseLines
+        .filterNot { starLine.isNotEmpty() && it.trim() == starLine }
         .joinToString("\n") { it.cleanInline() }
         .replace(Regex("""\n{3,}"""), "\n\n")
         .trim()
@@ -136,7 +160,12 @@ fun parseDescription(raw: String?): ParsedDescription {
         .distinctBy { it.second }
         .toList()
 
-    return ParsedDescription(summary = summary, fields = fields, links = links)
+    return ParsedDescription(
+        summary = summary,
+        fields = fields,
+        links = links,
+        starRating = starLine,
+    )
 }
 
 /**

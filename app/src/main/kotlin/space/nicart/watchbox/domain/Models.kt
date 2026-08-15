@@ -195,6 +195,8 @@ data class AnimeDetail(
      * that depend on it appear as it arrives.
      */
     val extras: TmdbExtras = TmdbExtras(),
+    /** A star rating the source printed in its description, e.g. `★★★★☆ 7.16`. */
+    val sourceStarRating: String = "",
 ) {
     val key: String get() = "$sourceId::$url"
 

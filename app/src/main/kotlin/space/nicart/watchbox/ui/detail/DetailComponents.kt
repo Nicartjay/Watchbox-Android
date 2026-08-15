@@ -638,6 +638,21 @@ fun DetailMetaInfo(
             }
         }
 
+        // The source's own star rating, gold like every other rating here.
+        //
+        // Several sources lead their description with one, which the parser pulls out so it
+        // is not the opening sentence of the synopsis - it was pushing the real text out of
+        // the collapsed three lines and rendering in body grey.
+        if (detail.sourceStarRating.isNotBlank()) {
+            Text(
+                text = detail.sourceStarRating,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = tokens.colors.warning,
+                maxLines = 1,
+            )
+        }
+
         if (detail.description.isNotBlank()) {
             Text(
                 text = detail.description,
