@@ -129,12 +129,13 @@ or off independently.
 | 🔍 **Search** | Debounced search across every source at once, grouped per source, or narrowed to one |
 | 🧭 **Browse** | Popular and latest per source, with filters and a button that opens the source's own site |
 | 🧩 **Extensions** | Multiple repositories, each switchable; filter by language, adult content and repository; per-extension settings; load failures surfaced rather than hidden |
-| 📄 **Detail** | Parallax hero with a multi-stop scrim, collapsing floating header, expanding action row, episode list, studio logos, and source metadata parsed out of markdown |
+| 📄 **Detail** | Parallax hero, collapsing floating header, expanding action row, episode list in blocks of fifty for long runs, a Videos tab of TMDB trailers, where-to-watch by country, studio logos, reviews, and source metadata parsed out of markdown |
 | ▶️ **Player** | Media3/ExoPlayer with HLS + MP4, quality/subtitle/speed pickers, episode switcher, aspect cycling, gesture seek, brightness and volume swipes, lock mode |
 | 💬 **Subtitles** | Online search and download; size, background style, outline width, colour and opacity; and timing correction measured from the video itself — adjustable from Settings or inside the player |
 | 📡 **Casting** | Chromecast and DLNA in one list, with a header-injecting local proxy and a Web Video Caster hand-off |
 | 📚 **Library** | My List, in-progress, and full watch history |
 | ⚙️ **Settings** | Seven accent themes, display scaling, auto-play-next, repository management, subtitle appearance and provider, 18+ toggle |
+| ⬆️ **Updates** | Checked once a day on launch, prompting to install or skip — the APK is fetched and handed to the system installer |
 
 <details>
 <summary><b>📺 Android TV and tablets — a separate build, not a stretched layout</b></summary>
@@ -395,6 +396,22 @@ app/src/main/kotlin/
   never reconsidered, so a candidate must match exactly or differ only by a season
   marker; a bare prefix is rejected, which is what separates "Monster Season 2" from
   "Monster Musume".
+- **Trailers hand off to the YouTube app rather than playing in-app.** Every TMDB video
+  is a YouTube link and the payload carries no stream URL, so Media3 cannot play one. The
+  package is named explicitly, because a plain `ACTION_VIEW` goes to whichever app holds
+  the default for `youtube.com` — the browser, on many devices — and that needs a
+  `<queries>` entry, since Android 11+ filtering makes `setPackage` unresolvable rather
+  than merely unpreferred.
+- **Availability is resolved from the network, not the device locale.** A locale reflects
+  the language the user chose, so an English-language phone in Manila reports US and would
+  list the wrong catalogue. Cloudflare's trace endpoint answers in 234 bytes with no API
+  key and no location permission.
+- **Episode blocks live with the season selector.** Computed a level above it, the blocks
+  described every season's episodes combined while the filter ran inside — so on an
+  18-season show they selected episodes that were never in the list.
+- **One TMDB request per detail page, not seven.** `append_to_response` folds videos,
+  providers, reviews, keywords, ratings, alternative titles and external ids into the same
+  payload for the same rate-limit cost.
 - **Two flavors rather than one combined APK.** A single build carrying both
   `LAUNCHER` and `LEANBACK_LAUNCHER` works, but ships the TV UI to every phone and
   makes the two impossible to install side by side.
@@ -415,7 +432,7 @@ app/src/main/kotlin/
 ./gradlew :app:testMobileDebugUnitTest :app:testTvDebugUnitTest
 ```
 
-978 unit tests, run in CI. They deliberately cover only pure logic whose failures are
+1012 unit tests, run in CI. They deliberately cover only pure logic whose failures are
 *silent* on a device — HLS URI rewriting, DLNA SOAP envelopes, subtitle parsing and
 conversion, subtitle sync arithmetic, cast stream selection, gesture maths, remote key
 mapping, filter application, deep-link parsing, TMDB title matching — because those
