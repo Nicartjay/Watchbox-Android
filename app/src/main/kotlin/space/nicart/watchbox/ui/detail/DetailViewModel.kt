@@ -15,6 +15,7 @@ import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.domain.AnimeDetail
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.EpisodeEntry
+import space.nicart.watchbox.domain.friendlyMessage
 
 data class DetailUiState(
     val isLoading: Boolean = true,
@@ -93,7 +94,7 @@ class DetailViewModel(
                 .onFailure { error ->
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        errorMessage = error.message ?: "Could not load this title.",
+                        errorMessage = error.friendlyMessage(),
                     )
                 }
         }

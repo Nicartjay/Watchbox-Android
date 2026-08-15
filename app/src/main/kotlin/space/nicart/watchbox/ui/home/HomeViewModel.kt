@@ -14,6 +14,7 @@ import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.data.local.WatchHistoryEntry
 import space.nicart.watchbox.data.local.WatchlistEntry
 import space.nicart.watchbox.domain.AnimeRepository
+import space.nicart.watchbox.domain.friendlyMessage
 import space.nicart.watchbox.domain.HomeFeed
 import space.nicart.watchbox.extension.ExtensionManager
 
@@ -110,7 +111,7 @@ class HomeViewModel(
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         isRefreshing = false,
-                        errorMessage = error.message ?: "Could not load the feed.",
+                        errorMessage = error.friendlyMessage(),
                     )
                 }
         }

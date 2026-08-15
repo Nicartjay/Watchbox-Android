@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.network.HttpException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -48,57 +49,82 @@ class AnimeRepository(
 
         sourceErrors.clear()
 
-        val rows = coroutineScope {
-            sources.take(MAX_ROWS)
-                .map { source -> async { source.homeRow() } }
-                .mapNotNull { it.await() }
-        }
-
-        if (rows.isEmpty()) {
-            // Report what actually went wrong per source. Most failures here are
-            // the source rejecting the request (WAF / TLS), not a bug in the app,
-            // and a generic "nothing found" makes that impossible to tell apart.
-            val detail = sourceErrors.entries
-                .joinToString("\n") { (id, message) ->
-                    val name = extensions.catalogueSourceById(id)?.name ?: "Source $id"
-                    "$name: $message"
-                }
-                .ifBlank { "No source returned any titles." }
-            error(detail)
-        }
-
-        // The spotlight is drawn at random from every source, not from the head of one row.
+        // Confined to the IO dispatcher, like every other source call.
         //
-        // Taking the first row's opening titles meant the same handful every launch - a
-        // catalogue's ordering barely moves - and no other source was ever represented.
+        // Without this the whole feed ran on the caller's thread, which is the main
+        // thread: `viewModelScope` is `Dispatchers.Main.immediate`, and neither
+        // `coroutineScope` nor `async` changes dispatcher. Extensions issue blocking
+        // OkHttp calls, so on Android that means every request either dies with
+        // `NetworkOnMainThreadException` or blocks the UI thread until it times out -
+        // which is exactly how a source with a working catalogue still shows nothing.
         //
-        // Deduplicated by key before sampling: the same title routinely appears in several
-        // catalogues, and a carousel repeating it looks broken. Shuffled then taken, so the
-        // pick is uniform across the whole pool rather than favouring whichever source
-        // happened to return first.
-        //
-        // Seeded per calendar day rather than left to chance. The feed reloads whenever the
-        // installed extension set changes, and an unseeded shuffle would silently swap the
-        // cards under the carousel while the user was looking at it - the pager is keyed on
-        // item count, so a same-length reshuffle does not reset the position, it just changes
-        // what each page shows. A daily seed keeps the selection stable within a session and
-        // still gives a different spotlight tomorrow.
-        val hero = coroutineScope {
-            val pool = rows.asSequence()
-                .flatMap { it.items.asSequence() }
-                .distinctBy { it.key }
-                .toList()
+        // Wraps the hero enrichment too, not just the rows: that stage issues TMDB
+        // requests of its own.
+        withContext(Dispatchers.IO) {
+            val rows = coroutineScope {
+                sources.take(MAX_ROWS)
+                    .map { source -> async { source.homeRow() } }
+                    .mapNotNull { it.await() }
+            }
 
-            pool.shuffled(Random(heroSeed()))
-                .take(MAX_HERO)
-                // Only the hero is enriched: it is the one place a wide backdrop and a title
-                // logo are actually shown, and enriching whole rails would mean a TMDB request
-                // per poster.
-                .map { card -> async { card.enriched() } }
-                .awaitAll()
+            if (rows.isEmpty()) {
+                // Report what actually went wrong per source. Most failures here are
+                // the source rejecting the request (WAF / TLS), not a bug in the app,
+                // and a generic "nothing found" makes that impossible to tell apart.
+                val detail = sourceErrors.entries
+                    .joinToString("\n") { (id, message) ->
+                        val name = extensions.catalogueSourceById(id)?.name ?: "Source $id"
+                        "$name: $message"
+                    }
+                    .ifBlank { "No source returned any titles." }
+                error(detail)
+            }
+
+            // The spotlight is drawn at random from every source, not from the head of one row.
+            //
+            // Taking the first row's opening titles meant the same handful every launch - a
+            // catalogue's ordering barely moves - and no other source was ever represented.
+            //
+            // Deduplicated by key before sampling: the same title routinely appears in several
+            // catalogues, and a carousel repeating it looks broken. Shuffled then taken, so the
+            // pick is uniform across the whole pool rather than favouring whichever source
+            // happened to return first.
+            //
+            // Seeded per calendar day rather than left to chance. The feed reloads whenever the
+            // installed extension set changes, and an unseeded shuffle would silently swap the
+            // cards under the carousel while the user was looking at it - the pager is keyed on
+            // item count, so a same-length reshuffle does not reset the position, it just changes
+            // what each page shows. A daily seed keeps the selection stable within a session and
+            // still gives a different spotlight tomorrow.
+            //
+            // The same shuffled pool feeds the hero and the Featured rail, taken as two
+            // consecutive slices so a title never appears in both. Enrichment is the
+            // expensive part (a TMDB request each), so the two are enriched together in
+            // one pass rather than one after the other.
+            val spotlight = coroutineScope {
+                val pool = rows.asSequence()
+                    .flatMap { it.items.asSequence() }
+                    .distinctBy { it.key }
+                    .toList()
+
+                pool.shuffled(Random(heroSeed()))
+                    .take(MAX_HERO + MAX_FEATURED)
+                    // Only these are enriched: they are the only places a wide backdrop,
+                    // a title logo, a score or a synopsis is actually shown, and enriching
+                    // whole rails would mean a TMDB request per poster.
+                    .map { card -> async { card.enriched() } }
+                    .awaitAll()
+            }
+
+            HomeFeed(
+                hero = spotlight.take(MAX_HERO),
+                // Featured only carries cards TMDB actually matched: the card shows a
+                // synopsis and a score, and an unmatched entry would render an empty
+                // text column. Dropping them shortens the rail instead.
+                featured = spotlight.drop(MAX_HERO).filter { it.overview.isNotBlank() },
+                rows = rows,
+            )
         }
-
-        HomeFeed(hero = hero, rows = rows)
     }
 
     /**
@@ -121,7 +147,10 @@ class AnimeRepository(
      *
      * Returns the card unchanged when nothing matches, so callers need no fallback.
      */
-    suspend fun artworkFor(card: AnimeCard): AnimeCard = card.enriched()
+    // On IO: called per focused card from a TV view model on the main thread, and
+    // `enriched` issues TMDB requests.
+    suspend fun artworkFor(card: AnimeCard): AnimeCard =
+        withContext(Dispatchers.IO) { card.enriched() }
 
     /** Overlays TMDB artwork on a card, keeping the source fields intact. */
     private suspend fun AnimeCard.enriched(): AnimeCard {
@@ -135,6 +164,9 @@ class AnimeRepository(
             tmdbId = art.tmdbId,
             year = art.year,
             genres = art.genres,
+            rating = art.rating,
+            overview = art.overview,
+            isMovie = art.type == TmdbType.MOVIE,
         )
     }
 
@@ -186,7 +218,7 @@ class AnimeRepository(
         if (claimsLatest) {
             val latest = guarded(what = "latest($name)", sourceId = id) {
                 val page = withTimeout(SOURCE_TIMEOUT_MS) { getLatestUpdates(1) }
-                val items = page.animes.map { it.toCard(this) }
+                val items = page.animes.toUniqueCards(this)
                 if (items.isEmpty()) return@guarded null
 
                 AnimeRow(
@@ -199,7 +231,7 @@ class AnimeRepository(
             }
 
             if (latest != null) {
-                android.util.Log.i(TAG, "home row for $name: latest")
+                android.util.Log.i(TAG, "home row for $name: latest (${latest.items.size} items)")
                 return latest
             }
         }
@@ -207,12 +239,18 @@ class AnimeRepository(
         // Logged so which list a source ended up on is answerable without a screenshot. A
         // successful row is otherwise silent, and "latest was requested" and "latest was
         // actually shown" are different claims - the fallback is invisible from the outside.
+        //
+        // The outcome is logged after the call, not before it. Logging the intent up front
+        // read as proof the row existed, when a source that returned nothing from BOTH
+        // lists logged an identical line and then contributed no row at all.
+        val popular = popularRow()
         android.util.Log.i(
             TAG,
-            "home row for $name: popular" +
-                if (claimsLatest) " (latest returned nothing)" else " (no latest support)",
+            "home row for $name: " +
+                (if (popular == null) "NONE" else "popular (${popular.items.size} items)") +
+                if (claimsLatest) " [latest returned nothing]" else " [no latest support]",
         )
-        return popularRow()
+        return popular
     }
 
     private suspend fun AnimeCatalogueSource.popularRow(): AnimeRow? = guarded(
@@ -220,7 +258,7 @@ class AnimeRepository(
         sourceId = id,
     ) {
         val page = withTimeout(SOURCE_TIMEOUT_MS) { getPopularAnime(1) }
-        val items = page.animes.map { it.toCard(this) }
+        val items = page.animes.toUniqueCards(this)
         if (items.isEmpty()) return@guarded null
 
         AnimeRow(
@@ -236,14 +274,29 @@ class AnimeRepository(
         val source = catalogueOrThrow(sourceId)
         if (!source.supportsLatest) return@runCatching emptyList()
         withContext(Dispatchers.IO) {
-            source.getLatestUpdates(page).animes.map { it.toCard(source) }
+            val result = source.getLatestUpdates(page)
+            val cards = result.animes.toUniqueCards(source)
+            // Logged with both counts: "the source returned nothing" and "everything it
+            // returned was unusable" are different faults, and an empty grid looks the
+            // same either way.
+            android.util.Log.i(
+                TAG,
+                "browse latest(${source.name}) p$page: ${result.animes.size} raw -> ${cards.size} cards",
+            )
+            cards
         }
     }
 
     suspend fun popular(sourceId: Long, page: Int = 1): Result<List<AnimeCard>> = runCatching {
         val source = catalogueOrThrow(sourceId)
         withContext(Dispatchers.IO) {
-            source.getPopularAnime(page).animes.map { it.toCard(source) }
+            val result = source.getPopularAnime(page)
+            val cards = result.animes.toUniqueCards(source)
+            android.util.Log.i(
+                TAG,
+                "browse popular(${source.name}) p$page: ${result.animes.size} raw -> ${cards.size} cards",
+            )
+            cards
         }
     }
 
@@ -260,7 +313,7 @@ class AnimeRepository(
         withContext(Dispatchers.IO) {
             source.getSearchAnime(page, query, filters)
                 .animes
-                .map { it.toCard(source) }
+                .toUniqueCards(source)
         }
     }
 
@@ -277,6 +330,21 @@ class AnimeRepository(
             ?: AnimeFilterList()
 
     /**
+     * The source's own site address, or null when it has none.
+     *
+     * Only [AnimeHttpSource] has a `baseUrl`; a local or non-HTTP source has no page
+     * to open, hence the nullable return rather than a placeholder.
+     *
+     * Read through `runCatching` because `baseUrl` is an abstract property
+     * implemented by extension code - some build it from a preference, so it can
+     * throw or come back blank rather than being a plain constant.
+     */
+    fun siteUrl(sourceId: Long): String? {
+        val source = extensions.catalogueSourceById(sourceId) as? AnimeHttpSource ?: return null
+        return runCatching { source.baseUrl }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+    }
+
+    /**
      * Searches every installed source at once.
      *
      * Results are grouped per source rather than merged, because relevance is not
@@ -286,27 +354,31 @@ class AnimeRepository(
         val sources = extensions.catalogueSources()
         if (sources.isEmpty() || query.isBlank()) return emptyList()
 
-        return coroutineScope {
-            sources
-                .map { source ->
-                    async {
-                        guarded("search(${source.name})", source.id) {
-                            val page = withTimeout(SOURCE_TIMEOUT_MS) {
-                                source.getSearchAnime(1, query, AnimeFilterList())
-                            }
-                            val items = page.animes.map { it.toCard(source) }
-                            if (items.isEmpty()) return@guarded null
+        // On IO for the same reason as `homeFeed`: `coroutineScope` inherits the
+        // caller's dispatcher, and the caller is a view model on the main thread.
+        return withContext(Dispatchers.IO) {
+            coroutineScope {
+                sources
+                    .map { source ->
+                        async {
+                            guarded("search(${source.name})", source.id) {
+                                val page = withTimeout(SOURCE_TIMEOUT_MS) {
+                                    source.getSearchAnime(1, query, AnimeFilterList())
+                                }
+                                val items = page.animes.toUniqueCards(source)
+                                if (items.isEmpty()) return@guarded null
 
-                            AnimeRow(
-                                sourceId = source.id,
-                                sourceName = source.name,
-                                title = source.name,
-                                items = items,
-                            )
+                                AnimeRow(
+                                    sourceId = source.id,
+                                    sourceName = source.name,
+                                    title = source.name,
+                                    items = items,
+                                )
+                            }
                         }
                     }
-                }
-                .mapNotNull { it.await() }
+                    .mapNotNull { it.await() }
+            }
         }
     }
 
@@ -366,6 +438,8 @@ class AnimeRepository(
                 }
             }
 
+            val parsed = parseDescription(details.description)
+
             AnimeDetail(
                 sourceId = source.id,
                 sourceName = source.name,
@@ -379,14 +453,18 @@ class AnimeRepository(
                 imdbId = art?.imdbId,
                 year = art?.year,
                 rating = art?.rating ?: 0.0,
-                description = details.description?.takeIf { it.hasSummary() }
-                    ?: art?.overview.orEmpty(),
+                // Parsed rather than shown raw: sources pack studio, tags and cast
+                // into this field as markdown, which a Text composable renders
+                // verbatim - asterisks, brackets, URLs and all.
+                description = parsed.summary.ifBlank { art?.overview.orEmpty() },
+                infoFields = parsed.fields,
                 author = details.author?.takeIf { it.isNotBlank() },
                 artist = details.artist?.takeIf { it.isNotBlank() },
                 genres = details.getGenres()?.takeIf { it.isNotEmpty() }
                     ?: art?.genres.orEmpty(),
                 status = AnimeStatus.from(details.status),
                 episodes = enrichedEpisodes,
+                studios = art?.studios.orEmpty().map { Studio(it.name, it.logoUrl) },
             )
         }
     }
@@ -426,8 +504,9 @@ class AnimeRepository(
         sourceId: Long,
         animeUrl: String,
         title: String,
-    ): List<AnimeCard> {
-        val source = extensions.catalogueSourceById(sourceId) ?: return emptyList()
+    ): List<AnimeCard> = withContext(Dispatchers.IO) {
+        val source = extensions.catalogueSourceById(sourceId)
+            ?: return@withContext emptyList()
         val stub = SAnime.create().apply { url = animeUrl; this.title = title }
 
         val http = source as? AnimeHttpSource
@@ -440,20 +519,20 @@ class AnimeRepository(
                 }
             }.orEmpty()
 
-            if (own.isNotEmpty()) return own.toCards(source, excluding = animeUrl)
+            if (own.isNotEmpty()) return@withContext own.toCards(source, excluding = animeUrl)
         }
 
         // A source can veto searching entirely; without search neither remaining
         // tier can produce anything.
-        if (http?.disableRelatedAnimesBySearch == true) return emptyList()
+        if (http?.disableRelatedAnimesBySearch == true) return@withContext emptyList()
 
         // Tier 2: TMDB recommendations, resolved against this source.
         tmdbSuggestions(source, animeUrl, title).takeIf { it.isNotEmpty() }
-            ?.let { return it }
+            ?.let { return@withContext it }
 
         // Tier 3: longest-word keyword search. Weakest of the three, but it is
         // the only option for a title TMDB does not know.
-        val keyword = title.toSearchKeyword() ?: return emptyList()
+        val keyword = title.toSearchKeyword() ?: return@withContext emptyList()
 
         val found = guarded("relatedSearch(${source.name})") {
             withTimeout(SOURCE_TIMEOUT_MS) {
@@ -461,7 +540,7 @@ class AnimeRepository(
             }
         }.orEmpty()
 
-        return found.toCards(source, excluding = animeUrl)
+        found.toCards(source, excluding = animeUrl)
     }
 
     /**
@@ -550,6 +629,25 @@ class AnimeRepository(
         .replace(Regex("""\s+"""), " ")
         .trim()
 
+    /**
+     * Maps a source page to cards, dropping anything that cannot be rendered.
+     *
+     * Deduplicated by [AnimeCard.key] because the lazy lists are keyed on it and
+     * Compose treats a repeated key as a fatal error, not a warning. Sources do
+     * repeat entries - the same title under two seasons, or a paginated catalogue
+     * whose ordering shifted between requests - so this has to be enforced here
+     * rather than assumed of the extension.
+     *
+     * Blank titles are dropped for the same reason they are in `toCards`: a card
+     * with no title is an unlabelled poster the user cannot identify.
+     */
+    private fun List<SAnime>.toUniqueCards(source: AnimeCatalogueSource): List<AnimeCard> =
+        asSequence()
+            .filter { it.title.isNotBlank() }
+            .map { it.toCard(source) }
+            .distinctBy { it.key }
+            .toList()
+
     private fun List<SAnime>.toCards(
         source: AnimeCatalogueSource,
         excluding: String,
@@ -635,25 +733,6 @@ class AnimeRepository(
     val sourceErrors: MutableMap<Long, String> = java.util.concurrent.ConcurrentHashMap()
 
 
-    /**
-     * Turns a raw throwable into something a user can act on.
-     *
-     * Most source failures are the site refusing the request rather than a bug,
-     * so the common network cases get plain wording; anything unexpected keeps
-     * its class name because that is what makes an ABI mismatch identifiable.
-     */
-    private fun Throwable.friendlyMessage(): String = when {
-        this is javax.net.ssl.SSLException ->
-            "TLS handshake failed - the site rejected the connection"
-        this is java.net.UnknownHostException -> "Host not found"
-        this is java.net.SocketTimeoutException ||
-            this is kotlinx.coroutines.TimeoutCancellationException -> "Timed out"
-        this is NoSuchMethodError || this is AbstractMethodError ||
-            this is NoClassDefFoundError ->
-            "Incompatible extension (${this::class.java.simpleName})"
-        else -> message?.takeIf { it.isNotBlank() } ?: this::class.java.simpleName
-    }
-
     private companion object {
         const val TAG = "AnimeRepository"
         const val NO_SOURCES = "No sources installed yet."
@@ -683,6 +762,9 @@ class AnimeRepository(
         const val MAX_ROWS = 12
         const val MAX_HERO = 6
 
+        /** Featured rail size. Sampled from the same pool as the hero, after it. */
+        const val MAX_FEATURED = 8
+
         /** Length of the spotlight's shuffle window. */
         const val MILLIS_PER_DAY = 24L * 60 * 60 * 1000
     }
@@ -701,7 +783,39 @@ class AnimeRepository(
  * and more robust than enumerating each source's labels, which differ per source and
  * change with any extension update.
  */
-internal fun String.hasSummary(): Boolean = split("\n\n", "\\n\\n").any { paragraph ->
-    val text = paragraph.trimStart()
-    text.isNotBlank() && !text.startsWith("*") && !text.startsWith("#")
+internal fun String.hasSummary(): Boolean = parseDescription(this).summary.isNotBlank()
+
+/**
+ * Turns a raw throwable into something a user can act on.
+ *
+ * Most source failures are the site refusing the request rather than a bug, so the
+ * common network cases get plain wording; anything unexpected keeps its class name
+ * because that is what makes an ABI mismatch identifiable.
+ *
+ * Top-level rather than private to the repository because the view models render
+ * these strings directly. They previously fell back to `error.message`, which is
+ * where "HTTP error 404" reached the screen - a message that reads like a bug in
+ * the app when it actually means the source's API moved.
+ */
+internal fun Throwable.friendlyMessage(): String = when {
+    this is javax.net.ssl.SSLException ->
+        "TLS handshake failed - the site rejected the connection"
+    this is java.net.UnknownHostException -> "Host not found"
+    this is java.net.SocketTimeoutException ||
+        this is kotlinx.coroutines.TimeoutCancellationException -> "Timed out"
+    this is NoSuchMethodError || this is AbstractMethodError ||
+        this is NoClassDefFoundError ->
+        "Incompatible extension (${this::class.java.simpleName})"
+    // "HTTP error 404" tells a user nothing they can act on. The status code is the
+    // one piece of information that separates "this extension is out of date" from
+    // "the site is blocking you" from "the site is down", and those need different
+    // responses - only the first is fixed by updating the extension.
+    this is HttpException -> when (code) {
+        404 -> "Not found (404) - the site changed; this extension may need an update"
+        401, 403 -> "Access denied ($code) - the site is blocking this request"
+        429 -> "Rate limited (429) - too many requests; try again shortly"
+        in 500..599 -> "The site is having problems ($code)"
+        else -> "The site returned HTTP $code"
+    }
+    else -> message?.takeIf { it.isNotBlank() } ?: this::class.java.simpleName
 }
