@@ -4,6 +4,7 @@ import android.content.Context
 import okhttp3.Cache
 import eu.kanade.tachiyomi.network.interceptor.UserAgentInterceptor
 import okhttp3.OkHttpClient
+import okhttp3.brotli.BrotliInterceptor
 import java.util.concurrent.TimeUnit
 
 /**
@@ -37,6 +38,19 @@ class NetworkHelper(context: Context) {
             .retryOnConnectionFailure(true)
             .followRedirects(true)
             .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
+            // Brotli, because the default User-Agent claims Chrome 120 and servers
+            // take that at face value.
+            //
+            // OkHttp only negotiates and decodes gzip on its own. Advertising a modern
+            // browser without being able to read `br` means a site is free to answer
+            // HTTP 200 with a Brotli body the extension then cannot parse - AniList
+            // does exactly this, and it surfaced as "Unexpected JSON token at offset 0"
+            // inside Miruro rather than as a network error, because the request had
+            // genuinely succeeded.
+            //
+            // Added as an application interceptor so it sits above the cache: entries
+            // are then stored decoded, and a cache hit behaves like a fresh response.
+            .addInterceptor(BrotliInterceptor)
             .build()
     }
 
