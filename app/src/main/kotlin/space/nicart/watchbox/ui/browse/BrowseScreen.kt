@@ -1,5 +1,6 @@
 package space.nicart.watchbox.ui.browse
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.FilterList
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,6 +53,7 @@ import space.nicart.watchbox.core.ui.LocalPosterScale
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.ui.components.NavOverlayPadding
+import space.nicart.watchbox.ui.components.openInBrowser
 import space.nicart.watchbox.ui.components.WbBackButton
 import space.nicart.watchbox.ui.extensions.ExtensionIconSlot
 import space.nicart.watchbox.ui.components.WbChip
@@ -247,6 +251,7 @@ fun BrowseScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val gridState = rememberLazyGridState()
     val tokens = MaterialTheme.wb
+    val context = LocalContext.current
 
     val shouldAppend by remember {
         derivedStateOf {
@@ -278,6 +283,44 @@ fun BrowseScreen(
                     WbBackButton(onClick = onBack)
                     Spacer(Modifier.size(8.dp))
                     WbScreenHeader(title = sourceName, modifier = Modifier.weight(1f))
+
+                    // Opens the source's own site, so a failing catalogue can be
+                    // checked against the real page: an extension whose API has moved
+                    // looks identical from in here to a site that is simply down.
+                    //
+                    // Only shown when the source actually exposes an address - a
+                    // non-HTTP source has no page to open.
+                    state.siteUrl?.let { siteUrl ->
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(tokens.colors.surface)
+                                .clickable {
+                                    if (!context.openInBrowser(siteUrl)) {
+                                        // Silence would be indistinguishable from a
+                                        // dead button on a device with no browser.
+                                        Toast.makeText(
+                                            context,
+                                            context.getString(R.string.source_open_site_failed),
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Language,
+                                contentDescription = stringResource(
+                                    R.string.source_open_site,
+                                ),
+                                tint = tokens.colors.textSecondary,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+
+                        Spacer(Modifier.size(8.dp))
+                    }
 
                     // Only offered when the source actually declares filters, so
                     // the button never opens an empty panel.
