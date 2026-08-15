@@ -1,5 +1,7 @@
 package space.nicart.watchbox.domain
 
+import space.nicart.watchbox.data.remote.TmdbExtras
+
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
@@ -43,6 +45,13 @@ data class AnimeCard(
     val logoUrl: String? = null,
     /** TMDB poster, generally cleaner than the source's own. */
     val tmdbPosterUrl: String? = null,
+    /**
+     * Textless portrait poster, for the phone's portrait hero.
+     *
+     * Distinct from [tmdbPosterUrl]: that one usually has the title burnt in, which
+     * duplicates the logo the hero draws over it.
+     */
+    val heroPosterUrl: String? = null,
     val tmdbId: Int? = null,
     val year: String? = null,
     val genres: List<String> = emptyList(),
@@ -67,6 +76,19 @@ data class AnimeCard(
 
     /** Hero background: a wide backdrop if we have one, else the poster. */
     val heroImage: String? get() = backdropUrl ?: tmdbPosterUrl ?: posterUrl
+
+    /**
+     * Hero background for a portrait panel.
+     *
+     * The phone hero is about 0.55:1, so a 16:9 backdrop loses roughly 69% of its width to
+     * the crop - usually including whatever the shot was framed around. A textless portrait
+     * poster fills the panel as drawn.
+     *
+     * Falls back through the landscape assets: TMDB has no neutral poster for many titles,
+     * and a cropped backdrop still beats an empty hero.
+     */
+    val portraitHeroImage: String?
+        get() = heroPosterUrl ?: backdropUrl ?: tmdbPosterUrl ?: posterUrl
 
     /**
      * Background for a full-bleed hero: the highest resolution available.
@@ -159,6 +181,20 @@ data class AnimeDetail(
     val infoFields: List<Pair<String, String>> = emptyList(),
     /** Credited studios from TMDB, with logos where TMDB has them. */
     val studios: List<Studio> = emptyList(),
+    /**
+     * Links the source listed in its description, as `label` to `url`.
+     *
+     * Rendered as tappable chips. They were previously flattened to plain text, which left
+     * MAL and AniList references visible but unusable.
+     */
+    val infoLinks: List<Pair<String, String>> = emptyList(),
+    /**
+     * TMDB extras: trailers, availability, reviews, age rating, tags.
+     *
+     * Loaded after the page is on screen, so this is empty on first paint and the sections
+     * that depend on it appear as it arrives.
+     */
+    val extras: TmdbExtras = TmdbExtras(),
 ) {
     val key: String get() = "$sourceId::$url"
 

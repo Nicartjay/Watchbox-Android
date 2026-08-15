@@ -2,6 +2,31 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!--
+      Package visibility for the apps we hand links to.
+
+      Android 11+ filters which installed packages an app can see, and that filtering
+      applies to `Intent.setPackage` as well as to querying: without a matching <queries>
+      entry, naming a package makes the intent unresolvable rather than merely
+      unpreferred, and it fails with ActivityNotFoundException even when the app is there.
+
+      Declared narrowly - an ACTION_VIEW filter for http/https, plus YouTube by name -
+      rather than QUERY_ALL_PACKAGES, which is a restricted permission and would ask for
+      far more visibility than handing off a trailer needs.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" />
+        </intent>
+        <package android:name="com.google.android.youtube" />
+        <package android:name="com.google.android.youtube.tv" />
+    </queries>
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />

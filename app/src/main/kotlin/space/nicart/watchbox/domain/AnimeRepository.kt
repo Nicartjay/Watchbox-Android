@@ -15,6 +15,7 @@ import kotlin.random.Random
 import kotlinx.coroutines.withTimeout
 import space.nicart.watchbox.data.remote.TmdbApi
 import space.nicart.watchbox.data.remote.TmdbArtwork
+import space.nicart.watchbox.data.remote.TmdbExtras
 import space.nicart.watchbox.data.remote.TmdbEpisodeArt
 import space.nicart.watchbox.data.remote.TmdbSuggestion
 import space.nicart.watchbox.data.remote.TmdbType
@@ -161,6 +162,7 @@ class AnimeRepository(
             cardBackdropUrl = art.cardBackdropUrl,
             logoUrl = art.logoUrl,
             tmdbPosterUrl = art.posterUrl,
+            heroPosterUrl = art.heroPosterUrl,
             tmdbId = art.tmdbId,
             year = art.year,
             genres = art.genres,
@@ -345,6 +347,51 @@ class AnimeRepository(
     }
 
     /**
+     * TMDB extras for a title already matched to an id.
+     *
+     * Separate from [detail] and called after it, because none of this is needed to render
+     * the page: the episode list and artwork are, and making them wait on reviews would
+     * delay the only part the user came for.
+     *
+     * Returns empty when the title has no TMDB match, which is the ordinary case for a
+     * source-only entry rather than a failure.
+     */
+    suspend fun extras(tmdbId: Int?, isMovie: Boolean, country: String): TmdbExtras {
+        if (tmdbId == null) return TmdbExtras()
+        return withContext(Dispatchers.IO) {
+            guarded("tmdbExtras($tmdbId)") {
+                tmdb.extras(
+                    id = tmdbId,
+                    type = if (isMovie) TmdbType.MOVIE else TmdbType.TV,
+                    country = country,
+                )
+            } ?: TmdbExtras()
+        }
+    }
+
+    /**
+     * The web page for one title on its source's site, or null.
+     *
+     * Built by asking the extension rather than joining strings: `getAnimeUrl` is the ABI's
+     * own answer to "where does this live", and some sources rewrite the path or point at a
+     * different host than `baseUrl`. Falls back to concatenation only when the extension
+     * offers nothing, since an entry URL is source-relative by convention.
+     */
+    fun titleWebUrl(sourceId: Long, animeUrl: String): String? {
+        val source = extensions.catalogueSourceById(sourceId) as? AnimeHttpSource ?: return null
+        val stub = SAnime.create().apply { url = animeUrl }
+
+        runCatching { source.getAnimeUrl(stub) }
+            .getOrNull()
+            ?.trim()
+            ?.takeIf { it.startsWith("http", ignoreCase = true) }
+            ?.let { return it }
+
+        val base = siteUrl(sourceId) ?: return null
+        return base.trimEnd('/') + "/" + animeUrl.trimStart('/')
+    }
+
+    /**
      * Searches every installed source at once.
      *
      * Results are grouped per source rather than merged, because relevance is not
@@ -445,8 +492,14 @@ class AnimeRepository(
                 sourceName = source.name,
                 url = url,
                 title = resolvedTitle,
-                posterUrl = details.thumbnail_url?.takeIf { it.isNotBlank() }
-                    ?: art?.posterUrl,
+                // TMDB first, the source's own thumbnail as the fallback.
+                //
+                // The order was reversed, which meant the detail page loaded the source's
+                // poster and then swapped it for TMDB's on the very next frame - a visible
+                // flicker on every open. TMDB is also the better asset: consistent aspect,
+                // no burnt-in release text.
+                posterUrl = art?.posterUrl
+                    ?: details.thumbnail_url?.takeIf { it.isNotBlank() },
                 backdropUrl = art?.backdropUrl,
                 logoUrl = art?.logoUrl,
                 tmdbId = art?.tmdbId,
@@ -458,6 +511,7 @@ class AnimeRepository(
                 // verbatim - asterisks, brackets, URLs and all.
                 description = parsed.summary.ifBlank { art?.overview.orEmpty() },
                 infoFields = parsed.fields,
+                infoLinks = parsed.links,
                 author = details.author?.takeIf { it.isNotBlank() },
                 artist = details.artist?.takeIf { it.isNotBlank() },
                 genres = details.getGenres()?.takeIf { it.isNotEmpty() }

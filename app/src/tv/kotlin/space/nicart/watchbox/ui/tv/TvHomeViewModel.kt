@@ -52,6 +52,14 @@ data class TvHomeState(
     val isAppending: Boolean = false,
     val hasMoreLatest: Boolean = true,
     val errorMessage: String? = null,
+    /**
+     * True when no extension repository is configured.
+     *
+     * Distinguishes the two dead ends behind an empty home screen: with no repository the
+     * extension list has nothing to install from, so the user has to start in Settings.
+     * Once one exists the prompt has to change, or it keeps pointing at a step already done.
+     */
+    val hasNoRepos: Boolean = true,
 ) {
     val hasNoSources: Boolean get() = sources.isEmpty()
 
@@ -234,6 +242,17 @@ class TvHomeViewModel(
                         select(target)
                     }
                 }
+        }
+
+        // Repositories are watched separately from extensions, because adding one changes
+        // neither the installed set nor the feed - only which dead end the empty state
+        // should describe. Read once, the prompt kept saying "add a repository" after one
+        // had been added.
+        viewModelScope.launch {
+            store.settings
+                .map { it.repos.isNotEmpty() }
+                .distinctUntilChanged()
+                .collect { hasRepos -> _state.value = _state.value.copy(hasNoRepos = !hasRepos) }
         }
 
         viewModelScope.launch {

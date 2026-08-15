@@ -64,4 +64,47 @@ fun Context.openInBrowser(url: String?): Boolean {
     }
 }
 
+/**
+ * Opens a YouTube link in the YouTube app, falling back to the browser.
+ *
+ * A plain `ACTION_VIEW` does not do this. Whichever app holds the persisted default for
+ * `youtube.com` wins, and on a device where the user has ever chosen "always open in
+ * Chrome" that is the browser - verified on device, where the intent resolved straight to
+ * `com.android.chrome/...ChromeTabbedActivity` even with three YouTube apps installed and
+ * the domain listed as `system_configured` for app links.
+ *
+ * So the package is named explicitly first. That is a stronger statement than a chooser:
+ * the user asked to watch a trailer, and the app that plays trailers is the answer.
+ *
+ * Falls through to [openInBrowser] when YouTube is absent, which also covers a TV build
+ * where it may not be installed.
+ */
+fun Context.openYouTube(url: String?): Boolean {
+    val target = sanitiseWebUrl(url) ?: return false
+
+    // Ordered by preference: the main app, then the TV app for a leanback device.
+    for (pkg in YOUTUBE_PACKAGES) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(target)).setPackage(pkg)
+        try {
+            startActivity(intent)
+            return true
+        } catch (error: ActivityNotFoundException) {
+            Log.d(TAG, "$pkg cannot handle $target")
+        }
+    }
+
+    return openInBrowser(target)
+}
+
+/**
+ * YouTube's package names, most preferred first.
+ *
+ * The TV app is a separate package and is the only one present on many Android TV devices,
+ * so naming both is what makes this work on the big screen as well.
+ */
+private val YOUTUBE_PACKAGES = listOf(
+    "com.google.android.youtube",
+    "com.google.android.youtube.tv",
+)
+
 private const val TAG = "WbBrowser"

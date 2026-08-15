@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import space.nicart.watchbox.data.local.WatchBoxStore
@@ -75,6 +77,23 @@ class HomeViewModel(
         // that set changes rather than only on first composition.
         viewModelScope.launch {
             extensions.installed.collect { load() }
+        }
+
+        // Repositories are watched separately, because adding one changes neither the
+        // installed set nor the feed - only which dead end the empty state should describe.
+        //
+        // Without this the screen kept saying "add a repository" after one had been added:
+        // `hasRepos` was read once inside load(), and nothing re-ran it, so the prompt still
+        // pointed at Settings instead of the extension list.
+        viewModelScope.launch {
+            store.settings
+                .map { it.repos.isNotEmpty() }
+                .distinctUntilChanged()
+                .collect { hasRepos ->
+                    if (_uiState.value.hasNoSources) {
+                        _uiState.value = _uiState.value.copy(hasNoRepos = !hasRepos)
+                    }
+                }
         }
     }
 

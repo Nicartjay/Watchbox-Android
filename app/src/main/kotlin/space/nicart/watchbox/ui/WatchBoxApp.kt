@@ -64,6 +64,9 @@ import space.nicart.watchbox.ui.source.readSourcePreferences
 import space.nicart.watchbox.ui.search.SearchViewModel
 import space.nicart.watchbox.ui.settings.SettingsScreen
 import space.nicart.watchbox.ui.settings.SettingsViewModel
+import space.nicart.watchbox.ui.update.UpdatePromptDialog
+import space.nicart.watchbox.ui.update.UpdatePromptState
+import space.nicart.watchbox.ui.update.UpdatePromptViewModel
 
 /**
  * Root navigation.
@@ -80,6 +83,17 @@ fun WatchBoxApp(
 ) {
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
+
+    // App-scoped, so the launch check runs wherever the user lands rather than only if
+    // they open Settings - which is where the manual button already was.
+    val updateViewModel: UpdatePromptViewModel = viewModel(
+        factory = UpdatePromptViewModel.factory(
+            store = container.store,
+            checker = container.updateChecker,
+            installer = container.updateInstaller,
+        ),
+    )
+    val updateState by updateViewModel.state.collectAsStateWithLifecycle()
 
     Box(
         modifier = modifier
@@ -121,6 +135,7 @@ fun WatchBoxApp(
                     factory = DetailViewModel.factory(
                         repository = container.repository,
                         store = container.store,
+                        countryResolver = container.countryResolver,
                         sourceId = route.sourceId,
                         animeUrl = route.animeUrl,
                     ),
@@ -249,6 +264,21 @@ fun WatchBoxApp(
                 )
             }
         }
+
+        // Above everything, including the nav host, so it is visible on whichever screen
+        // the user landed on.
+        UpdatePromptDialog(
+            state = updateState,
+            onDownload = {
+                (updateState as? UpdatePromptState.Available)
+                    ?.let { updateViewModel.download(it.update) }
+            },
+            onSkip = {
+                (updateState as? UpdatePromptState.Available)
+                    ?.let { updateViewModel.skip(it.update) }
+            },
+            onDismiss = updateViewModel::dismiss,
+        )
     }
 }
 

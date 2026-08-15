@@ -107,7 +107,7 @@ class SearchViewModel(
         }
 
         searchJob = viewModelScope.launch {
-            delay(450)
+            delay(SEARCH_DEBOUNCE_MS)
             runSearch(query)
         }
     }
@@ -173,3 +173,16 @@ class SearchViewModel(
         }
     }
 }
+
+/**
+ * How long typing has to stop before a search runs.
+ *
+ * Long, and deliberately so: this fans out to every installed source at once, so each
+ * keystroke that slips through is one request per extension. At the previous 450ms a
+ * normal typing speed fired several rounds of that before the query was finished, and the
+ * earlier rounds were all thrown away.
+ *
+ * Submitting from the keyboard bypasses this entirely, so anyone who wants results sooner
+ * is one key away from them.
+ */
+private const val SEARCH_DEBOUNCE_MS = 1_500L

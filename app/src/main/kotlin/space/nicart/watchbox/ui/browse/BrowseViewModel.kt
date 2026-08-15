@@ -302,4 +302,10 @@ class BrowseViewModel(
  * Shorter than the global search's 450ms because only one source is queried here,
  * so a wasted request costs far less.
  */
-private const val SEARCH_DEBOUNCE_MS = 350L
+/**
+ * How long typing has to stop before a per-source search runs.
+ *
+ * Matches the cross-source search so the two feel the same, even though this one costs a
+ * single request rather than one per extension. Submitting from the keyboard skips it.
+ */
+private const val SEARCH_DEBOUNCE_MS = 1_500L

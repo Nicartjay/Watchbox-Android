@@ -133,6 +133,52 @@ class ParsedDescriptionTest {
         assertEquals("A real synopsis here.", parsed.summary)
     }
 
+    // ------------------------------------------------------------- links
+
+    @Test
+    fun `database links are captured with their urls`() {
+        val parsed = parseDescription(
+            "**Links:** [MAL](https://myanimelist.net/anime/1) | " +
+                "[AniList](https://anilist.co/anime/1)\n\nA synopsis.",
+        )
+
+        assertEquals(
+            listOf("MAL" to "https://myanimelist.net/anime/1", "AniList" to "https://anilist.co/anime/1"),
+            parsed.links,
+        )
+    }
+
+    @Test
+    fun `artwork links are not offered`() {
+        // Sources put backdrop and cover URLs in the same markdown as their database
+        // links. A chip opening a bare image is not a link the user meant to follow, and
+        // the app is already showing that image.
+        val parsed = parseDescription(
+            "**Backdrop:** [backdrop](https://cdn.example/x/bd.jpg)\n" +
+                "**Poster:** [cover art](https://cdn.example/x/p.png?size=w500)\n" +
+                "**Links:** [AniDB](https://anidb.net/a1)\n\nA synopsis.",
+        )
+
+        assertEquals(listOf("AniDB" to "https://anidb.net/a1"), parsed.links)
+    }
+
+    @Test
+    fun `an extensionless artwork url is caught by its label`() {
+        // CDN paths often carry no suffix, so the label is the only signal left.
+        val parsed = parseDescription("[banner](https://cdn.example/img/abc123)\n\nSynopsis.")
+
+        assertTrue(parsed.links.isEmpty())
+    }
+
+    @Test
+    fun `a repeated url is offered once`() {
+        val parsed = parseDescription(
+            "[MAL](https://myanimelist.net/anime/1) and [MyAnimeList](https://myanimelist.net/anime/1)",
+        )
+
+        assertEquals(1, parsed.links.size)
+    }
+
     @Test
     fun `blank and null input is safe`() {
         assertEquals("", parseDescription(null).summary)

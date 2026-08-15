@@ -32,6 +32,17 @@ data class ParsedDescription(
     val summary: String,
     /** `label` to `value`, in the order the source listed them. */
     val fields: List<Pair<String, String>> = emptyList(),
+    /**
+     * Links found anywhere in the description, as `label` to `url`.
+     *
+     * Kept because several sources list MAL, AniList and AniDB pages here, and those are
+     * genuinely useful - but only if they can be opened. Text-only rendering turned them
+     * into unclickable words, so the URL has to survive parsing.
+     *
+     * Deduplicated by URL: a source that repeats a link under two labels should not
+     * produce two identical chips.
+     */
+    val links: List<Pair<String, String>> = emptyList(),
 ) {
     fun field(name: String): String? =
         fields.firstOrNull { it.first.equals(name, ignoreCase = true) }?.second
@@ -113,7 +124,19 @@ fun parseDescription(raw: String?): ParsedDescription {
         .replace(Regex("""\n{3,}"""), "\n\n")
         .trim()
 
-    return ParsedDescription(summary = summary, fields = fields)
+    // Scanned over the whole text, not just the metadata: a trailer link often sits on its
+    // own line among the prose.
+    val links = LINK_PATTERN.findAll(text)
+        .map { it.groupValues[1].trim() to it.groupValues[2].trim() }
+        .filter { (label, url) -> label.isNotEmpty() && url.isNotEmpty() }
+        // Pages only, not artwork. Sources put backdrop and cover URLs in the same markdown
+        // as their database links, and a chip that opens a bare image in a browser is not a
+        // link the user meant to follow - the app is already showing that image.
+        .filterNot { (label, url) -> url.isImageUrl() || label.isArtworkLabel() }
+        .distinctBy { it.second }
+        .toList()
+
+    return ParsedDescription(summary = summary, fields = fields, links = links)
 }
 
 /**
@@ -146,3 +169,32 @@ private fun String.isMarkdownMeta(): Boolean {
         text.startsWith("#") ||
         text.startsWith("- ")
 }
+
+/** Image file extensions sources link directly, ignoring any query string. */
+private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "avif", "svg")
+
+/**
+ * True when a URL points at an image rather than a page.
+ *
+ * Matched on the extension because that is all the URL offers, and checked before the query
+ * string: TMDB and several sources append sizing parameters after the filename.
+ */
+private fun String.isImageUrl(): Boolean {
+    val path = substringBefore('?').substringBefore('#').lowercase()
+    return IMAGE_EXTENSIONS.any { path.endsWith(".$it") }
+}
+
+/**
+ * True when a link's own label says it is artwork.
+ *
+ * Catches the cases an extension-less URL would slip past - an image served from a path with
+ * no suffix, which is common on CDN hosts.
+ */
+private fun String.isArtworkLabel(): Boolean {
+    val text = lowercase()
+    return ARTWORK_LABELS.any { it in text }
+}
+
+private val ARTWORK_LABELS = setOf(
+    "backdrop", "banner", "poster", "cover", "thumbnail", "image", "fanart", "artwork",
+)

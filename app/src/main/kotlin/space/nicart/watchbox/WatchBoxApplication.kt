@@ -15,6 +15,7 @@ import space.nicart.watchbox.core.network.HttpClientFactory
 import space.nicart.watchbox.cast.CastManager
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.data.remote.TmdbApi
+import space.nicart.watchbox.data.remote.CountryResolver
 import space.nicart.watchbox.data.remote.UpdateChecker
 import space.nicart.watchbox.data.remote.UpdateInstaller
 import space.nicart.watchbox.extension.ExtensionInstaller
@@ -160,6 +161,14 @@ class AppContainer(
      * versionCode: CI derives the code from the run number, and the GitHub API
      * does not expose an asset's versionCode without downloading the APK.
      */
+    /**
+     * Resolves the viewer's country for TMDB availability.
+     *
+     * Shares the plain client: this is a keyless public endpoint, so it needs none of the
+     * extension client's cookie jar or interceptors.
+     */
+    val countryResolver = CountryResolver(plainClient)
+
     val updateChecker = UpdateChecker(plainClient, BuildConfig.VERSION_NAME)
 
     val updateInstaller = UpdateInstaller(application, plainClient)

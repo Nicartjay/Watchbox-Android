@@ -67,6 +67,11 @@ import space.nicart.watchbox.domain.Studio
 import space.nicart.watchbox.domain.AnimeDetail
 import space.nicart.watchbox.ui.components.WbAsyncImage
 import space.nicart.watchbox.ui.components.WbBackButton
+import android.widget.Toast
+import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Link
+import androidx.compose.ui.platform.LocalContext
+import space.nicart.watchbox.ui.components.openInBrowser
 
 /**
  * Detail-screen building blocks.
@@ -276,6 +281,8 @@ fun DetailActionButtons(
     onPlay: () -> Unit,
     onToggleWatched: () -> Unit,
     onToggleWatchlist: () -> Unit,
+    /** Opens the title on the source's site; null when it has none. */
+    onOpenInBrowser: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     isTablet: Boolean = false,
     /** True on a wide hero, where buttons size to their content. */
@@ -411,6 +418,21 @@ fun DetailActionButtons(
                 size = buttonHeight,
                 onClick = onToggleWatchlist,
             )
+
+            // Opens this title on the source's own site. Only when the source exposes an
+            // address - a non-HTTP source has no page, and a button that cannot act is
+            // worse than one that is absent.
+            if (onOpenInBrowser != null) {
+                Spacer(Modifier.width(12.dp * menuProgress))
+                SecondaryAction(
+                    icon = Icons.Rounded.Language,
+                    active = false,
+                    progress = menuProgress,
+                    size = buttonHeight,
+                    onClick = onOpenInBrowser,
+                )
+            }
+
             Spacer(Modifier.width(12.dp * menuProgress))
 
             // --- more
@@ -618,6 +640,14 @@ fun DetailMetaInfo(
                 InfoFieldRow(label = label, value = value)
             }
         }
+
+        // Tappable, because a database reference is only useful if it opens. These were
+        // previously flattened into the text, leaving "MAL | AniList | AniDB" visible but
+        // inert.
+        if (detail.infoLinks.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            InfoLinkRow(links = detail.infoLinks)
+        }
     }
 }
 
@@ -689,6 +719,59 @@ private fun InfoFieldRow(label: String, value: String) {
         )
     }
 }
+
+/**
+ * The source's own links as chips.
+ *
+ * Scrollable rather than wrapped: a title can list half a dozen databases, and a wrapping
+ * row would push the episode list down the page for something most people never tap.
+ */
+@Composable
+private fun InfoLinkRow(links: List<Pair<String, String>>) {
+    val tokens = MaterialTheme.wb
+    val context = LocalContext.current
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+    ) {
+        links.take(MAX_INFO_LINKS).forEach { (label, url) ->
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(40.dp))
+                    .background(tokens.colors.surfaceCard)
+                    .clickable {
+                        if (!context.openInBrowser(url)) {
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.source_open_site_failed),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Link,
+                    contentDescription = null,
+                    tint = tokens.colors.accent,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = tokens.colors.textSecondary,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+/** Enough for the databases a title actually lists. */
+private const val MAX_INFO_LINKS = 6
 
 /** Logos render small; taller would dominate the synopsis above them. */
 private val STUDIO_LOGO_HEIGHT = 18.dp

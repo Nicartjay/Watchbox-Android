@@ -35,6 +35,10 @@ import space.nicart.watchbox.ui.settings.SettingsScreen
 import space.nicart.watchbox.ui.settings.SettingsViewModel
 import space.nicart.watchbox.ui.browse.BrowseViewModel
 import space.nicart.watchbox.ui.browse.SourceListViewModel
+import androidx.compose.foundation.layout.Box
+import space.nicart.watchbox.ui.update.UpdatePromptDialog
+import space.nicart.watchbox.ui.update.UpdatePromptState
+import space.nicart.watchbox.ui.update.UpdatePromptViewModel
 
 /**
  * TV entry point.
@@ -56,10 +60,23 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
 
+    // App-scoped launch check, as on the phone. It matters more here: a television is the
+    // device least likely to be updated deliberately, since there is no store entry and
+    // sideloading a new APK by remote is tedious.
+    val updateViewModel: UpdatePromptViewModel = viewModel(
+        factory = UpdatePromptViewModel.factory(
+            store = container.store,
+            checker = container.updateChecker,
+            installer = container.updateInstaller,
+        ),
+    )
+    val updateState by updateViewModel.state.collectAsStateWithLifecycle()
+
+    Box(modifier = modifier) {
+
     NavHost(
         navController = navController,
         startDestination = Routes.Tabs,
-        modifier = modifier,
     ) {
         composable<Routes.Tabs> {
             TvTabShell(container = container) { tab, selectTab ->
@@ -79,6 +96,7 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
                 factory = DetailViewModel.factory(
                     repository = container.repository,
                     store = container.store,
+                    countryResolver = container.countryResolver,
                     sourceId = route.sourceId,
                     animeUrl = route.animeUrl,
                 ),
@@ -174,6 +192,21 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
                 onOpenSettings = { },
             )
         }
+    }
+
+        // Above the nav host so it shows on whichever tab the user landed on.
+        UpdatePromptDialog(
+            state = updateState,
+            onDownload = {
+                (updateState as? UpdatePromptState.Available)
+                    ?.let { updateViewModel.download(it.update) }
+            },
+            onSkip = {
+                (updateState as? UpdatePromptState.Available)
+                    ?.let { updateViewModel.skip(it.update) }
+            },
+            onDismiss = updateViewModel::dismiss,
+        )
     }
 }
 

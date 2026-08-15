@@ -50,6 +50,11 @@ import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
 import space.nicart.watchbox.ui.components.WbPosterCard
 import space.nicart.watchbox.ui.components.WbShelfSection
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
+import space.nicart.watchbox.ui.components.openInBrowser
+import space.nicart.watchbox.ui.components.openYouTube
+import androidx.compose.runtime.mutableIntStateOf
 
 /**
  * Title detail page.
@@ -78,6 +83,17 @@ fun DetailScreen(
     autoPlay: Boolean = false,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    // Which list the tab strip is showing, and which block of episodes.
+    //
+    // Screen-local rather than in the view model: both are a view preference that should
+    // reset when the page is left, not survive it.
+    var detailTab by remember { mutableStateOf(DetailTab.EPISODES) }
+    var episodeRangeIndex by remember { mutableIntStateOf(0) }
+
+    // Reviews are phone-only, so the layout has to know which it is.
+    val isFocusDriven = LocalLayoutMetrics.current.isFocusDriven
 
     // Fires once per screen, not once per recomposition: `startTarget` stays
     // non-null for the life of the page, so an un-latched effect would re-navigate
@@ -272,6 +288,19 @@ fun DetailScreen(
                                 },
                                 onToggleWatched = viewModel::toggleWatched,
                                 onToggleWatchlist = viewModel::toggleWatchlist,
+                                onOpenInBrowser = state.webUrl?.let { url ->
+                                    {
+                                        if (!context.openInBrowser(url)) {
+                                            Toast.makeText(
+                                                context,
+                                                context.getString(
+                                                    R.string.source_open_site_failed,
+                                                ),
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
+                                        }
+                                    }
+                                },
                                 compactButtons = usesWideHero,
                             )
                         }
@@ -293,28 +322,136 @@ fun DetailScreen(
                         )
                     }
 
-                    // A film has nothing to choose between: its single entry is what
-                    // the Play button already opens, so listing it is a redundant row
-                    // that invites a second, identical decision.
-                    if (!detail.isMovie) {
-                        item(key = "episodes-title") {
-                            DetailSectionTitle(
-                                title = stringResource(R.string.detail_episodes),
+                    // Availability, when TMDB knows of any in the user's country. Above
+                    // the episode list because "can I watch this legally" is a question
+                    // asked before picking an episode, not after.
+                    if (detail.extras.providers.isNotEmpty()) {
+                        item(key = "providers") {
+                            ProviderSection(
+                                extras = detail.extras,
                                 isTablet = isTablet,
-                                modifier = Modifier
-                                    .padding(horizontal = contentPadding)
-                                    .padding(bottom = 14.dp),
+                                horizontalPadding = contentPadding,
+                                modifier = Modifier.padding(bottom = 20.dp),
                             )
                         }
+                    }
 
-                        item(key = "episodes") {
-                            EpisodeList(
-                                episodes = detail.episodes,
-                                watchedUrls = state.watchedEpisodeUrls,
-                                currentUrl = state.history?.episodeUrl,
-                                isLoading = false,
+                    // Tabs only when there is a second list to switch to. A film has no
+                    // episode list worth showing - its single entry is what Play already
+                    // opens - so for a film with trailers the strip is the only way to
+                    // reach them, and for one without it does not appear at all.
+                    val hasVideos = detail.extras.videos.isNotEmpty()
+                    val showEpisodes = !detail.isMovie
+
+                    if (showEpisodes || hasVideos) {
+                        item(key = "detail-tabs") {
+                            if (showEpisodes && hasVideos) {
+                                DetailTabRow(
+                                    selected = detailTab,
+                                    showVideos = true,
+                                    videoCount = detail.extras.videos.size,
+                                    onSelect = { detailTab = it },
+                                    horizontalPadding = contentPadding,
+                                    modifier = Modifier.padding(bottom = 14.dp),
+                                )
+                            } else {
+                                DetailSectionTitle(
+                                    title = if (showEpisodes) {
+                                        stringResource(R.string.detail_episodes)
+                                    } else {
+                                        stringResource(
+                                            R.string.detail_videos_count,
+                                            detail.extras.videos.size,
+                                        )
+                                    },
+                                    isTablet = isTablet,
+                                    modifier = Modifier
+                                        .padding(horizontal = contentPadding)
+                                        .padding(bottom = 14.dp),
+                                )
+                            }
+                        }
+
+                        // Which list the strip resolves to. A film has no episodes, so it
+                        // shows videos whatever the tab says.
+                        val showsVideoList = detailTab == DetailTab.VIDEOS || !showEpisodes
+
+                        if (showsVideoList && hasVideos) {
+                            item(key = "videos") {
+                                VideoRail(
+                                    videos = detail.extras.videos,
+                                    onOpen = { video ->
+                                        // Targets the YouTube app explicitly: a plain
+                                        // ACTION_VIEW goes to whichever app holds the
+                                        // default for youtube.com, which is the browser
+                                        // on many devices.
+                                        if (!context.openYouTube(video.watchUrl)) {
+                                            Toast.makeText(
+                                                context,
+                                                context.getString(
+                                                    R.string.source_open_site_failed,
+                                                ),
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
+                                        }
+                                    },
+                                    horizontalPadding = contentPadding,
+                                    modifier = Modifier.padding(bottom = 20.dp),
+                                )
+                            }
+                        } else if (showEpisodes) {
+                            // Blocks of fifty for a long-running series. Nothing is shown
+                            // at or below the threshold, since a single chip is a control
+                            // that does nothing.
+                            //
+                            // Computed plainly rather than remembered: this is inside a lazy
+                            // item builder, which is not a composable scope, and the work is
+                            // a single pass over a count.
+                            val ranges = episodeRanges(detail.episodes.size)
+
+                            if (ranges.isNotEmpty()) {
+                                item(key = "episode-ranges") {
+                                    EpisodeRangeRow(
+                                        ranges = ranges,
+                                        selectedIndex = episodeRangeIndex
+                                            .coerceIn(0, ranges.lastIndex),
+                                        onSelect = { episodeRangeIndex = it },
+                                        horizontalPadding = contentPadding,
+                                        modifier = Modifier.padding(bottom = 12.dp),
+                                    )
+                                }
+                            }
+
+                            item(key = "episodes") {
+                                val shown = if (ranges.isEmpty()) {
+                                    detail.episodes
+                                } else {
+                                    val range = ranges[episodeRangeIndex.coerceIn(0, ranges.lastIndex)]
+                                    detail.episodes.subList(range.fromIndex, range.toIndex + 1)
+                                }
+
+                                EpisodeList(
+                                    episodes = shown,
+                                    watchedUrls = state.watchedEpisodeUrls,
+                                    currentUrl = state.history?.episodeUrl,
+                                    isLoading = false,
+                                    horizontalPadding = contentPadding,
+                                    onPlay = { onPlay(it, 0L) },
+                                    modifier = Modifier.padding(bottom = 20.dp),
+                                )
+                            }
+                        }
+                    }
+
+                    // Reviews, phone only. On a television a wall of small body text read
+                    // at three metres is unusable, and there is no way to scroll one
+                    // review's text with a D-pad without trapping focus inside it.
+                    if (!isFocusDriven && detail.extras.reviews.isNotEmpty()) {
+                        item(key = "reviews") {
+                            ReviewSection(
+                                reviews = detail.extras.reviews,
+                                isTablet = isTablet,
                                 horizontalPadding = contentPadding,
-                                onPlay = { onPlay(it, 0L) },
                                 modifier = Modifier.padding(bottom = 20.dp),
                             )
                         }

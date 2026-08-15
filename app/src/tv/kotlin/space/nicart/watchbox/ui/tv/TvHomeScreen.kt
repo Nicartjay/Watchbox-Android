@@ -78,6 +78,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.ui.graphics.vector.ImageVector
 
 /**
  * TV home: a full-screen backdrop with a spotlight carousel over rows of posters.
@@ -156,7 +164,13 @@ fun TvHomeScreen(
     }
 
     if (state.hasNoSources) {
-        TvHomeEmpty(onOpenSettings = onOpenSettings, modifier = modifier)
+        TvHomeEmpty(
+            hasNoRepos = state.hasNoRepos,
+            // Both branches land in Settings, because that is where the TV build keeps the
+            // extension list - there is no separate destination to send the user to.
+            onOpenSettings = onOpenSettings,
+            modifier = modifier,
+        )
         return
     }
 
@@ -169,7 +183,28 @@ fun TvHomeScreen(
     LaunchedEffect(heroItems.size) { viewModel.clampHero(heroItems.size) }
 
     var heroFocused by remember { mutableStateOf(false) }
-    val heroCard = heroItems.getOrNull(heroIndex)?.let { artwork[it.key] ?: it }
+
+    // Waits briefly for the enriched card rather than painting the raw one immediately.
+    //
+    // The fallback to the source entry meant the spotlight painted the extension's portrait
+    // poster stretched across the screen and then swapped it for the TMDB backdrop a moment
+    // later - a visible flicker on every rotation.
+    //
+    // Deliberately a timeout rather than waiting indefinitely: a title TMDB has no match for
+    // never resolves, and holding the previous slide forever would strand the spotlight on
+    // the wrong title. After the grace period the raw entry is shown, which is what this did
+    // before - just without the flicker for the common case where artwork does arrive.
+    val rawHero = heroItems.getOrNull(heroIndex)
+    val enrichedHero = rawHero?.let { artwork[it.key] }
+
+    var artworkGraceElapsed by remember(rawHero?.key) { mutableStateOf(false) }
+    LaunchedEffect(rawHero?.key) {
+        artworkGraceElapsed = false
+        delay(HERO_ARTWORK_GRACE_MS)
+        artworkGraceElapsed = true
+    }
+
+    val heroCard = enrichedHero ?: rawHero?.takeIf { artworkGraceElapsed }
 
     /**
      * Bumped on every user action on the hero, to restart the rotation delay.
@@ -222,12 +257,36 @@ fun TvHomeScreen(
      * every input, so the title under Play cannot change in the instant between deciding to
      * press it and pressing it.
      */
+    // How far through the current slide's dwell we are, 0..1, for the indicator fill.
+    //
+    // Driven by the same effect that advances the hero rather than a timer of its own, so
+    // the bar completes exactly as the slide changes instead of drifting against it.
+    val heroDwell = remember { Animatable(0f) }
+
     LaunchedEffect(heroItems.size, playRequest, heroInteraction, pickerOpen) {
-        if (heroItems.size <= 1 || pickerOpen) return@LaunchedEffect
-        if (playRequest !is TvPlayRequest.Idle) return@LaunchedEffect
+        if (heroItems.size <= 1 || pickerOpen) {
+            // Nothing is rotating, so leave no half-filled pill implying otherwise.
+            heroDwell.snapTo(0f)
+            return@LaunchedEffect
+        }
+        if (playRequest !is TvPlayRequest.Idle) {
+            heroDwell.snapTo(0f)
+            return@LaunchedEffect
+        }
 
         while (true) {
-            delay(HERO_ROTATE_MS)
+            heroDwell.snapTo(0f)
+            heroDwell.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(
+                    durationMillis = HERO_ROTATE_MS.toInt(),
+                    easing = LinearEasing,
+                ),
+            )
+            // Cleared before the index changes, not after: the effect cannot restart until
+            // the recomposition lands, and a value left at 1f shows the incoming pill
+            // already full.
+            heroDwell.snapTo(0f)
             viewModel.advanceHero(heroItems.size)
         }
     }
@@ -320,6 +379,7 @@ fun TvHomeScreen(
                     onFocusRestored = artworkViewModel::onFocusRestored,
                     heroCount = heroItems.size,
                     heroIndex = heroIndex,
+                    heroProgress = { heroDwell.value },
                     onFocusChanged = { heroFocused = it },
                     // Any input on the hero gives the user a fresh full interval before the
                     // spotlight moves under them.
@@ -333,19 +393,35 @@ fun TvHomeScreen(
 }
 
 @Composable
-private fun TvHomeEmpty(onOpenSettings: () -> Unit, modifier: Modifier = Modifier) {
+private fun TvHomeEmpty(
+    hasNoRepos: Boolean,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Box(
         modifier = modifier
             .fillMaxSize()
             .padding(start = TV_CONTENT_START, end = 48.dp),
         contentAlignment = Alignment.Center,
     ) {
-        WbEmptyState(
-            title = stringResource(R.string.empty_no_repos_title),
-            body = stringResource(R.string.empty_no_repos_body),
-            actionLabel = stringResource(R.string.action_add_repository),
-            onAction = onOpenSettings,
-        )
+        // Two different dead ends, and sending the user to the wrong one leaves them
+        // stuck: with no repository the extension list is empty, and once one exists the
+        // remaining step is installing from it rather than adding another.
+        if (hasNoRepos) {
+            WbEmptyState(
+                title = stringResource(R.string.empty_no_repos_title),
+                body = stringResource(R.string.empty_no_repos_body),
+                actionLabel = stringResource(R.string.action_add_repository),
+                onAction = onOpenSettings,
+            )
+        } else {
+            WbEmptyState(
+                title = stringResource(R.string.empty_no_sources_title),
+                body = stringResource(R.string.empty_no_sources_body),
+                actionLabel = stringResource(R.string.action_browse_extensions),
+                onAction = onOpenSettings,
+            )
+        }
     }
 }
 
@@ -448,6 +524,8 @@ private fun TvHeroPage(
     onFocusRestored: () -> Unit,
     heroCount: Int,
     heroIndex: Int,
+    /** Dwell progress of the current slide, read as a lambda so only the draw re-runs. */
+    heroProgress: () -> Float,
     onFocusChanged: (Boolean) -> Unit,
     onInteraction: () -> Unit,
     isLoading: Boolean,
@@ -478,13 +556,19 @@ private fun TvHeroPage(
         //
         // Keyed by the card, not the URL: the title has to change even when two entries
         // happen to share artwork.
+        // Bottom-left, above the page indicator, matching the phone hero.
+        //
+        // It used to sit top-left, which put the logo against the brightest part of most
+        // backdrops and left the lower half of the screen empty. Anchoring the whole block
+        // to the bottom edge also means a synopsis of any length grows upward into the
+        // image rather than pushing the indicator off-screen.
         Crossfade(
             targetState = card,
             animationSpec = tween(durationMillis = BACKDROP_FADE_MS),
             label = "tv-hero-title",
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(top = HERO_TITLE_TOP, end = 48.dp),
+                .align(Alignment.BottomStart)
+                .padding(bottom = HERO_TITLE_BOTTOM, end = 48.dp),
         ) { shown ->
             TvHeroTitle(card = shown)
         }
@@ -512,6 +596,7 @@ private fun TvHeroPage(
         TvHeroDots(
             count = heroCount,
             current = heroIndex,
+            progress = heroProgress,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(bottom = HERO_DOTS_BOTTOM),
@@ -659,20 +744,92 @@ private fun TvHeroTitle(card: AnimeCard, modifier: Modifier = Modifier) {
 
         Spacer(Modifier.height(12.dp))
 
-        val meta = listOfNotNull(
-            card.year?.takeIf { it.isNotBlank() },
-            card.genres.take(2).joinToString(" · ").takeIf { it.isNotBlank() },
-        ).joinToString("   ·   ")
+        // Score, year and type as pills, as on the phone. The score carries the fixed
+        // amber rather than the theme accent: it is a rating, and a red or purple star
+        // reads as a warning.
+        TvHeroFacts(card = card)
 
-        if (meta.isNotEmpty()) {
+        if (card.genres.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
             Text(
-                text = meta,
+                text = card.genres.take(MAX_TV_HERO_GENRES).joinToString("   ·   "),
                 style = MaterialTheme.typography.titleMedium,
                 color = tokens.colors.textMuted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
+
+        // The synopsis the phone hero already shows. Two lines: this is read at three
+        // metres, where a longer paragraph is skimmed rather than read, and the block
+        // grows upward from a bottom anchor so a third line would eat into the artwork.
+        if (card.overview.isNotBlank()) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = card.overview,
+                style = MaterialTheme.typography.titleMedium,
+                color = tokens.colors.textSecondary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** Score / year / type pills for the TV spotlight. */
+@Composable
+private fun TvHeroFacts(card: AnimeCard) {
+    val tokens = MaterialTheme.wb
+
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        card.ratingPercent?.let { percent ->
+            TvHeroPill(
+                label = "$percent%",
+                icon = Icons.Rounded.Star,
+                tint = tokens.colors.warning,
+            )
+        }
+
+        card.year?.takeIf { it.isNotBlank() }?.let { year ->
+            TvHeroPill(label = year, icon = Icons.Rounded.CalendarMonth)
+        }
+
+        TvHeroPill(
+            label = if (card.isMovie) {
+                stringResource(R.string.hero_type_movie)
+            } else {
+                stringResource(R.string.hero_type_series)
+            },
+            icon = Icons.Rounded.Tv,
+        )
+    }
+}
+
+@Composable
+private fun TvHeroPill(label: String, icon: ImageVector, tint: Color? = null) {
+    val tokens = MaterialTheme.wb
+
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(tokens.colors.textPrimary.copy(alpha = 0.14f))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint ?: tokens.colors.textPrimary.copy(alpha = 0.9f),
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = tint ?: tokens.colors.textPrimary.copy(alpha = 0.9f),
+            maxLines = 1,
+        )
     }
 }
 
@@ -804,9 +961,16 @@ private fun TvHeroActions(
  * position readout.
  */
 @Composable
-private fun TvHeroDots(count: Int, current: Int, modifier: Modifier = Modifier) {
+private fun TvHeroDots(
+    count: Int,
+    current: Int,
+    progress: () -> Float,
+    modifier: Modifier = Modifier,
+) {
     val tokens = MaterialTheme.wb
     if (count <= 1) return
+
+    val fillColor = tokens.colors.textPrimary
 
     Row(
         modifier = modifier,
@@ -814,18 +978,40 @@ private fun TvHeroDots(count: Int, current: Int, modifier: Modifier = Modifier) 
         verticalAlignment = Alignment.CenterVertically,
     ) {
         repeat(count) { index ->
-            val active = index == current
+            val isCurrent = index == current
+
+            // Stretches into a pill, matching the phone hero. Animated rather than
+            // switched so the growth reads as the same gesture as the slide change.
+            val width by animateDpAsState(
+                targetValue = if (isCurrent) HERO_DOT_PILL else HERO_DOT,
+                animationSpec = tween(durationMillis = 220),
+                label = "tv-hero-dot-width",
+            )
+
+            // The current pill's track is dimmer than an inactive dot: the fill supplies
+            // the contrast, so a bright track would leave full and empty indistinguishable.
             Box(
                 modifier = Modifier
-                    .size(if (active) HERO_DOT_ACTIVE else HERO_DOT)
+                    .height(HERO_DOT)
+                    .width(width)
                     .clip(RoundedCornerShape(50))
                     .background(
-                        if (active) {
-                            tokens.colors.textPrimary
-                        } else {
-                            tokens.colors.textPrimary.copy(alpha = 0.35f)
-                        },
-                    ),
+                        fillColor.copy(
+                            alpha = if (isCurrent) HERO_DOT_TRACK_ALPHA else HERO_DOT_ALPHA,
+                        ),
+                    )
+                    .drawWithContent {
+                        drawContent()
+                        if (!isCurrent) return@drawWithContent
+                        // Clipped to the pill by the parent, so the fill keeps its rounded
+                        // ends without a second shape.
+                        drawRect(
+                            color = fillColor,
+                            size = size.copy(
+                                width = size.width * progress().coerceIn(0f, 1f),
+                            ),
+                        )
+                    },
             )
         }
     }
@@ -1433,6 +1619,15 @@ private const val ROW_HERO = "hero"
  */
 private const val HERO_ROTATE_MS = 9_000L
 
+/**
+ * How long the spotlight waits for TMDB artwork before falling back to the source's own.
+ *
+ * Long enough to cover a cached or quick lookup, which is the common case, and short enough
+ * that a title TMDB cannot match does not leave the slot empty for noticeably long. Trades a
+ * brief placeholder for not flashing a stretched portrait poster and replacing it.
+ */
+private const val HERO_ARTWORK_GRACE_MS = 900L
+
 private val HERO_BUTTON_HEIGHT = 48.dp
 private val HERO_BUTTON_ICON = 20.dp
 
@@ -1443,6 +1638,10 @@ private val HERO_BUTTON_ICON = 20.dp
  * buttons in the opposite corner.
  */
 private val HERO_TITLE_TOP = 96.dp
+
+
+/** Genres shown beside the spotlight; more than this wraps and pushes the block taller. */
+private const val MAX_TV_HERO_GENRES = 3
 
 /**
  * Gap between the buttons and the bottom edge.
@@ -1457,6 +1656,20 @@ private val HERO_DOT = 8.dp
 private val HERO_DOT_ACTIVE = 11.dp
 
 /**
+ * Width of the current page's indicator.
+ *
+ * A pill rather than a larger dot, matching the phone hero, so the fill has somewhere to
+ * run. Wider than the phone's 32dp because this is read across a room.
+ */
+private val HERO_DOT_PILL = 40.dp
+
+/** Alpha of a dot that is not the current page. */
+private const val HERO_DOT_ALPHA = 0.35f
+
+/** Alpha of the current pill's track; the fill drawn over it carries the contrast. */
+private const val HERO_DOT_TRACK_ALPHA = 0.28f
+
+/**
  * Gap between the dots and the bottom edge.
  *
  * Set so the dots sit on the buttons' vertical centre in the opposite corner: the button
@@ -1467,6 +1680,15 @@ private val HERO_DOT_ACTIVE = 11.dp
  */
 private val HERO_DOTS_BOTTOM = HERO_ACTIONS_BOTTOM + (HERO_BUTTON_HEIGHT / 2) -
     (HERO_DOT_ACTIVE / 2)
+
+/**
+ * Gap between the title block and the bottom edge.
+ *
+ * Clears the page indicator, which sits below it, so the synopsis and the dots do not
+ * collide. Derived from the indicator's own offset rather than a separate number, so the
+ * two cannot drift apart.
+ */
+private val HERO_TITLE_BOTTOM = HERO_DOTS_BOTTOM + HERO_DOT + 20.dp
 
 /**
  * How long the spotlight takes to dissolve from one title to the next.

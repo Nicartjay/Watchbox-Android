@@ -139,6 +139,10 @@ fun HomeHeroSection(
         val layout = rememberHeroLayout(maxWidth, maxHeight)
         val pagerState = rememberPagerState(pageCount = { items.size })
 
+        // Captured here: BoxWithConstraints' receiver is not in scope inside the pager's
+        // page lambda, and the panel's own shape is what decides which artwork fits it.
+        val heroIsPortrait = layout.height > maxWidth
+
         // How far through the current slide's dwell time we are, 0..1.
         //
         // Animated rather than sampled on a timer: one animation drives the fill for
@@ -191,6 +195,7 @@ fun HomeHeroSection(
                     pageOffset = pagerState.pageOffsetFor(page),
                     onOpen = { onOpen(items[page]) },
                     onMoreInfo = onMoreInfo?.let { handler -> { handler(items[page]) } },
+                    isPortrait = heroIsPortrait,
                 )
             }
 
@@ -224,16 +229,27 @@ private fun HeroPage(
     pageOffset: Float,
     onOpen: () -> Unit,
     onMoreInfo: (() -> Unit)? = null,
+    /**
+     * True when the panel is taller than it is wide.
+     *
+     * Decides which artwork fills it. Measured rather than inferred from form factor: a
+     * tablet in portrait wants the same treatment as a phone, and a phone in landscape
+     * wants the backdrop.
+     */
+    isPortrait: Boolean = true,
 ) {
     val tokens = MaterialTheme.wb
     val background = MaterialTheme.colorScheme.background
     val fade = (1f - pageOffset.absoluteValue).coerceIn(0f, 1f)
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // A wide TMDB backdrop when we have one, else the source's portrait
-        // poster cropped. Over-scaled so parallax never exposes an edge.
+        // A textless portrait poster in a portrait panel, a wide backdrop in a landscape
+        // one. A 16:9 backdrop in the phone's ~0.55:1 hero loses about 69% of its width to
+        // the crop, usually including whatever the shot was framed around.
+        //
+        // Over-scaled either way so parallax never exposes an edge.
         WbAsyncImage(
-            url = item.heroImage,
+            url = if (isPortrait) item.portraitHeroImage else item.heroImage,
             contentDescription = item.title,
             contentScale = ContentScale.Crop,
             modifier = Modifier

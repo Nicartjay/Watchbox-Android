@@ -136,7 +136,9 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
                 // costs nothing extra. Subtitle providers key on IMDb, not TMDB, and this
                 // is the only place the two are ever linked.
                 "append_to_response" to "images,external_ids",
-                // Language-neutral logos are usually the clean, text-only ones.
+                // `null` is the language-neutral set: the clean text-free logos, and the
+                // textless posters the portrait hero uses. The language entries cover
+                // logos for titles that have no neutral cut.
                 "include_image_language" to "en,ja,null",
             ),
         ) ?: return null
@@ -157,6 +159,9 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
             // hero-sized asset would be wasted bandwidth.
             cardBackdropUrl = image(dto.backdropPath, CARD_BACKDROP_SIZE),
             posterUrl = image(dto.posterPath, POSTER_SIZE),
+            // Full-height, because a portrait hero fills the screen: the card transform
+            // would upscale visibly at that size.
+            heroPosterUrl = image(dto.textlessPosterPath, HERO_BACKDROP_SIZE),
             logoUrl = image(dto.bestLogoPath, LOGO_SIZE),
             overview = dto.overview.orEmpty(),
             year = dto.year,
@@ -253,6 +258,131 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
         return results
     }
 
+    /**
+     * Videos, availability, reviews, ratings and ids for one title.
+     *
+     * One request, not six: `append_to_response` folds every sub-endpoint into the same
+     * payload for the same rate-limit cost, and the whole thing is ~66KB.
+     *
+     * Fetched only for a detail page, and separately from [lookupById], because none of it
+     * is needed for a card in a rail - bundling them would request reviews for every poster
+     * on the home screen.
+     *
+     * [country] selects the provider list and the age rating. TMDB carries 129 countries and
+     * they differ substantially, so showing another region's would be actively misleading
+     * about what the user can watch.
+     */
+    suspend fun extras(id: Int, type: TmdbType, country: String): TmdbExtras {
+        val key = "extras:${type.path}:$id:$country"
+        cache[key]?.let { return it as? TmdbExtras ?: TmdbExtras() }
+
+        val body = request(
+            path = "${type.path}/$id",
+            params = mapOf(
+                "append_to_response" to
+                    "videos,watch/providers,reviews,keywords,content_ratings," +
+                    "release_dates,alternative_titles,external_ids",
+            ),
+        )
+
+        val extras = body
+            ?.let { runCatching { json.decodeFromString<ExtrasResponse>(it) }.getOrNull() }
+            ?.toExtras(country)
+            ?: TmdbExtras()
+
+        cache[key] = extras
+        return extras
+    }
+
+    private fun ExtrasResponse.toExtras(country: String): TmdbExtras {
+        val entry = watchProviders?.results?.get(country)
+
+        val providers = buildList {
+            entry?.flatrate?.forEach { add(it.toProvider(ProviderKind.STREAM)) }
+            entry?.free?.forEach { add(it.toProvider(ProviderKind.FREE)) }
+            entry?.ads?.forEach { add(it.toProvider(ProviderKind.FREE)) }
+            entry?.rent?.forEach { add(it.toProvider(ProviderKind.RENT)) }
+            entry?.buy?.forEach { add(it.toProvider(ProviderKind.BUY)) }
+        }
+            // The same service appears under several kinds - Netflix as both flatrate and
+            // ads - and one logo per service is the useful presentation. The first wins,
+            // and the build order above puts the most favourable kind first.
+            .distinctBy { it.name }
+
+        return TmdbExtras(
+            videos = videos?.results.orEmpty()
+                .filter { it.site.equals("YouTube", ignoreCase = true) && it.key.isNotBlank() }
+                // Official first, then trailers before teasers, then newest. A fan re-upload
+                // at the top of the list looks like the app picked badly.
+                .sortedWith(
+                    compareByDescending<VideoEntry> { it.official }
+                        .thenByDescending { it.type.equals("Trailer", ignoreCase = true) }
+                        .thenByDescending { it.publishedAt },
+                )
+                .map {
+                    TmdbVideo(
+                        key = it.key,
+                        name = it.name.ifBlank { it.type },
+                        type = it.type,
+                        official = it.official,
+                        publishedAt = it.publishedAt,
+                    )
+                },
+            providers = providers,
+            providerCountry = country,
+            providerLink = entry?.link,
+            reviews = reviews?.results.orEmpty()
+                .filter { it.content.isNotBlank() }
+                .map {
+                    TmdbReview(
+                        author = it.author.ifBlank { "Anonymous" },
+                        content = it.content,
+                        rating = it.authorDetails?.rating?.toInt(),
+                        avatarUrl = it.authorDetails?.avatarPath?.let { path ->
+                            // TMDB stores some avatars as a Gravatar URL with a leading
+                            // slash, which would otherwise be joined onto the image host.
+                            if (path.startsWith("/http")) path.removePrefix("/")
+                            else image(path, AVATAR_SIZE)
+                        },
+                        createdAt = it.createdAt,
+                    )
+                },
+            // Movies publish certifications under release_dates, series under
+            // content_ratings, so both are read and whichever exists wins.
+            //
+            // Falls back to US when the user's country publishes none, which is common:
+            // of three titles sampled against PH, only one had a local rating while all
+            // three had a US one. A US rating is recognisable enough to be useful, and an
+            // empty field tells the viewer nothing.
+            certification = certificationFor(country).ifBlank { certificationFor(FALLBACK_CERT_COUNTRY) },
+            keywords = (keywords?.results ?: keywords?.keywords).orEmpty()
+                .mapNotNull { it.name.takeIf { n -> n.isNotBlank() } },
+            alternativeTitles = alternativeTitles?.results.orEmpty()
+                .mapNotNull { it.title.takeIf { t -> t.isNotBlank() } }
+                .distinct(),
+            tvdbId = externalIds?.tvdbId,
+            nextEpisodeAirDate = nextEpisodeToAir?.airDate.orEmpty(),
+            nextEpisodeNumber = nextEpisodeToAir?.episodeNumber ?: 0,
+        )
+    }
+
+    private fun ExtrasResponse.certificationFor(country: String): String =
+        contentRatings?.results
+            ?.firstOrNull { it.country.equals(country, ignoreCase = true) }
+            ?.rating
+            ?.takeIf { it.isNotBlank() }
+            ?: releaseDates?.results
+                ?.firstOrNull { it.country.equals(country, ignoreCase = true) }
+                ?.releaseDates
+                ?.firstNotNullOfOrNull { it.certification?.takeIf { c -> c.isNotBlank() } }
+                .orEmpty()
+
+    private fun ProviderEntry.toProvider(kind: ProviderKind) = TmdbProvider(
+        name = providerName,
+        logoUrl = image(logoPath, PROVIDER_LOGO_SIZE),
+        kind = kind,
+    )
+
     private suspend fun request(path: String, params: Map<String, String>): String? {
         val query = (params + ("api_key" to apiKey) + ("language" to "en-US"))
             .entries
@@ -303,6 +433,15 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
         private const val CARD_BACKDROP_SIZE = "w780"
         private const val POSTER_SIZE = "w500"
         private const val LOGO_SIZE = "w500"
+
+        /** Provider logos render as small square chips. */
+        private const val PROVIDER_LOGO_SIZE = "w92"
+
+        /** Where to look for an age rating when the user's own country publishes none. */
+        private const val FALLBACK_CERT_COUNTRY = "US"
+
+        /** Review avatars, shown at about 32dp. */
+        private const val AVATAR_SIZE = "w45"
 
         /**
          * Studio logos are small on screen, so a small transform is enough.
@@ -464,6 +603,13 @@ data class TmdbArtwork(
     val rating: Double,
     val genres: List<String>,
     val seasonCount: Int,
+    /**
+     * A textless portrait poster, for a portrait hero. Null when TMDB has none.
+     *
+     * Separate from [posterUrl], which is the one-per-title default and usually carries a
+     * title treatment - fine on a small card, wrong behind a logo the app draws itself.
+     */
+    val heroPosterUrl: String? = null,
     /** Credited studios, most significant first. Empty when TMDB listed none. */
     val studios: List<TmdbStudio> = emptyList(),
 )
@@ -555,13 +701,45 @@ private data class DetailsResponse(
      * Prefers an English logo, then a language-neutral one, then anything.
      * Language-neutral entries are usually the clean text-free marks, which is
      * what the hero wants.
+     *
+     * Raster only. TMDB serves some logos as SVG - The Mentalist's first three English
+     * entries are `.svg` - and Coil has no SVG decoder registered, so those fail to
+     * decode and the hero silently falls back to plain text. The failure is invisible:
+     * the request succeeds with `content-type: image/svg+xml` and nothing reports an
+     * error.
+     *
+     * Filtering rather than adding `coil-svg`: an SVG logo is a minority case (1 in 12
+     * across a sample of popular titles) and every one of those titles also ships a
+     * raster version, so the dependency would buy nothing this does not.
      */
+    /**
+     * A language-neutral poster, if TMDB has one.
+     *
+     * These are the textless prints - artwork with no title treatment burnt in - which is
+     * what a portrait hero wants: the app draws the logo itself, so a poster carrying its
+     * own title renders the name twice, often in a different typeface.
+     *
+     * Ordered by TMDB's own vote average, since the neutral set includes both official
+     * key art and fan uploads and the votes separate them better than upload order does.
+     *
+     * Null when TMDB lists none, which is common for smaller titles - the caller then
+     * falls back to the landscape backdrop.
+     */
+    val textlessPosterPath: String?
+        get() = images?.posters.orEmpty()
+            .filter { it.iso6391 == null }
+            .filterNot { it.filePath.endsWith(".svg", ignoreCase = true) }
+            .maxByOrNull { it.voteAverage }
+            ?.filePath
+
     val bestLogoPath: String?
-        get() = images?.logos.orEmpty().let { logos ->
-            logos.firstOrNull { it.iso6391 == "en" }
-                ?: logos.firstOrNull { it.iso6391 == null }
-                ?: logos.firstOrNull()
-        }?.filePath
+        get() = images?.logos.orEmpty()
+            .filterNot { it.filePath.endsWith(".svg", ignoreCase = true) }
+            .let { logos ->
+                logos.firstOrNull { it.iso6391 == "en" }
+                    ?: logos.firstOrNull { it.iso6391 == null }
+                    ?: logos.firstOrNull()
+            }?.filePath
 }
 
 @Serializable
@@ -575,7 +753,10 @@ private data class Company(
 )
 
 @Serializable
-private data class Images(val logos: List<ImageEntry>? = null)
+private data class Images(
+    val logos: List<ImageEntry>? = null,
+    val posters: List<ImageEntry>? = null,
+)
 
 @Serializable
 private data class ExternalIds(@SerialName("imdb_id") val imdbId: String? = null)
@@ -584,6 +765,7 @@ private data class ExternalIds(@SerialName("imdb_id") val imdbId: String? = null
 private data class ImageEntry(
     @SerialName("file_path") val filePath: String = "",
     @SerialName("iso_639_1") val iso6391: String? = null,
+    @SerialName("vote_average") val voteAverage: Double = 0.0,
 )
 
 @Serializable
@@ -623,3 +805,113 @@ private data class SeasonEpisode(
 
 private fun String.urlEncoded(): String =
     java.net.URLEncoder.encode(this, "UTF-8").replace("+", "%20")
+
+// ---------------------------------------------------------------- extras DTOs
+
+@Serializable
+private data class ExtrasResponse(
+    val videos: VideoList? = null,
+    @SerialName("watch/providers") val watchProviders: WatchProviders? = null,
+    val reviews: ReviewList? = null,
+    val keywords: KeywordList? = null,
+    @SerialName("content_ratings") val contentRatings: ContentRatingList? = null,
+    @SerialName("release_dates") val releaseDates: ReleaseDateList? = null,
+    @SerialName("alternative_titles") val alternativeTitles: AltTitleList? = null,
+    @SerialName("external_ids") val externalIds: ExtrasExternalIds? = null,
+    @SerialName("next_episode_to_air") val nextEpisodeToAir: NextEpisode? = null,
+)
+
+@Serializable
+private data class VideoList(val results: List<VideoEntry>? = null)
+
+@Serializable
+private data class VideoEntry(
+    val key: String = "",
+    val name: String = "",
+    val site: String = "",
+    val type: String = "",
+    val official: Boolean = false,
+    @SerialName("published_at") val publishedAt: String = "",
+)
+
+@Serializable
+private data class WatchProviders(val results: Map<String, ProviderCountry>? = null)
+
+@Serializable
+private data class ProviderCountry(
+    val link: String? = null,
+    val flatrate: List<ProviderEntry>? = null,
+    val free: List<ProviderEntry>? = null,
+    val ads: List<ProviderEntry>? = null,
+    val rent: List<ProviderEntry>? = null,
+    val buy: List<ProviderEntry>? = null,
+)
+
+@Serializable
+private data class ProviderEntry(
+    @SerialName("provider_name") val providerName: String = "",
+    @SerialName("logo_path") val logoPath: String? = null,
+)
+
+@Serializable
+private data class ReviewList(val results: List<ReviewEntry>? = null)
+
+@Serializable
+private data class ReviewEntry(
+    val author: String = "",
+    val content: String = "",
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("author_details") val authorDetails: AuthorDetails? = null,
+)
+
+@Serializable
+private data class AuthorDetails(
+    val rating: Double? = null,
+    @SerialName("avatar_path") val avatarPath: String? = null,
+)
+
+/** TV returns `results`, movies return `keywords`; both shapes are accepted. */
+@Serializable
+private data class KeywordList(
+    val results: List<KeywordEntry>? = null,
+    val keywords: List<KeywordEntry>? = null,
+)
+
+@Serializable
+private data class KeywordEntry(val name: String = "")
+
+@Serializable
+private data class ContentRatingList(val results: List<ContentRatingEntry>? = null)
+
+@Serializable
+private data class ContentRatingEntry(
+    @SerialName("iso_3166_1") val country: String = "",
+    val rating: String = "",
+)
+
+@Serializable
+private data class ReleaseDateList(val results: List<ReleaseDateCountry>? = null)
+
+@Serializable
+private data class ReleaseDateCountry(
+    @SerialName("iso_3166_1") val country: String = "",
+    @SerialName("release_dates") val releaseDates: List<ReleaseDateEntry>? = null,
+)
+
+@Serializable
+private data class ReleaseDateEntry(val certification: String? = null)
+
+@Serializable
+private data class AltTitleList(val results: List<AltTitleEntry>? = null)
+
+@Serializable
+private data class AltTitleEntry(val title: String = "")
+
+@Serializable
+private data class ExtrasExternalIds(@SerialName("tvdb_id") val tvdbId: Int? = null)
+
+@Serializable
+private data class NextEpisode(
+    @SerialName("air_date") val airDate: String = "",
+    @SerialName("episode_number") val episodeNumber: Int = 0,
+)

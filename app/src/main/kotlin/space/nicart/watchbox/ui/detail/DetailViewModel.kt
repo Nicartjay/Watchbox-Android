@@ -13,6 +13,7 @@ import space.nicart.watchbox.data.local.WatchHistoryEntry
 import space.nicart.watchbox.data.local.WatchlistEntry
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.domain.AnimeDetail
+import space.nicart.watchbox.data.remote.CountryResolver
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.domain.friendlyMessage
@@ -25,6 +26,8 @@ data class DetailUiState(
     val suggestionsLoading: Boolean = false,
     val history: WatchHistoryEntry? = null,
     val errorMessage: String? = null,
+    /** This title's page on the source's site, when it has one. */
+    val webUrl: String? = null,
 ) {
     /** The episode the play button should open, and where to resume from. */
     val resumeTarget: Pair<EpisodeEntry, Long>?
@@ -61,11 +64,13 @@ data class DetailUiState(
 class DetailViewModel(
     private val repository: AnimeRepository,
     private val store: WatchBoxStore,
+    private val countryResolver: CountryResolver,
     private val sourceId: Long,
     private val animeUrl: String,
 ) : ViewModel() {
 
     private var suggestionsJob: Job? = null
+    private var extrasJob: Job? = null
 
     private val _uiState = MutableStateFlow(DetailUiState())
     val uiState: StateFlow<DetailUiState> = _uiState.asStateFlow()
@@ -85,11 +90,15 @@ class DetailViewModel(
                         isLoading = false,
                         detail = detail,
                         errorMessage = null,
+                        // Resolved once here rather than per recomposition: it calls into
+                        // extension code, which must not run during composition.
+                        webUrl = repository.titleWebUrl(sourceId, animeUrl),
                     )
                     // Fetched after the detail is on screen: tier 2 is a second
                     // network round-trip, and the episode list should not wait on
                     // a section the user may never scroll to.
                     loadSuggestions(detail)
+                    loadExtras(detail)
                 }
                 .onFailure { error ->
                     _uiState.value = _uiState.value.copy(
@@ -165,6 +174,36 @@ class DetailViewModel(
         }
     }
 
+    /**
+     * Trailers, availability, reviews and tags.
+     *
+     * After the page rather than with it: the episode list is what the user opened this for,
+     * and it should not wait on a trailer list. The sections appear as the data arrives.
+     *
+     * The country is resolved from the network, not the device locale: a locale reflects the
+     * language the user picked, so an English-language phone in Manila reports US and would
+     * show the wrong catalogue. TMDB carries 129 countries and they differ substantially -
+     * one PH provider against seven for US on the same title.
+     */
+    private fun loadExtras(detail: AnimeDetail) {
+        extrasJob?.cancel()
+        val tmdbId = detail.tmdbId ?: return
+
+        extrasJob = viewModelScope.launch {
+            val extras = repository.extras(
+                tmdbId = tmdbId,
+                isMovie = detail.isMovie,
+                country = countryResolver.country(),
+            )
+            // Guarded: the user may have navigated on, or a reload may have replaced the
+            // detail with a different title, while this was in flight.
+            if (_uiState.value.detail?.key != detail.key) return@launch
+            _uiState.value = _uiState.value.copy(
+                detail = _uiState.value.detail?.copy(extras = extras),
+            )
+        }
+    }
+
     private fun loadSuggestions(detail: AnimeDetail) {
         suggestionsJob?.cancel()
         _uiState.value = _uiState.value.copy(suggestionsLoading = true)
@@ -188,12 +227,13 @@ class DetailViewModel(
         fun factory(
             repository: AnimeRepository,
             store: WatchBoxStore,
+            countryResolver: CountryResolver,
             sourceId: Long,
             animeUrl: String,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                DetailViewModel(repository, store, sourceId, animeUrl) as T
+                DetailViewModel(repository, store, countryResolver, sourceId, animeUrl) as T
         }
     }
 }
