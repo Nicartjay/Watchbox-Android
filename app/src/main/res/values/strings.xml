@@ -86,13 +86,10 @@
     <string name="player_subtitle_sync_hint">A positive offset delays the subtitles.</string>
     <string name="detail_videos_count">Videos (%1$d)</string>
     <string name="detail_reviews">Reviews</string>
+    <string name="review_show_more">Show more</string>
+    <string name="review_show_less">Show less</string>
     <string name="provider_column_watch">Watch</string>
     <string name="provider_column_buy">Buy or rent</string>
-    <string name="provider_none">Not available</string>
-    <string name="provider_stream">Stream</string>
-    <string name="provider_free">Free</string>
-    <string name="provider_rent">Rent</string>
-    <string name="provider_buy">Buy</string>
     <string name="detail_where_to_watch">Where to watch</string>
     <string name="detail_provider_country">Availability in %1$s</string>
     <string name="detail_more_reviews">Read all reviews</string>

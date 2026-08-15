@@ -311,6 +311,7 @@ fun DetailScreen(
                     if (!usesWideHero) item(key = "meta") {
                         DetailMetaInfo(
                             detail = detail,
+                            sourceIcon = extensionIcon,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = contentPadding)

@@ -49,6 +49,11 @@ import space.nicart.watchbox.data.remote.TmdbExtras
 import space.nicart.watchbox.data.remote.TmdbReview
 import androidx.compose.foundation.layout.FlowRow
 import space.nicart.watchbox.data.remote.TmdbProvider
+import androidx.compose.animation.animateContentSize
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 
 /**
  * Which list the detail page is showing beneath the synopsis.
@@ -347,18 +352,27 @@ fun ProviderSection(
                 .padding(horizontal = horizontalPadding),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // Both columns are always laid out when either has content, so the two do not
-            // reflow into different widths depending on what a title happens to offer.
-            ProviderColumn(
-                title = stringResource(R.string.provider_column_watch),
-                providers = watch,
-                modifier = Modifier.weight(1f),
-            )
-            ProviderColumn(
-                title = stringResource(R.string.provider_column_buy),
-                providers = buy,
-                modifier = Modifier.weight(1f),
-            )
+            // Only a column that has something in it, and a lone column takes the whole
+            // width rather than half.
+            //
+            // An earlier version always laid out both and printed "Not available" in the
+            // empty one, which stated the obvious where the answer should be. Leaving the
+            // gap instead was no better: a half-width column with blank space beside it
+            // reads as something that failed to load.
+            if (watch.isNotEmpty()) {
+                ProviderColumn(
+                    title = stringResource(R.string.provider_column_watch),
+                    providers = watch,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (buy.isNotEmpty()) {
+                ProviderColumn(
+                    title = stringResource(R.string.provider_column_buy),
+                    providers = buy,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 }
@@ -366,9 +380,8 @@ fun ProviderSection(
 /**
  * One column of provider logos.
  *
- * Renders its heading even when empty, with a dash in place of the logos: an absent column
- * would leave the other one stretched across the full width, and "nothing here" is itself
- * the answer to whether a title can be streamed.
+ * Only called with a non-empty list; the caller omits a column that has nothing, so there is
+ * no empty state to render here.
  */
 @Composable
 private fun ProviderColumn(
@@ -392,15 +405,6 @@ private fun ProviderColumn(
         )
 
         Spacer(Modifier.height(10.dp))
-
-        if (providers.isEmpty()) {
-            Text(
-                text = stringResource(R.string.provider_none),
-                style = MaterialTheme.typography.labelSmall,
-                color = tokens.colors.textMuted,
-            )
-            return@Column
-        }
 
         // Wraps rather than scrolls: a column is half the screen wide, so a horizontal
         // scroller there would hide logos behind a gesture nobody would think to try.
@@ -517,13 +521,50 @@ fun ReviewSection(
 
                 Spacer(Modifier.height(8.dp))
 
+                // Collapsed by default, expandable in place.
+                //
+                // Reviews run to thousands of characters, so showing them all would bury
+                // everything below - but truncating with no way to read the rest makes the
+                // section decorative. Expanding in place keeps the page position.
+                var expanded by remember(review.content) { mutableStateOf(false) }
+
                 Text(
                     text = review.content,
                     style = MaterialTheme.typography.bodySmall,
                     color = tokens.colors.textSecondary,
-                    maxLines = MAX_REVIEW_LINES,
+                    maxLines = if (expanded) Int.MAX_VALUE else MAX_REVIEW_LINES,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.animateContentSize(),
                 )
+
+                // Offered only when there is more to see. Measured from the text itself
+                // rather than guessed from a character count, which would be wrong at any
+                // font scale or screen width other than the one it was tuned on.
+                var isTruncated by remember(review.content) { mutableStateOf(false) }
+
+                Text(
+                    text = review.content,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = MAX_REVIEW_LINES,
+                    onTextLayout = { isTruncated = it.hasVisualOverflow },
+                    modifier = Modifier.height(0.dp),
+                    color = tokens.colors.textSecondary,
+                )
+
+                if (isTruncated || expanded) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = if (expanded) {
+                            stringResource(R.string.review_show_less)
+                        } else {
+                            stringResource(R.string.review_show_more)
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = tokens.colors.accent,
+                        modifier = Modifier.clickable { expanded = !expanded },
+                    )
+                }
             }
         }
     }

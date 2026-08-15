@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.domain.Studio
+import space.nicart.watchbox.ui.extensions.ExtensionIcon
 import space.nicart.watchbox.domain.AnimeDetail
 import space.nicart.watchbox.ui.components.WbAsyncImage
 import space.nicart.watchbox.ui.components.WbBackButton
@@ -543,6 +544,13 @@ private fun DetailCircleButton(
 fun DetailMetaInfo(
     detail: AnimeDetail,
     modifier: Modifier = Modifier,
+    /**
+     * The owning extension's icon, shown beside its name.
+     *
+     * A Drawable rather than a URL: an extension's icon comes from its own APK through the
+     * package manager, so there is nothing to fetch.
+     */
+    sourceIcon: android.graphics.drawable.Drawable? = null,
 ) {
     val tokens = MaterialTheme.wb
     var expanded by remember { mutableStateOf(false) }
@@ -596,11 +604,32 @@ fun DetailMetaInfo(
         }
 
         if (detail.sourceName.isNotBlank()) {
-            Text(
-                text = detail.sourceName,
-                style = MaterialTheme.typography.labelLarge,
-                color = tokens.colors.textMuted,
-            )
+            // The icon earns its place here: with several extensions installed the name
+            // alone is a word the user has to read and match, while the icon is the same
+            // mark they picked in the extension list.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                // Reuses the extension list's own icon composable, which caches the
+                // drawable's rasterisation - adaptive-icon conversion is not free, and
+                // this sits in a list that recomposes on scroll.
+                if (sourceIcon != null) {
+                    ExtensionIcon(
+                        drawable = sourceIcon,
+                        iconUrl = null,
+                        modifier = Modifier
+                            .size(SOURCE_ICON_SIZE)
+                            .clip(RoundedCornerShape(5.dp)),
+                    )
+                }
+
+                Text(
+                    text = detail.sourceName,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = tokens.colors.textMuted,
+                )
+            }
         }
 
         if (detail.description.isNotBlank()) {
@@ -634,11 +663,13 @@ fun DetailMetaInfo(
 
         // Facts the source packed into its description as markdown. Shown as labelled
         // rows rather than left in the synopsis, where the markers rendered verbatim.
+        //
+        // Two columns, because these are short label/value pairs - a studio name, an air
+        // date - and one per full-width row left most of each line empty while pushing the
+        // episode list further down the page.
         if (detail.infoFields.isNotEmpty()) {
             Spacer(Modifier.height(6.dp))
-            detail.infoFields.take(MAX_INFO_FIELDS).forEach { (label, value) ->
-                InfoFieldRow(label = label, value = value)
-            }
+            InfoFieldGrid(fields = detail.infoFields.take(MAX_INFO_FIELDS))
         }
 
         // Tappable, because a database reference is only useful if it opens. These were
@@ -694,28 +725,60 @@ private fun StudioLogoRow(studios: List<Studio>) {
     }
 }
 
+/**
+ * Info fields in two columns.
+ *
+ * Paired into rows rather than laid out with a grid: the list is a handful of items, and a
+ * lazy grid inside an already-lazy column needs a fixed height, which would either clip the
+ * values or leave a gap.
+ *
+ * An odd final item takes the left column and leaves the right empty, so labels stay aligned
+ * down the page instead of the last one centring itself.
+ */
+@Composable
+private fun InfoFieldGrid(fields: List<Pair<String, String>>) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        fields.chunked(2).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                row.forEach { (label, value) ->
+                    InfoFieldRow(
+                        label = label,
+                        value = value,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                // Keeps a lone item to the left half rather than letting it stretch.
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
 /** One `Label  Value` row from a source's markdown metadata. */
 @Composable
-private fun InfoFieldRow(label: String, value: String) {
+private fun InfoFieldRow(label: String, value: String, modifier: Modifier = Modifier) {
     val tokens = MaterialTheme.wb
 
-    Row(
-        modifier = Modifier.padding(top = 3.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
+    // Label above value rather than beside it. At half width a side-by-side pair left the
+    // value two or three words per line; stacking gives it the whole column.
+    Column(modifier = modifier.padding(top = 6.dp)) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.SemiBold,
             color = tokens.colors.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         Text(
             text = value,
             style = MaterialTheme.typography.labelLarge,
             color = tokens.colors.textSecondary,
-            maxLines = 2,
+            maxLines = 3,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
         )
     }
 }
@@ -772,6 +835,9 @@ private fun InfoLinkRow(links: List<Pair<String, String>>) {
 
 /** Enough for the databases a title actually lists. */
 private const val MAX_INFO_LINKS = 6
+
+/** Matches the text beside it rather than the studio logos, which are larger. */
+private val SOURCE_ICON_SIZE = 18.dp
 
 /** Logos render small; taller would dominate the synopsis above them. */
 private val STUDIO_LOGO_HEIGHT = 18.dp
