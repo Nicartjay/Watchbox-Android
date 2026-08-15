@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.domain.AnimeRepository
+import space.nicart.watchbox.domain.friendlyMessage
 import space.nicart.watchbox.extension.ExtensionManager
 
 /** One installed, browsable source. */
@@ -58,6 +59,13 @@ data class BrowseUiState(
     val filterPanelOpen: Boolean = false,
     val hasFilters: Boolean = false,
     val filtersActive: Boolean = false,
+    /**
+     * The source's site, when it has one.
+     *
+     * Held in state rather than resolved in the composable because it comes from
+     * extension code, which must not be called during composition.
+     */
+    val siteUrl: String? = null,
 )
 
 /** Backs the source list on the Browse tab. */
@@ -131,6 +139,7 @@ class BrowseViewModel(
 
     init {
         loadFilters()
+        _uiState.value = _uiState.value.copy(siteUrl = repository.siteUrl(sourceId))
         load(BrowseMode.POPULAR, reset = true)
     }
 
@@ -240,8 +249,23 @@ class BrowseViewModel(
 
             result
                 .onSuccess { page ->
+                    // Deduplicated on append, not just trusted. Paginated catalogues
+                    // routinely repeat a title across page boundaries - the ordering
+                    // shifts as the site updates - and the grid is keyed on
+                    // `sourceId::url`, so a repeat is a hard crash rather than a
+                    // cosmetic double-up.
+                    //
+                    // `hasMore` is judged on the raw page: a page that was entirely
+                    // duplicates is still a page the source served, and treating it as
+                    // the end of the catalogue would truncate browsing early.
+                    val merged = if (reset) {
+                        page.distinctBy { it.key }
+                    } else {
+                        (_uiState.value.items + page).distinctBy { it.key }
+                    }
+
                     _uiState.value = _uiState.value.copy(
-                        items = if (reset) page else _uiState.value.items + page,
+                        items = merged,
                         page = nextPage,
                         isLoading = false,
                         isAppending = false,
@@ -253,7 +277,7 @@ class BrowseViewModel(
                         isLoading = false,
                         isAppending = false,
                         // Keep whatever is already on screen; only report the failure.
-                        errorMessage = error.message ?: "This source could not be reached.",
+                        errorMessage = error.friendlyMessage(),
                         hasMore = false,
                     )
                 }
