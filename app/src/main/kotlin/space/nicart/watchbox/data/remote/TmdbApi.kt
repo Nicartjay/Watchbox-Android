@@ -101,15 +101,31 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
         return null
     }
 
+    /**
+     * Searches TMDB and picks the best candidate for [query].
+     *
+     * Prefers a title-verified hit over TMDB's own ranking. TMDB's first result is
+     * usually right, but when it is wrong it is confidently wrong - searching a
+     * romaji title with no TMDB entry returns whatever shares a word, and the
+     * resulting artwork is attached to the wrong show for as long as it stays cached.
+     *
+     * The unverified first result is still used as a last resort, because rejecting
+     * it outright would lose the many correct matches whose titles differ
+     * legitimately (romaji vs English, punctuation, subtitles TMDB omits). So this
+     * reorders rather than filters: verified first, TMDB's ranking after.
+     */
     private suspend fun search(query: String, type: TmdbType): Int? = request(
         path = "search/${type.path}",
         params = mapOf("query" to query, "include_adult" to "true"),
     )?.let { body ->
-        runCatching { json.decodeFromString<SearchResponse>(body) }
+        val results = runCatching { json.decodeFromString<SearchResponse>(body) }
             .getOrNull()
             ?.results
-            ?.firstOrNull()
-            ?.id
+            ?.filter { it.id != 0 }
+            ?: return@let null
+
+        val verified = results.firstOrNull { Companion.titleMatches(query, it.displayTitle) }
+        (verified ?: results.firstOrNull())?.id
     }
 
     private suspend fun details(id: Int, type: TmdbType): TmdbArtwork? {
@@ -147,6 +163,14 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
             rating = dto.voteAverage,
             genres = dto.genres.orEmpty().map { it.name },
             seasonCount = dto.numberOfSeasons,
+            studios = dto.productionCompanies.orEmpty()
+                .filter { it.name.isNotBlank() }
+                .map { company ->
+                    TmdbStudio(
+                        name = company.name,
+                        logoUrl = image(company.logoPath, STUDIO_LOGO_SIZE),
+                    )
+                },
         )
     }
 
@@ -279,6 +303,14 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
         private const val CARD_BACKDROP_SIZE = "w780"
         private const val POSTER_SIZE = "w500"
         private const val LOGO_SIZE = "w500"
+
+        /**
+         * Studio logos are small on screen, so a small transform is enough.
+         *
+         * `w185` rather than `original`: these render at roughly 20dp tall in a row of
+         * several, and the full-size asset would be a needless download per studio.
+         */
+        private const val STUDIO_LOGO_SIZE = "w185"
         private const val STILL_SIZE = "w300"
 
         /** Marks a negative result so a miss is not retried on every scroll. */
@@ -305,6 +337,56 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
             .trim()
             .trim('-', ':', '·', '–')
             .trim()
+
+        /**
+         * Collapses a title to letters and digits for comparison.
+         *
+         * Deleting separators rather than replacing them with spaces is deliberate:
+         * it makes `Re:ZERO`, `Re Zero` and `RE-ZERO` identical, which is exactly the
+         * class of difference that separates a source's title from TMDB's.
+         *
+         * Non-Latin titles collapse to an empty string. Callers must treat that as
+         * "cannot verify" rather than "no match", or every Japanese-titled entry would
+         * be rejected.
+         */
+        fun normaliseTitle(raw: String): String =
+            raw.lowercase().replace(Regex("""[^a-z0-9]"""), "")
+
+        /**
+         * A normalised tail that marks a sequel rather than a different show.
+         *
+         * Anchored, so the whole remainder must be a season marker. This is what stops
+         * a prefix match from claiming an unrelated title: searching "Monster" must not
+         * accept "Monster Musume", but must still accept "Monster Season 2".
+         *
+         * Adapted from Zangetsu's `_seasonSuffix`, with Roman numerals extended past
+         * VI and an `s2` short form added - both appear in extension titles that
+         * Zangetsu never sees, because it does not read from Aniyomi sources.
+         */
+        private val SEASON_SUFFIX = Regex(
+            """^(season\d*|\d+(st|nd|rd|th)?season|s\d{1,2}|\d{1,2}|""" +
+                """ii|iii|iv|v|vi|vii|viii|ix|x|part\d*|cour\d*|final(season)?)$""",
+        )
+
+        /**
+         * True when [candidate] is the title [wanted] asked for.
+         *
+         * Accepts an exact normalised match, or [wanted] plus a season marker - TMDB
+         * indexes a sequel as "<base> Season 2" where a source often says just the
+         * base name.
+         *
+         * Rejects a bare prefix otherwise. That asymmetry is the whole point: a
+         * substring test would match "Monster" to "Monster Musume", and a wrong id is
+         * never reconsidered once cached, so a false accept is worse than a miss.
+         */
+        fun titleMatches(wanted: String, candidate: String): Boolean {
+            val want = normaliseTitle(wanted)
+            val cand = normaliseTitle(candidate)
+            if (want.isEmpty() || cand.isEmpty()) return false
+            if (want == cand) return true
+            if (!cand.startsWith(want)) return false
+            return SEASON_SUFFIX.matches(cand.substring(want.length))
+        }
 
         /**
          * Reads a TMDB id out of a source entry URL, or null.
@@ -347,6 +429,17 @@ enum class TmdbType(val path: String) {
     TV("tv"),
 }
 
+/**
+ * One studio credited on a title.
+ *
+ * [logoUrl] is null for studios TMDB has no logo for, which is common for smaller
+ * ones - the name is always usable, the logo is not.
+ */
+data class TmdbStudio(
+    val name: String,
+    val logoUrl: String?,
+)
+
 /** Artwork and metadata merged onto an extension entry. */
 data class TmdbArtwork(
     val tmdbId: Int,
@@ -371,6 +464,8 @@ data class TmdbArtwork(
     val rating: Double,
     val genres: List<String>,
     val seasonCount: Int,
+    /** Credited studios, most significant first. Empty when TMDB listed none. */
+    val studios: List<TmdbStudio> = emptyList(),
 )
 
 /**
@@ -404,7 +499,14 @@ data class TmdbEpisodeArt(
 private data class SearchResponse(val results: List<SearchResult>? = null)
 
 @Serializable
-private data class SearchResult(val id: Int = 0)
+private data class SearchResult(
+    val id: Int = 0,
+    /** Movies use `title`, series use `name`; only one is ever populated. */
+    val name: String? = null,
+    val title: String? = null,
+) {
+    val displayTitle: String get() = title ?: name ?: ""
+}
 
 @Serializable
 private data class DetailsResponse(
@@ -420,6 +522,15 @@ private data class DetailsResponse(
     @SerialName("number_of_seasons") val numberOfSeasons: Int = 0,
     val genres: List<Genre>? = null,
     val images: Images? = null,
+    /**
+     * Studios, in TMDB's own order - which puts the animation studio first.
+     *
+     * `networks` is deliberately ignored. For an anime series it lists every regional
+     * broadcaster that carried it: Jujutsu Kaisen reports 6 companies and 34 networks,
+     * almost all of them local Japanese stations, which is noise rather than
+     * information.
+     */
+    @SerialName("production_companies") val productionCompanies: List<Company>? = null,
     /** Present on movies at the top level. TV series carry it under external_ids only. */
     @SerialName("imdb_id") val imdbId: String? = null,
     @SerialName("external_ids") val externalIds: ExternalIds? = null,
@@ -455,6 +566,13 @@ private data class DetailsResponse(
 
 @Serializable
 private data class Genre(val name: String = "")
+
+@Serializable
+private data class Company(
+    val id: Int = 0,
+    val name: String = "",
+    @SerialName("logo_path") val logoPath: String? = null,
+)
 
 @Serializable
 private data class Images(val logos: List<ImageEntry>? = null)
