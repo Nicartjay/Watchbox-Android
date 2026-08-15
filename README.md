@@ -1,6 +1,8 @@
+<img src="docs/assets/watchbox-icon.png" alt="WatchBox app icon: the kanji 見 over a vermilion seek rule" width="96" align="right">
+
 # WatchBox for Android
 
-### A native anime, movie and series client for Android phones, tablets and TV
+### 見箱 — a native anime, movie and series client for Android phones, tablets and TV
 
 [![Latest Release](https://img.shields.io/github/v/release/Nicartjay/Watchbox-Android?style=for-the-badge&label=Release&color=6C5CE7&logo=github)](https://github.com/Nicartjay/Watchbox-Android/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/Nicartjay/Watchbox-Android/total?style=for-the-badge&color=6C5CE7&logo=android&logoColor=white)](https://github.com/Nicartjay/Watchbox-Android/releases)
@@ -137,7 +139,10 @@ or off independently.
 <details>
 <summary><b>📺 Android TV and tablets — a separate build, not a stretched layout</b></summary>
 
-- **Leanback launcher entry** with a banner, so it appears on the TV home screen
+<img src="docs/assets/watchbox-banner.png" alt="The Android TV launcher banner: 見箱 above a vermilion seek rule above WATCHBOX" width="420">
+
+- **Leanback launcher entry** with the banner above — a TV launcher draws no label
+  beside the tile, so the artwork has to carry the name itself
 - **Left navigation rail** that expands on focus, replacing the bottom pill — which
   sat inside the overscan region a television can physically crop
 - **Backdrop that follows focus**, using TMDB backdrops and title logos; landscape
