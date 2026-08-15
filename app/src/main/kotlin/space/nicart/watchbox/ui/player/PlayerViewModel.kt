@@ -100,6 +100,22 @@ data class PlayerUiState(
      * a failure - see [SkipRepository].
      */
     val skipIntervals: List<SkipInterval> = emptyList(),
+    /**
+     * Subtitle timing correction in milliseconds; positive delays the subtitles.
+     *
+     * Seeded from the persisted setting and adjustable mid-playback, because a desync is
+     * only noticeable once something is being watched.
+     */
+    val subtitleOffsetMs: Long = 0L,
+    /** In-progress two-tap sync measurement, idle when nothing has been marked. */
+    val syncCalibration: SyncCalibration = SyncCalibration(),
+    /**
+     * Cues for the selected subtitle, loaded only to support a timing offset.
+     *
+     * Empty when no offset is set, when the format cannot be parsed, or when the track is
+     * embedded in the stream - in all of which cases the player's own rendering is used.
+     */
+    val offsetCues: List<SubtitleCue> = emptyList(),
 ) {
     val title: String get() = detail?.title.orEmpty()
 
@@ -156,6 +172,7 @@ class PlayerViewModel(
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
     private var resolveJob: Job? = null
+    private var cuesJob: Job? = null
     private var subtitleJob: Job? = null
     private var skipJob: Job? = null
     private var lastHistoryWrite = 0L
@@ -176,6 +193,7 @@ class PlayerViewModel(
             _uiState.value = _uiState.value.copy(
                 autoPlayNext = settings.autoPlayNext,
                 backgroundPlayback = settings.backgroundPlayback,
+                subtitleOffsetMs = settings.subtitleOffsetMs,
             )
             loadDetail()
         }
@@ -269,6 +287,41 @@ class PlayerViewModel(
         // and letting it through would make a later search have nothing to look for.
         language?.takeIf { it.isNotBlank() }?.let { subtitleLanguage = it }
         viewModelScope.launch { store.setSubtitleLanguage(language ?: "off") }
+        refreshOffsetCues()
+    }
+
+    /**
+     * Loads the selected subtitle's cues, or clears them.
+     *
+     * Only fetched while an offset is actually set: at zero the player's own rendering is
+     * used, and downloading and parsing a file nobody asked to shift would be waste.
+     * Cleared when the offset returns to zero so the parsed copy cannot go stale against a
+     * changed track.
+     */
+    private fun refreshOffsetCues() {
+        cuesJob?.cancel()
+
+        val state = _uiState.value
+        val url = state.subtitles.getOrNull(state.selectedSubtitleIndex)?.url
+
+        if (state.subtitleOffsetMs == 0L || url == null) {
+            if (state.offsetCues.isNotEmpty()) {
+                _uiState.value = _uiState.value.copy(offsetCues = emptyList())
+            }
+            return
+        }
+
+        cuesJob = viewModelScope.launch {
+            val cues = subtitles.cues(url)
+            // Guarded against a race: the selection may have moved on while this loaded.
+            if (_uiState.value.subtitles.getOrNull(
+                    _uiState.value.selectedSubtitleIndex,
+                )?.url != url
+            ) {
+                return@launch
+            }
+            _uiState.value = _uiState.value.copy(offsetCues = cues)
+        }
     }
 
     /**
@@ -408,6 +461,57 @@ class PlayerViewModel(
 
     fun setSpeed(speed: Float) {
         _uiState.value = _uiState.value.copy(speed = speed)
+    }
+
+    /**
+     * Applies a subtitle timing correction and remembers it.
+     *
+     * Persisted as well as applied: a release's desync is a property of that release, so
+     * the same correction usually holds for the next episode.
+     */
+    fun setSubtitleOffset(offsetMs: Long) {
+        val clamped = clampSubtitleOffset(offsetMs)
+        _uiState.value = _uiState.value.copy(
+            subtitleOffsetMs = clamped,
+            // A completed measurement clears the arming state; leaving it armed would
+            // disable one button with nothing pending.
+            syncCalibration = SyncCalibration(),
+        )
+        viewModelScope.launch { store.setSubtitleOffsetMs(clamped) }
+        refreshOffsetCues()
+    }
+
+    /** Nudges the correction by one step, for the manual stepper. */
+    fun nudgeSubtitleOffset(deltaMs: Long) {
+        setSubtitleOffset(_uiState.value.subtitleOffsetMs + deltaMs)
+    }
+
+    /**
+     * Records one half of a two-tap sync measurement at [positionMs].
+     *
+     * The second tap resolves the offset; the first only arms. Tapping the button that is
+     * already armed is ignored rather than treated as a new first mark, so a stray press
+     * cannot silently discard a measurement in progress.
+     */
+    fun markSync(mark: SyncMark, positionMs: Long) {
+        val current = _uiState.value.syncCalibration
+
+        val resolved = current.resolve(mark, positionMs)
+        if (resolved != null) {
+            setSubtitleOffset(_uiState.value.subtitleOffsetMs + resolved)
+            return
+        }
+
+        if (current.isArmed) return
+
+        _uiState.value = _uiState.value.copy(
+            syncCalibration = SyncCalibration(firstMark = mark, firstPositionMs = positionMs),
+        )
+    }
+
+    /** Abandons a measurement in progress, for a mistimed first tap. */
+    fun cancelSync() {
+        _uiState.value = _uiState.value.copy(syncCalibration = SyncCalibration())
     }
 
     /**

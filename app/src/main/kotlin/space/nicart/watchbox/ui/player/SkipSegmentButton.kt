@@ -32,6 +32,12 @@ import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.data.remote.SkipInterval
 import space.nicart.watchbox.data.remote.SkipKind
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import kotlinx.coroutines.delay
 
 /**
  * "Skip Intro" / "Skip Outro", shown only while playback is inside a known interval.
@@ -50,13 +56,44 @@ fun SkipSegmentButton(
     positionMs: Long,
     onSkip: (Long) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Claim focus while the button is showing.
+     *
+     * Set on TV when the controls are hidden, so OK skips without the viewer aiming at
+     * anything. It is the only thing on screen at that moment, and hunting for it with the
+     * D-pad is not possible - the video surface holds focus and the button is not adjacent
+     * to it in any direction.
+     *
+     * Off while the controls are up: the play button owns focus there, and stealing it
+     * would move the selection out from under someone mid-press.
+     */
+    autoFocus: Boolean = false,
 ) {
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
+    val focusRequester = remember { FocusRequester() }
 
     // The first match wins. Openings and endings cannot overlap in practice, and picking one
     // keeps the button single-purpose rather than ambiguous.
     val active = intervals.firstOrNull { it.contains(positionMs) }
+
+    // Claimed when the button appears, not on every position tick.
+    //
+    // Keyed on whether an interval is active rather than on `active` itself, so the request
+    // fires once per appearance; keying on the interval would re-request every 500ms tick
+    // and fight any focus the viewer moved elsewhere.
+    //
+    // Retried because requestFocus reports success even when its target has no node yet,
+    // which is the case while the button is still animating in.
+    val isShowing = active != null
+    LaunchedEffect(isShowing, autoFocus) {
+        if (!isShowing || !autoFocus) return@LaunchedEffect
+        repeat(SKIP_FOCUS_ATTEMPTS) {
+            withFrameNanos { }
+            runCatching { focusRequester.requestFocus() }
+            delay(SKIP_FOCUS_RETRY_MS)
+        }
+    }
 
     AnimatedVisibility(
         visible = active != null,
@@ -72,6 +109,7 @@ fun SkipSegmentButton(
 
         Row(
             modifier = Modifier
+                .focusRequester(focusRequester)
                 // A rounded rectangle rather than a pill: 999.dp made the ends fully circular,
                 // which read as a floating chip. 12.dp keeps it a button.
                 .adaptiveFocus(interaction, RoundedCornerShape(SKIP_CORNER), scale = false)
@@ -113,3 +151,7 @@ fun SkipSegmentButton(
  * a floating chip rather than something to press.
  */
 private val SKIP_CORNER = 12.dp
+
+/** Matches the panel and control focus retries; see [SkipSegmentButton]. */
+private const val SKIP_FOCUS_ATTEMPTS = 12
+private const val SKIP_FOCUS_RETRY_MS = 60L

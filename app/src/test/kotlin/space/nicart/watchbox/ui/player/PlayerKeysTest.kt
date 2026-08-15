@@ -56,17 +56,39 @@ class PlayerKeysTest {
     // ------------------------------------------------- controls hidden
 
     @Test
-    fun `a direction reveals the controls first`() {
-        // A blind seek gives no feedback about where you landed, so the first press
-        // surfaces the controls; from there the D-pad drives them.
+    fun `left and right seek directly with the controls hidden`() {
+        // Revealing first made a skip a two-press operation, and the second press then
+        // belonged to focus navigation rather than the transport - so it did nothing. The
+        // seek readout sits outside the controls layer, so this is not a blind seek.
         assertEquals(
-            PlayerKeyAction.SHOW_CONTROLS,
+            PlayerKeyAction.SEEK_FORWARD,
             map(KEY_DPAD_RIGHT, controlsVisible = false),
         )
+        assertEquals(
+            PlayerKeyAction.SEEK_BACK,
+            map(KEY_DPAD_LEFT, controlsVisible = false),
+        )
+    }
+
+    @Test
+    fun `centre reveals the controls rather than seeking`() {
+        // Centre has no transport meaning of its own from here.
         assertEquals(
             PlayerKeyAction.SHOW_CONTROLS,
             map(KEY_DPAD_CENTER, controlsVisible = false),
         )
+        assertEquals(
+            PlayerKeyAction.SHOW_CONTROLS,
+            map(KEY_ENTER, controlsVisible = false),
+        )
+    }
+
+    @Test
+    fun `left and right belong to focus once the controls are showing`() {
+        // The hidden-controls seek must not leak into the visible state, where the same
+        // keys move focus between buttons.
+        assertEquals(PlayerKeyAction.NONE, map(KEY_DPAD_LEFT))
+        assertEquals(PlayerKeyAction.NONE, map(KEY_DPAD_RIGHT))
     }
 
     @Test

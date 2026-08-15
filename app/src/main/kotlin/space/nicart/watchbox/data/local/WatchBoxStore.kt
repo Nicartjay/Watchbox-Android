@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
+import space.nicart.watchbox.ui.player.clampSubtitleOffset
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -67,6 +68,7 @@ class WatchBoxStore(context: Context) {
                     prefs[Keys.SUB_EDGE_WIDTH],
                     SubtitleEdgeWidth.MEDIUM,
                 ),
+                subtitleOffsetMs = prefs[Keys.SUB_OFFSET] ?: 0L,
                 subtitleLanguage = prefs[Keys.SUB_LANG] ?: "en",
                 subtitleProvider = enumOrDefault(
                     prefs[Keys.SUB_PROVIDER],
@@ -176,6 +178,18 @@ class WatchBoxStore(context: Context) {
     }
 
     suspend fun setSubtitleTextColor(color: Int) = store.edit { it[Keys.SUB_COLOR] = color }
+
+    /**
+     * Subtitle timing correction, in milliseconds. Positive delays the subtitles.
+     *
+     * Clamped rather than trusted: a large enough offset moves every cue outside the
+     * runtime, and with no subtitles on screen there is no feedback left to correct it
+     * by. Persisted because a release's desync is a property of the release, so the same
+     * correction usually applies to the next episode too.
+     */
+    suspend fun setSubtitleOffsetMs(offsetMs: Long) = store.edit {
+        it[Keys.SUB_OFFSET] = clampSubtitleOffset(offsetMs)
+    }
 
     suspend fun setSubtitleBackgroundOpacity(opacity: Float) = store.edit {
         it[Keys.SUB_BG_OPACITY] = opacity.coerceIn(0f, 1f)
@@ -340,6 +354,7 @@ class WatchBoxStore(context: Context) {
         val SUB_BG_OPACITY = floatPreferencesKey("subtitle_bg_opacity")
         val SUB_BOLD = booleanPreferencesKey("subtitle_bold")
         val SUB_EDGE_WIDTH = stringPreferencesKey("subtitle_edge_width")
+        val SUB_OFFSET = longPreferencesKey("subtitle_offset_ms")
         val UI_SCALE = floatPreferencesKey("ui_scale")
         val POSTER_SCALE = floatPreferencesKey("poster_scale")
         val SUB_LANG = stringPreferencesKey("subtitle_language")
@@ -382,6 +397,8 @@ data class AppSettings(
     val subtitleBackgroundOpacity: Float = 0.6f,
     val subtitleBold: Boolean = false,
     val subtitleEdgeWidth: SubtitleEdgeWidth = SubtitleEdgeWidth.MEDIUM,
+    /** Subtitle timing correction in milliseconds; positive delays the subtitles. */
+    val subtitleOffsetMs: Long = 0L,
     /** Multiplier applied to text and spacing. */
     val uiScale: Float = 1f,
     /** Multiplier applied to poster and card sizes only. */

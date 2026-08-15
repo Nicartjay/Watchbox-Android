@@ -30,6 +30,11 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material3.CircularProgressIndicator
@@ -91,6 +96,11 @@ fun PlayerPanels(
     onSetSubtitleBackground: (SubtitleBackground) -> Unit,
     onSetSubtitleEdgeWidth: (SubtitleEdgeWidth) -> Unit,
     onSetSubtitleColor: (Int) -> Unit,
+    onMarkSync: (SyncMark) -> Unit,
+    onCancelSync: () -> Unit,
+    onNudgeSubtitleOffset: (Long) -> Unit,
+    onResetSubtitleOffset: () -> Unit,
+    onOpenSubtitleSync: () -> Unit,
 ) {
     val visible = panel != PlayerPanel.NONE
     val panelFocus = remember { FocusRequester() }
@@ -174,6 +184,16 @@ fun PlayerPanels(
                             label = stringResource(R.string.player_subtitle_appearance),
                             onClick = onOpenSubtitleSettings,
                         )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        // Next to search and appearance because they are the three answers
+                        // to "these subtitles are wrong": missing, ugly, or mistimed.
+                        PanelActionRow(
+                            label = stringResource(R.string.player_subtitle_sync),
+                            onClick = onOpenSubtitleSync,
+                            icon = Icons.Rounded.Schedule,
+                        )
                     }
 
                     PlayerPanel.SUBTITLE_SEARCH -> SubtitleSearchPanel(
@@ -200,6 +220,15 @@ fun PlayerPanels(
                         onSetBackground = onSetSubtitleBackground,
                         onSetEdgeWidth = onSetSubtitleEdgeWidth,
                         onSetColor = onSetSubtitleColor,
+                    )
+
+                    PlayerPanel.SUBTITLE_SYNC -> SubtitleSyncPanel(
+                        offsetMs = state.subtitleOffsetMs,
+                        calibration = state.syncCalibration,
+                        onMark = onMarkSync,
+                        onCancel = onCancelSync,
+                        onNudge = onNudgeSubtitleOffset,
+                        onReset = onResetSubtitleOffset,
                     )
 
                     PlayerPanel.NONE -> Unit
@@ -600,6 +629,147 @@ private fun PanelActionRow(
 }
 
 /**
+ * Subtitle timing correction.
+ *
+ * Two ways to set it, because the useful one depends on what the user can tell:
+ *
+ *  - a measurement, when they can see the desync but not quantify it. They mark the
+ *    moment a subtitle appears and the moment the line is spoken, and the gap between
+ *    those positions is the correction.
+ *  - a stepper, when they already know roughly how far out it is, or want to fine-tune
+ *    what a measurement produced.
+ *
+ * Either mark may be taken first: which one comes first is itself the diagnosis
+ * (subtitles early versus late), and requiring a fixed order would make the feature
+ * unusable in half the cases it exists for. Once one is taken the other is the only one
+ * left enabled, since two taps at the same event measure nothing.
+ */
+@Composable
+private fun SubtitleSyncPanel(
+    offsetMs: Long,
+    calibration: SyncCalibration,
+    onMark: (SyncMark) -> Unit,
+    onCancel: () -> Unit,
+    onNudge: (Long) -> Unit,
+    onReset: () -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+
+    Column(
+        modifier = Modifier.verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.player_subtitle_sync),
+            style = MaterialTheme.typography.titleLarge,
+            color = tokens.colors.textPrimary,
+        )
+
+        PanelSectionLabel(stringResource(R.string.player_subtitle_sync_offset))
+
+        Text(
+            text = formatSubtitleOffset(offsetMs),
+            style = MaterialTheme.typography.displaySmall,
+            fontWeight = FontWeight.Bold,
+            color = if (offsetMs == 0L) tokens.colors.textSecondary else tokens.colors.accent,
+        )
+
+        Text(
+            text = stringResource(R.string.player_subtitle_sync_hint),
+            style = MaterialTheme.typography.labelSmall,
+            color = tokens.colors.textMuted,
+        )
+
+        PanelSectionLabel(stringResource(R.string.player_subtitle_sync_measure))
+
+        // Focus follows the measurement onto whichever mark is still outstanding.
+        //
+        // On a remote the second tap is the whole point of the pair, and leaving focus on
+        // the button just pressed - which is now disabled - would strand it: a disabled row
+        // is not focusable, so the next directional press has to hunt for the other one.
+        // Moving focus makes the sequence two presses of OK.
+        val subtitleFocus = remember { FocusRequester() }
+        val spokenFocus = remember { FocusRequester() }
+
+        LaunchedEffect(calibration.firstMark) {
+            // Only while a measurement is pending. On completion the panel returns to
+            // having both buttons live, and stealing focus then would fight the user.
+            val target = when (calibration.firstMark) {
+                SyncMark.SUBTITLE -> spokenFocus
+                SyncMark.SPOKEN -> subtitleFocus
+                null -> return@LaunchedEffect
+            }
+            // Same retry shape as the panel's own initial focus: requestFocus reports
+            // success even before its target has a node.
+            repeat(PANEL_FOCUS_ATTEMPTS) {
+                withFrameNanos { }
+                runCatching { target.requestFocus() }
+                delay(PANEL_FOCUS_RETRY_MS)
+            }
+        }
+
+        PanelChoiceRow(
+            label = stringResource(R.string.player_subtitle_sync_mark_subtitle),
+            selected = calibration.firstMark == SyncMark.SUBTITLE,
+            enabled = calibration.isEnabled(SyncMark.SUBTITLE),
+            onClick = { onMark(SyncMark.SUBTITLE) },
+            focusRequester = subtitleFocus,
+        )
+
+        PanelChoiceRow(
+            label = stringResource(R.string.player_subtitle_sync_mark_spoken),
+            selected = calibration.firstMark == SyncMark.SPOKEN,
+            enabled = calibration.isEnabled(SyncMark.SPOKEN),
+            onClick = { onMark(SyncMark.SPOKEN) },
+            focusRequester = spokenFocus,
+        )
+
+        // Only while a measurement is pending: a cancel button with nothing to cancel
+        // invites the user to wonder what it would undo.
+        if (calibration.isArmed) {
+            Text(
+                text = if (calibration.firstMark == SyncMark.SUBTITLE) {
+                    stringResource(R.string.player_subtitle_sync_waiting_spoken)
+                } else {
+                    stringResource(R.string.player_subtitle_sync_waiting_subtitle)
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.colors.accent,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+
+            PanelActionRow(
+                label = stringResource(R.string.player_subtitle_sync_cancel),
+                onClick = onCancel,
+                icon = Icons.Rounded.Close,
+            )
+        }
+
+        PanelSectionLabel(stringResource(R.string.player_subtitle_sync_adjust))
+
+        PanelActionRow(
+            label = stringResource(R.string.player_subtitle_sync_earlier),
+            onClick = { onNudge(-SUBTITLE_OFFSET_STEP_MS) },
+            icon = Icons.Rounded.Remove,
+        )
+
+        PanelActionRow(
+            label = stringResource(R.string.player_subtitle_sync_later),
+            onClick = { onNudge(SUBTITLE_OFFSET_STEP_MS) },
+            icon = Icons.Rounded.Add,
+        )
+
+        if (offsetMs != 0L) {
+            PanelActionRow(
+                label = stringResource(R.string.player_subtitle_sync_reset),
+                onClick = onReset,
+                icon = Icons.Rounded.Refresh,
+            )
+        }
+    }
+}
+
+/**
  * Subtitle appearance, adjusted without leaving the player.
  *
  * Only the options worth changing mid-episode are here: size, background style,
@@ -678,19 +848,34 @@ private fun PanelSectionLabel(text: String) {
 }
 
 @Composable
-private fun PanelChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun PanelChoiceRow(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    /**
+     * When false the row is inert and dimmed.
+     *
+     * Disabled rather than hidden: the two sync marks are a pair, and removing one
+     * mid-measurement would make the panel appear to lose a button.
+     */
+    enabled: Boolean = true,
+    /** Set when something needs to move focus onto this row programmatically. */
+    focusRequester: FocusRequester? = null,
+) {
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .adaptiveFocus(interaction, RoundedCornerShape(10.dp), scale = false)
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected) tokens.colors.accent else tokens.colors.surface)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
+                enabled = enabled,
                 onClick = onClick,
             )
             .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -699,7 +884,11 @@ private fun PanelChoiceRow(label: String, selected: Boolean, onClick: () -> Unit
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            color = if (selected) tokens.colors.onAccent else tokens.colors.textSecondary,
+            color = when {
+                selected -> tokens.colors.onAccent
+                !enabled -> tokens.colors.textDisabled
+                else -> tokens.colors.textSecondary
+            },
             modifier = Modifier.weight(1f),
         )
         if (selected) {

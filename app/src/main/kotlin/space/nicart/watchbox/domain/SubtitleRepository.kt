@@ -5,6 +5,10 @@ import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.data.remote.SubtitleApi
 import space.nicart.watchbox.data.remote.SubtitleQuery
 import space.nicart.watchbox.data.remote.SubtitleResult
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import space.nicart.watchbox.ui.player.SubtitleCue
+import space.nicart.watchbox.ui.player.SubtitleParser
 import java.io.File
 
 /**
@@ -60,6 +64,33 @@ class SubtitleRepository(
     }
 
     /**
+     * Fetches and parses a subtitle into cues, for timing adjustment.
+     *
+     * Needed only when a timing offset is applied. ExoPlayer reports cues through
+     * `onCues` as they become current, which can delay a line but never surface one
+     * early, so shifting in both directions requires owning the cue list.
+     *
+     * Returns an empty list for anything unreadable - an unsupported format, a dead link,
+     * a subtitle behind an authenticated redirect - and the caller then keeps the player's
+     * own rendering, which is correct at zero offset anyway.
+     *
+     * A `file://` URL is read directly; a downloaded subtitle is already on disk and going
+     * back to the network for it would be pointless and could fail.
+     */
+    suspend fun cues(url: String): List<SubtitleCue> = withContext(Dispatchers.IO) {
+        runCatching {
+            val text = if (url.startsWith("file://")) {
+                File(java.net.URI(url)).readText()
+            } else {
+                api.fetchText(url)
+            }
+            SubtitleParser.parse(text)
+        }.onFailure {
+            android.util.Log.w(TAG, "cue parse failed: ${it::class.java.simpleName}")
+        }.getOrDefault(emptyList())
+    }
+
+    /**
      * Clears cached subtitle files.
      *
      * Called when playback of a title ends rather than on a timer: the files are only useful
@@ -90,5 +121,6 @@ class SubtitleRepository(
     private companion object {
         const val DIR = "subtitles"
         const val LABEL_MAX = 42
+        const val TAG = "WbSubtitles"
     }
 }

@@ -10,6 +10,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -29,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
+import kotlinx.coroutines.delay
 
 /**
  * Subtitle renderer drawn with Compose.
@@ -54,18 +57,69 @@ fun ComposeSubtitleView(
     player: Player,
     style: SubtitleStyle,
     modifier: Modifier = Modifier,
+    /**
+     * Cues parsed from the selected subtitle, used only when an offset is applied.
+     *
+     * Empty means "render whatever the player reports", which is the normal path and the
+     * only one available for embedded tracks or formats this app cannot parse.
+     */
+    offsetCues: List<SubtitleCue> = emptyList(),
+    /** Timing correction in milliseconds; positive delays the subtitles. */
+    offsetMs: Long = 0L,
+    /** Current playback position, only read when [offsetCues] is in use. */
+    positionMs: Long = 0L,
 ) {
-    var cues by remember { mutableStateOf<List<String>>(emptyList()) }
+    var playerCues by remember { mutableStateOf<List<String>>(emptyList()) }
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onCues(cueGroup: CueGroup) {
-                cues = cueGroup.cues.mapNotNull { it.text?.toString() }
+                playerCues = cueGroup.cues.mapNotNull { it.text?.toString() }
                     .filter { it.isNotBlank() }
             }
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
+    }
+
+    // The player's own cues are preferred whenever no correction is in play: they carry
+    // the real decoder's timing and cover every format, including the ones this app does
+    // not parse.
+    //
+    // A shift is only possible from a parsed list. `onCues` fires when a cue becomes
+    // current, which can delay a line but can never surface one early, so a negative
+    // offset is unrepresentable that way.
+    val usesOffset = offsetMs != 0L && offsetCues.isNotEmpty()
+
+    // Its own clock while shifting, polled far more often than the screen's 500ms
+    // progress tick.
+    //
+    // That tick exists to move a scrubber, where half a second is invisible. Cue
+    // boundaries are not: at 500ms a line can appear up to half a second late and
+    // truncate by the same amount, which is the very error being corrected. Read from the
+    // player rather than derived from [positionMs] so it stays true across a seek, and
+    // only while an offset is set - otherwise this is a timer doing nothing.
+    var tickMs by remember { mutableLongStateOf(positionMs) }
+    LaunchedEffect(usesOffset, player) {
+        if (!usesOffset) return@LaunchedEffect
+        while (true) {
+            tickMs = player.currentPosition
+            delay(CUE_POLL_MS)
+        }
+    }
+
+    val cues = if (usesOffset) {
+        // The fine clock is used only while it agrees with the screen's own position.
+        //
+        // They diverge in two cases, and in both the screen is right: after a seek, until
+        // the next poll catches up; and while casting, when the local player is paused and
+        // its clock is frozen at wherever it stopped. `maxOf` would pick the stale value in
+        // the casting case, leaving subtitles fixed on screen.
+        val drift = kotlin.math.abs(tickMs - positionMs)
+        val clock = if (drift <= CUE_CLOCK_TRUST_MS) tickMs else positionMs
+        offsetCues.activeAt(clock, offsetMs)
+    } else {
+        playerCues
     }
 
     if (cues.isEmpty()) return
@@ -187,3 +241,19 @@ private fun SubtitleLine(
         }
     }
 }
+
+/**
+ * Cue polling interval while an offset is applied.
+ *
+ * 100ms keeps a cue boundary within a tenth of a second, which is below the threshold at
+ * which a subtitle reads as mistimed, without running a tight loop.
+ */
+private const val CUE_POLL_MS = 100L
+
+/**
+ * How far the fine clock may differ from the screen's position before it is distrusted.
+ *
+ * Comfortably above one poll interval plus the screen's own 500ms tick, so ordinary lag
+ * between the two is tolerated, while a seek or a frozen local clock during casting is not.
+ */
+private const val CUE_CLOCK_TRUST_MS = 1_500L

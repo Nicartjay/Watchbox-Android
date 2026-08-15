@@ -77,11 +77,24 @@ fun mapPlayerKey(
         KEY_BACK, KEY_ESCAPE -> return PlayerKeyAction.DISMISS
     }
 
-    // Directional and centre keys reveal the controls first, so a seek is never blind.
+    // With the controls hidden, left and right seek directly.
+    //
+    // They used to reveal the controls instead, on the reasoning that a blind seek is
+    // worse than a visible one. In practice it made a ten-second skip a two-press
+    // operation - reveal, then seek - and the second press then belonged to the focus
+    // system rather than the transport, so it did nothing.
+    //
+    // The seek is not blind either: it draws the same readout the double-tap gesture uses,
+    // which sits outside the controls layer precisely so it works while they are hidden.
+    //
+    // Up, down and centre still reveal: they have no transport meaning of their own, and
+    // revealing is the only useful thing they can do from here.
     if (!controlsVisible) {
         return when (keyCode) {
-            KEY_DPAD_LEFT, KEY_DPAD_RIGHT, KEY_DPAD_UP, KEY_DPAD_DOWN,
-            KEY_DPAD_CENTER, KEY_ENTER,
+            KEY_DPAD_LEFT -> PlayerKeyAction.SEEK_BACK
+            KEY_DPAD_RIGHT -> PlayerKeyAction.SEEK_FORWARD
+
+            KEY_DPAD_UP, KEY_DPAD_DOWN, KEY_DPAD_CENTER, KEY_ENTER,
             -> PlayerKeyAction.SHOW_CONTROLS
 
             else -> PlayerKeyAction.NONE

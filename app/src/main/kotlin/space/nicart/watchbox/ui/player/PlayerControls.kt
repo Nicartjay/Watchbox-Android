@@ -141,6 +141,15 @@ enum class PlayerPanel {
      * it unclear which rows are already playing and which cost a download.
      */
     SUBTITLE_SEARCH,
+
+    /**
+     * Subtitle timing correction, opened from the subtitle panel.
+     *
+     * Its own panel because it has to be used *while* watching: the two-tap measurement
+     * needs the video running to mark when a line appears and when it is spoken, so it
+     * cannot live in Settings.
+     */
+    SUBTITLE_SYNC,
     SPEED,
     EPISODES,
 }

@@ -285,10 +285,28 @@ fun PlayerScreen(
     // than the call: AnimatedVisibility composes the controls over the frames after
     // this runs, and requestFocus reports success even when its target has no node yet,
     // so trusting the return value exits the loop having moved nothing.
-    LaunchedEffect(controlsVisible, openPanel, state.locked, state.isResolving) {
+    //
+    // `skipButtonOwnsFocus` keeps this effect out of the skip button's way. Both would
+    // otherwise claim focus the moment the controls hide - this one for the video surface,
+    // the button for itself - and whichever ran second would win, non-deterministically.
+    // The button is the useful target while it is showing, so it takes precedence.
+    val skipButtonOwnsFocus = metricsForFocus.isFocusDriven &&
+        !controlsOwnFocus &&
+        !state.locked &&
+        state.skipIntervals.any { it.contains(positionMs) }
+
+    LaunchedEffect(
+        controlsVisible,
+        openPanel,
+        state.locked,
+        state.isResolving,
+        skipButtonOwnsFocus,
+    ) {
         if (!metricsForFocus.isFocusDriven) return@LaunchedEffect
 
         if (openPanel != PlayerPanel.NONE) return@LaunchedEffect
+
+        if (skipButtonOwnsFocus) return@LaunchedEffect
 
         if (!controlsOwnFocus) {
             runCatching { playerFocusRequester.requestFocus() }
@@ -347,15 +365,36 @@ fun PlayerScreen(
     }
 
     /**
+     * Accumulated double-tap seek, for the on-screen feedback.
+     *
+     * Accumulated rather than reset per tap so a rapid run reads as one total - four taps show
+     * "+40s" instead of flashing "+10s" four times. [seekTapBump] restarts the decay on every
+     * tap; without a separate counter, a second tap of the same size would not re-trigger the
+     * effect and the indicator would vanish mid-run.
+     */
+    var seekTapAccumulatedMs by remember { mutableLongStateOf(0L) }
+    var seekTapOnLeft by remember { mutableStateOf(false) }
+    var seekTapBump by remember { mutableIntStateOf(0) }
+
+    /**
      * Applies a mapped remote action.
      *
      * Returns true when the key was consumed, so unhandled keys still fall through to
      * the system - Back in particular must keep working.
      */
     fun handlePlayerKey(action: PlayerKeyAction): Boolean {
-        // Any handled press re-arms the auto-hide timer, so the controls do not
+        // A seek from the hidden state stays hidden.
+        //
+        // Revealing here would undo the point of seeking with the controls down: the
+        // overlay would cover the picture on every skip, and the next press would go to
+        // the focus system rather than the transport. The seek readout provides the
+        // feedback instead.
+        val seeksBlind = !controlsVisible &&
+            (action == PlayerKeyAction.SEEK_BACK || action == PlayerKeyAction.SEEK_FORWARD)
+
+        // Any other handled press re-arms the auto-hide timer, so the controls do not
         // vanish mid-interaction.
-        if (action != PlayerKeyAction.NONE && action != PlayerKeyAction.DISMISS) {
+        if (action != PlayerKeyAction.NONE && action != PlayerKeyAction.DISMISS && !seeksBlind) {
             controlsVisible = true
         }
 
@@ -377,6 +416,12 @@ fun PlayerScreen(
                     -PLAYER_KEY_SEEK_MS
                 }
                 transportSeekBy(delta)
+
+                // The same readout the double-tap gesture draws, so a remote seek is
+                // acknowledged on screen even with the controls hidden.
+                seekTapAccumulatedMs = accumulateSeekTap(seekTapAccumulatedMs, delta)
+                seekTapOnLeft = delta < 0
+                seekTapBump++
                 true
             }
 
@@ -429,18 +474,6 @@ fun PlayerScreen(
     var activeGesture by remember { mutableStateOf(VerticalGesture.NONE) }
     var gestureLevel by remember { mutableFloatStateOf(0f) }
     var playbackError by remember { mutableStateOf<String?>(null) }
-
-    /**
-     * Accumulated double-tap seek, for the on-screen feedback.
-     *
-     * Accumulated rather than reset per tap so a rapid run reads as one total - four taps show
-     * "+40s" instead of flashing "+10s" four times. [seekTapBump] restarts the decay on every
-     * tap; without a separate counter, a second tap of the same size would not re-trigger the
-     * effect and the indicator would vanish mid-run.
-     */
-    var seekTapAccumulatedMs by remember { mutableLongStateOf(0L) }
-    var seekTapOnLeft by remember { mutableStateOf(false) }
-    var seekTapBump by remember { mutableIntStateOf(0) }
 
     // Clears the indicator once tapping stops. Keyed on the bump so each tap restarts the wait.
     LaunchedEffect(seekTapBump) {
@@ -929,6 +962,9 @@ fun PlayerScreen(
         ComposeSubtitleView(
             player = exoPlayer,
             style = subtitleStyle,
+            offsetCues = state.offsetCues,
+            offsetMs = state.subtitleOffsetMs,
+            positionMs = positionMs,
             modifier = Modifier.fillMaxSize(),
         )
 
@@ -963,9 +999,13 @@ fun PlayerScreen(
         // an opening runs for ninety, so a button inside them would vanish for most of its window.
         // Position-driven, so it appears and leaves on its own.
         //
-        // Hidden while locked or casting: locked means input is deliberately ignored, and while
-        // casting the local clock is not what the receiver is playing.
-        if (!state.locked && !castState.isCasting) {
+        // Shown while casting too. The earlier objection - that the local clock is not what the
+        // receiver plays - no longer applies: the ticker feeds positionMs from
+        // castState.positionMs during a session, so the button already tracks the receiver, and
+        // transportSeekTo already routes the seek to it.
+        //
+        // Still hidden while locked, where input is deliberately ignored.
+        if (!state.locked) {
             // Lifted clear of the controls when they are up, and animated so it slides rather
             // than jumping between the two positions.
             //
@@ -991,6 +1031,11 @@ fun PlayerScreen(
                 intervals = state.skipIntervals,
                 positionMs = positionMs,
                 onSkip = { target -> transportSeekTo(target) },
+                // On TV, and only while the controls are down: the button is then the one
+                // actionable thing on screen, so OK should skip without the viewer having
+                // to aim at it. With the controls up the play button owns focus, and taking
+                // it would move the selection out from under a press in progress.
+                autoFocus = skipButtonOwnsFocus,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = metrics.horizontalPadding, bottom = skipLift),
@@ -1186,6 +1231,13 @@ fun PlayerScreen(
             onSetSubtitleBackground = onSetSubtitleBackground,
             onSetSubtitleEdgeWidth = onSetSubtitleEdgeWidth,
             onSetSubtitleColor = onSetSubtitleColor,
+            // Marks are taken against the transport position, so a measurement made while
+            // casting is measured against what the receiver is actually showing.
+            onMarkSync = { mark -> viewModel.markSync(mark, transportPosition()) },
+            onCancelSync = viewModel::cancelSync,
+            onNudgeSubtitleOffset = viewModel::nudgeSubtitleOffset,
+            onResetSubtitleOffset = { viewModel.setSubtitleOffset(0L) },
+            onOpenSubtitleSync = { openPanel = PlayerPanel.SUBTITLE_SYNC },
         )
     }
 }

@@ -154,6 +154,28 @@ class SubtitleApi(private val client: HttpClient) {
         android.util.Log.w(TAG, "subtitle download failed: ${it::class.java.simpleName}")
     }.getOrNull()
 
+    /**
+     * Fetches a subtitle URL as text.
+     *
+     * Used for timing adjustment, which needs the cue list rather than a file. Gzip is
+     * detected from the payload's magic bytes for the same reason [download] does it: the
+     * legacy provider serves compressed files without always saying so.
+     */
+    suspend fun fetchText(url: String): String {
+        val response = client.get(url) { header("User-Agent", LEGACY_AGENT) }
+        if (!response.status.isSuccess()) return ""
+
+        val bytes = response.bodyAsChannel().toInputStream().use { it.readBytes() }
+        if (bytes.isEmpty()) return ""
+
+        val decoded = if (bytes.isGzip()) {
+            GZIPInputStream(bytes.inputStream()).use { it.readBytes() }
+        } else {
+            bytes
+        }
+        return decoded.toString(Charsets.UTF_8)
+    }
+
     /** Exchanges a REST file id for a temporary download URL. */
     private suspend fun resolveRestLink(fileId: Long, apiKey: String): String? {
         if (apiKey.isBlank()) return null
