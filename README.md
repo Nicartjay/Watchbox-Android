@@ -123,12 +123,13 @@ or off independently.
 
 | Area | What it does |
 |---|---|
-| 🏠 **Home** | Spotlight carousel drawn at random from every installed source, Continue Watching, My List, and one rail per source |
+| 🏠 **Home** | Spotlight carousel drawn at random from every installed source, a Featured rail, Continue Watching, My List, and one rail per source |
 | 🔍 **Search** | Debounced search across every source at once, grouped per source, or narrowed to one |
+| 🧭 **Browse** | Popular and latest per source, with filters and a button that opens the source's own site |
 | 🧩 **Extensions** | Multiple repositories, each switchable; filter by language, adult content and repository; per-extension settings; load failures surfaced rather than hidden |
-| 📄 **Detail** | Parallax hero with a multi-stop scrim, collapsing floating header, expanding action row, episode list |
+| 📄 **Detail** | Parallax hero with a multi-stop scrim, collapsing floating header, expanding action row, episode list, studio logos, and source metadata parsed out of markdown |
 | ▶️ **Player** | Media3/ExoPlayer with HLS + MP4, quality/subtitle/speed pickers, episode switcher, aspect cycling, gesture seek, brightness and volume swipes, lock mode |
-| 💬 **Subtitles** | Online search and download, plus size, background style, outline width, colour and opacity — adjustable from Settings or inside the player |
+| 💬 **Subtitles** | Online search and download; size, background style, outline width, colour and opacity; and timing correction measured from the video itself — adjustable from Settings or inside the player |
 | 📡 **Casting** | Chromecast and DLNA in one list, with a header-injecting local proxy and a Web Video Caster hand-off |
 | 📚 **Library** | My List, in-progress, and full watch history |
 | ⚙️ **Settings** | Seven accent themes, display scaling, auto-play-next, repository management, subtitle appearance and provider, 18+ toggle |
@@ -142,8 +143,11 @@ or off independently.
 - **Backdrop that follows focus**, using TMDB backdrops and title logos; landscape
   16:9 cards rather than portrait posters
 - **Full D-pad navigation**, with focus visible at three-metre viewing distance
-- **Remote playback control** — directional seek on the timeline, media transport
-  keys, and Back that hides the controls before leaving
+- **Remote playback control** — left and right seek ±10s while the controls are
+  hidden, with an on-screen readout; directional seek on the timeline when they are
+  showing; media transport keys; and Back that hides the controls before leaving
+- **Skip button takes focus** when it appears, so OK skips an opening without
+  aiming at anything
 - **Voice search**, because typing a title with a remote is nobody's preference
 
 </details>
@@ -373,6 +377,19 @@ app/src/main/kotlin/
 - **Subtitles are drawn in Compose, not by Media3's `SubtitleView`.**
   `SubtitlePainter` hardcodes the outline to 2dp and `CaptionStyleCompat` exposes no
   width, so an outline-width setting is impossible without rendering the cues.
+- **Subtitle timing is corrected against a parsed cue list, not the player's.**
+  `Player.Listener.onCues` reports a line as it becomes current, which can delay one
+  but can never surface one early, so a negative offset is unrepresentable that way.
+  WebVTT and SubRip are parsed in-app; ASS/SSA keeps the player's own rendering,
+  since its timing sits inside `Dialogue` records alongside styling.
+- **Brotli is decoded explicitly.** OkHttp negotiates only gzip, while the default
+  User-Agent claims a current Chrome — so a server may answer `content-encoding: br`
+  with HTTP 200 and the undecoded bytes reach the extension as a parse failure that
+  looks like the source being broken.
+- **A TMDB search hit is verified before it is trusted.** A wrong match is cached and
+  never reconsidered, so a candidate must match exactly or differ only by a season
+  marker; a bare prefix is rejected, which is what separates "Monster Season 2" from
+  "Monster Musume".
 - **Two flavors rather than one combined APK.** A single build carrying both
   `LAUNCHER` and `LEANBACK_LAUNCHER` works, but ships the TV UI to every phone and
   makes the two impossible to install side by side.
@@ -393,11 +410,16 @@ app/src/main/kotlin/
 ./gradlew :app:testMobileDebugUnitTest :app:testTvDebugUnitTest
 ```
 
-776 unit tests, run in CI. They deliberately cover only pure logic whose failures are
-*silent* on a device — HLS URI rewriting, DLNA SOAP envelopes, subtitle conversion,
-cast stream selection, gesture maths, filter application, deep-link parsing — because
-those break in ways that look like missing data rather than errors. Anything better
-checked by looking at the screen is not unit-tested.
+978 unit tests, run in CI. They deliberately cover only pure logic whose failures are
+*silent* on a device — HLS URI rewriting, DLNA SOAP envelopes, subtitle parsing and
+conversion, subtitle sync arithmetic, cast stream selection, gesture maths, remote key
+mapping, filter application, deep-link parsing, TMDB title matching — because those
+break in ways that look like missing data rather than errors. Anything better checked
+by looking at the screen is not unit-tested.
+
+A few pin things that are otherwise invisible: the mangled JVM names of the
+`kotlin.time.Duration` rate-limit overloads extensions link against, and the list keys
+that Compose treats as fatal when repeated.
 
 </details>
 
@@ -409,8 +431,8 @@ Kotlin 2.1 · Compose BOM 2025.05 · Material 3 · Navigation-Compose (typed rou
 Media3 1.6 · Ktor 3.1 · Coil 2.7 · DataStore · kotlinx.serialization ·
 play-services-cast 22 · androidx.mediarouter 1.7
 
-**Extension runtime:** okhttp 5.3.2 · rxjava 1.3.8 · jsoup 1.22.1 · Injekt ·
-androidx.preference
+**Extension runtime:** okhttp 5.3.2 (+ brotli) · rxjava 1.3.8 · jsoup 1.22.1 ·
+Injekt · androidx.preference
 
 ---
 
