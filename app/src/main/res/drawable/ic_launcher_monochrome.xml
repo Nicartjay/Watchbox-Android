@@ -1,15 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Adaptive-icon foreground: 見箱's 見 over the vermilion seek rule.
+  Themed-icon layer, for Android 13+ "Themed icons".
   
-  Generated from watchbox-icon-adaptive-fg.svg (512u grid) by baking its nested
-  transforms into absolute coordinates and rescaling to the 108dp canvas. The
-  source's 88% inset is preserved, which is what keeps every stroke inside the
-  72dp visible circle - verified at max radius 31.8dp against the 36dp limit.
+  Generated from watchbox-icon-monochrome.svg, with the adaptive foreground's 88%
+  inset applied: the source targets iOS tinting, which has no safe circle, so
+  shipping it unmodified would let the glyph cross Android's 72dp mask.
   
-  The Regular cut, not the Signature one: neither the 箱 character nor the Latin
-  wordmark survives the circle, so the launcher carries the glyph and rule alone.
-  Weight comes from a same-colour stroke dilating the outline, as in the source.
+  The system recolours this layer wholesale, so the two tones exist only to keep
+  the glyph and rule distinguishable if a launcher preserves relative luminance.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -27,7 +25,7 @@
 
     <path
         android:pathData="M36.18,80.359L71.82,80.359"
-        android:strokeColor="#EE5C33"
+        android:strokeColor="#A8A5A0"
         android:strokeWidth="2.5987"
         android:strokeLineCap="round" />
 </vector>

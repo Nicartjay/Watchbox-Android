@@ -2,32 +2,149 @@
 <!--
   Android TV launcher banner.
 
-  A banner is mandatory for a leanback app: without one the TV launcher shows a
-  blank tile. The required aspect is 320x180 (16:9), and it must carry the app name
-  itself because TV launchers do not draw a label under the tile the way a phone
-  launcher does.
+  Mandatory for a leanback app: without one the launcher shows a blank tile. The
+  required aspect is 320x180, and the artwork must carry the app name because TV
+  launchers draw no label beneath the tile - which is why this is the one asset
+  that keeps the wordmark. Both the kanji pair and the Latin name appear here, and
+  the pair's 2.015:1 ratio is why this landscape canvas is the only place the full
+  Signature lockup fits.
 
-  Drawn as a vector rather than shipped as a PNG so it stays sharp on 4K panels and
-  costs nothing in APK size.
+  Generated from watchbox-tv-banner.svg (640x360, twice the shipped size) by baking
+  its nested transforms into absolute coordinates and halving to 320x180.
+
+  The O of WATCHBOX is an <ellipse> in the source, which has no vector-drawable
+  equivalent, so it is emitted as two half arcs. A first pass that collected only
+  d= attributes silently dropped it and shipped "WATCHB X"; the pixel diff against
+  the source is what caught it.
+
+  A vector rather than a PNG so it stays sharp on 4K panels and costs nothing in
+  APK size. The wordmark is outlined geometry, so it needs no font on the device.
 -->
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
 
-    <item>
-        <shape android:shape="rectangle">
-            <solid android:color="@color/wb_background" />
-        </shape>
-    </item>
+    <path
+        android:pathData="M0,0h320v180h-320z"
+        android:fillColor="#14161B" />
 
-    <!-- Accent bar, echoing the app's default accent. -->
-    <item
-        android:gravity="left"
-        android:width="8dp">
-        <shape android:shape="rectangle">
-            <solid android:color="#FFE5E5E5" />
-        </shape>
-    </item>
+    <!-- 見箱 -->
+    <path
+        android:pathData="M68.707,110.561Q67.785,110.97 66.823,110.663Q65.84,110.356 65.328,109.434Q64.816,108.41 65.123,107.386Q65.43,106.363 66.454,105.953Q71.778,103.291 78.434,98.724Q85.089,94.178 92.092,87.871Q99.116,81.584 105.362,73.905L91.539,75.953Q90.311,76.158 89.492,75.338Q88.57,74.519 88.57,73.393L88.57,27.932Q88.57,26.908 89.246,26.191Q89.901,25.474 90.925,25.372L127.581,21.481Q128.707,21.276 129.526,22.096Q130.448,22.812 130.448,24.041L130.448,76.055Q130.448,77.079 129.69,77.837Q128.912,78.615 127.888,78.615Q126.864,78.615 126.045,77.837Q125.226,77.079 125.226,76.055L125.226,26.908L93.69,30.287L93.69,70.424L110.891,67.966Q112.529,67.659 113.451,69.093Q114.372,70.526 113.349,71.96Q107.819,79.639 100.447,87.011Q93.075,94.383 84.925,100.424Q76.795,106.465 68.707,110.561M159.834,107.284Q156.045,109.229 150.782,110.397Q145.499,111.584 139.765,111.625Q134.031,111.687 128.605,110.561Q123.178,109.434 118.98,106.875Q111.198,102.165 111.198,94.076L111.198,81.175Q111.198,80.048 111.977,79.27Q112.734,78.512 113.758,78.512Q114.884,78.512 115.601,79.27Q116.318,80.048 116.318,81.175L116.318,94.076Q116.318,99.195 121.642,102.472Q124.611,104.315 128.809,105.277Q133.007,106.26 137.717,106.404Q142.427,106.567 146.994,105.892Q151.54,105.236 155.328,103.7L147.752,85.168Q147.342,84.144 147.752,83.161Q148.161,82.199 149.185,81.789Q150.209,81.379 151.192,81.789Q152.154,82.199 152.564,83.222L161.062,104.008Q161.472,104.929 161.124,105.851Q160.755,106.772 159.834,107.284M102.802,58.649Q101.778,58.751 100.959,58.075Q100.14,57.42 99.935,56.396Q99.833,55.27 100.509,54.451Q101.164,53.632 102.188,53.529L115.704,51.686Q116.727,51.482 117.608,52.137Q118.468,52.813 118.57,53.939Q118.775,54.963 118.12,55.782Q117.444,56.601 116.318,56.806L102.802,58.649M102.802,45.338Q101.778,45.441 100.959,44.826Q100.14,44.212 99.935,43.188Q99.833,42.062 100.509,41.181Q101.164,40.321 102.188,40.219L115.704,38.478Q116.727,38.273 117.608,38.888Q118.468,39.502 118.57,40.628Q118.775,41.652 118.12,42.512Q117.444,43.393 116.318,43.495L102.802,45.338ZM248.503,109.434Q247.479,109.434 246.722,108.656Q245.944,107.898 245.944,106.875L245.944,57.523L221.472,60.594L221.472,102.062L238.879,99.707Q240.005,99.502 240.824,100.117Q241.643,100.731 241.746,101.857Q241.95,102.881 241.336,103.741Q240.722,104.622 239.595,104.827L219.22,107.591Q218.298,107.694 217.172,106.977Q216.251,106.055 216.251,105.032L216.251,58.239Q216.251,57.318 216.926,56.54Q217.582,55.782 218.605,55.68L248.196,52.096Q249.322,51.891 250.244,52.71Q251.063,53.325 251.063,54.656L251.063,106.875Q251.063,107.898 250.346,108.656Q249.63,109.434 248.503,109.434M193.315,112.301Q192.291,112.301 191.534,111.482Q190.755,110.663 190.755,109.639L190.755,80.97Q183.076,89.775 171.097,96.431Q170.175,96.943 169.151,96.636Q168.127,96.328 167.615,95.407Q167.103,94.485 167.41,93.4Q167.718,92.335 168.639,91.926Q175.806,87.932 181.54,83.059Q187.274,78.205 190.755,72.983L190.755,69.093L173.451,72.369Q172.428,72.574 171.568,71.96Q170.687,71.345 170.482,70.321Q170.277,69.195 170.892,68.314Q171.506,67.454 172.53,67.352L190.755,63.871L190.755,51.174Q190.755,50.048 191.534,49.331Q192.291,48.615 193.315,48.615Q194.441,48.615 195.158,49.331Q195.875,50.048 195.875,51.174L195.875,62.847L207.65,60.594Q208.674,60.389 209.554,60.942Q210.414,61.516 210.619,62.642Q210.824,63.666 210.271,64.587Q209.698,65.509 208.571,65.714L195.875,68.069L195.875,109.639Q195.875,110.663 195.158,111.482Q194.441,112.301 193.315,112.301M214.715,49.434Q213.896,50.15 212.831,49.987Q211.745,49.843 211.029,49.024Q210.414,48.205 210.517,47.12Q210.619,46.055 211.438,45.441Q216.046,41.754 219.793,37.147Q223.52,32.539 226.244,27.932Q228.947,23.324 230.176,19.741Q230.585,18.717 231.568,18.246Q232.531,17.795 233.554,18.205Q234.578,18.512 234.988,19.474Q235.397,20.457 235.09,21.481Q233.657,25.577 230.749,30.533Q227.821,35.509 223.786,40.464Q219.732,45.441 214.715,49.434M172.94,50.048Q172.12,50.765 171.056,50.601Q169.97,50.458 169.253,49.639Q168.639,48.819 168.742,47.795Q168.844,46.772 169.663,46.055Q173.963,42.676 177.649,38.478Q181.336,34.28 183.998,29.918Q186.66,25.577 187.888,21.584Q188.298,20.56 189.22,20.089Q190.141,19.638 191.165,19.945Q192.189,20.253 192.701,21.174Q193.213,22.096 192.906,23.222Q191.472,27.625 188.503,32.437Q185.534,37.249 181.54,41.795Q177.547,46.362 172.94,50.048M243.589,48Q242.667,48.615 241.602,48.41Q240.517,48.205 239.903,47.386L231.916,35.918Q231.199,34.587 231.711,33.461Q232.223,32.13 233.554,31.925L251.985,28.137Q253.009,27.932 253.93,28.485Q254.852,29.058 254.954,30.184Q255.159,31.208 254.606,32.068Q254.032,32.949 253.009,33.154L238.469,36.123L244.203,44.417Q244.817,45.236 244.613,46.301Q244.408,47.386 243.589,48M200.892,47.795Q199.97,48.41 198.947,48.205Q197.923,48 197.308,47.079L190.551,36.737Q189.731,35.611 190.243,34.382Q190.96,32.949 192.189,32.847L210.517,29.161Q211.541,28.956 212.421,29.509Q213.281,30.082 213.486,31.208Q213.691,32.232 213.138,33.092Q212.564,33.973 211.438,34.178L196.899,37.147L201.609,44.212Q202.223,45.133 202.018,46.198Q201.814,47.284 200.892,47.795M208.776,87.011L198.844,78.512Q198.025,77.796 197.923,76.71Q197.82,75.646 198.537,74.929Q199.254,74.11 200.339,74.007Q201.404,73.905 202.121,74.622L212.053,83.018Q212.872,83.734 212.974,84.799Q213.076,85.885 212.36,86.704Q211.643,87.42 210.619,87.564Q209.595,87.728 208.776,87.011M228.742,74.826Q227.718,74.929 226.899,74.253Q226.08,73.598 225.875,72.574Q225.773,71.55 226.387,70.669Q227.001,69.809 228.025,69.707L237.855,68.273Q238.879,68.069 239.759,68.724Q240.619,69.4 240.722,70.424Q240.926,71.448 240.312,72.308Q239.698,73.188 238.572,73.393L228.742,74.826M228.742,89.263Q227.718,89.366 226.899,88.751Q226.08,88.137 225.875,87.113Q225.773,85.987 226.387,85.106Q227.001,84.246 228.025,84.144L237.855,82.813Q238.879,82.608 239.759,83.222Q240.619,83.837 240.722,84.963Q240.926,85.987 240.312,86.806Q239.698,87.625 238.572,87.83L228.742,89.263Z"
+        android:fillColor="#F7F5F1" />
 
-    <item
-        android:drawable="@drawable/tv_banner_wordmark"
-        android:gravity="center" />
-</layer-list>
+    <!-- seek rule -->
+    <path
+        android:pathData="M68,124.3L252,124.3"
+        android:strokeColor="#EE5C33"
+        android:strokeWidth="6.000"
+        android:strokeLineCap="round" />
+
+    <!-- WATCHBOX -->
+    <path
+        android:pathData="M67.203,138.803L73.076,159.947L78.95,145.263L84.823,159.947L90.697,138.803"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M97.157,159.947L105.674,138.803L114.191,159.947"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M100.094,152.312L111.254,152.312"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M120.651,138.803L136.51,138.803"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M128.581,138.803L128.581,159.947"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M156.715,157.715A8.517,10.572 0 1,1 156.715,141.034"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M166.465,138.803L166.465,159.947"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M182.323,138.803L182.323,159.947"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M166.465,149.375L182.323,149.375"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M188.784,138.803L188.784,159.947"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M188.784,138.803L195.832,138.803A5.286,5.286 0 0,1 195.832,149.375L188.784,149.375"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M188.784,149.375L197.007,149.375A5.286,5.286 0 0,1 197.007,159.947L188.784,159.947"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M211.103,149.375A9.104,10.572 0 1,1 229.311,149.375A9.104,10.572 0 1,1 211.103,149.375Z"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M235.772,138.803L252.805,159.947"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M252.805,138.803L235.772,159.947"
+        android:strokeColor="#F7F5F1"
+        android:strokeWidth="4.405"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

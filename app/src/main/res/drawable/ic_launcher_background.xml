@@ -1,21 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive-icon background: flat ink.
+  
+  Flat rather than the previous gradient, because the specimen defines the icon as
+  ink-on-#14161B and a gradient would shift the glyph's contrast across the tile
+  as launchers crop it differently.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:pathData="M0,0h108v108h-108z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:startX="0"
-                android:startY="0"
-                android:endX="108"
-                android:endY="108"
-                android:type="linear">
-                <item android:offset="0" android:color="#FF7C3AED" />
-                <item android:offset="1" android:color="#FFEC4899" />
-            </gradient>
-        </aapt:attr>
-    </path>
+    <path
+        android:pathData="M0,0h108v108h-108z"
+        android:fillColor="#14161B" />
 </vector>
