@@ -71,6 +71,8 @@ import space.nicart.watchbox.ui.navigation.WbNavBarScrollState
 fun HomeScreen(
     viewModel: HomeViewModel,
     onOpenAnime: (AnimeCard) -> Unit,
+    /** Hero primary action: open the title and start playing it. */
+    onPlayAnime: (AnimeCard) -> Unit = onOpenAnime,
     onResume: (WatchHistoryEntry) -> Unit,
     onOpenSaved: (WatchlistEntry) -> Unit,
     onBrowseSource: (sourceId: Long, sourceName: String) -> Unit,
@@ -137,7 +139,10 @@ fun HomeScreen(
                     state.isLoading -> HomeHeroSkeleton()
                     !hero.isNullOrEmpty() -> HomeHeroSection(
                         items = hero,
-                        onOpen = onOpenAnime,
+                        // Watch Now plays; More Info opens the page. Two destinations,
+                        // so both buttons are worth having.
+                        onOpen = onPlayAnime,
+                        onMoreInfo = onOpenAnime,
                     )
                 }
             }
@@ -151,6 +156,23 @@ fun HomeScreen(
                         onRemove = { viewModel.removeFromHistory(it.key) },
                         modifier = Modifier.padding(bottom = 12.dp),
                     )
+                }
+            }
+
+            // Directly under the hero, as on Anikage: these are the same enriched
+            // cards, so the rail reads as a continuation of the spotlight rather than
+            // a separate catalogue section.
+            state.feed?.featured?.takeIf { it.isNotEmpty() }?.let { featured ->
+                item(key = "featured") {
+                    WbShelfSection(
+                        title = stringResource(R.string.section_featured),
+                        items = featured,
+                        key = { it.key },
+                        horizontalPadding = sectionPadding,
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    ) { card ->
+                        FeaturedCard(card = card, onClick = { onOpenAnime(card) })
+                    }
                 }
             }
 

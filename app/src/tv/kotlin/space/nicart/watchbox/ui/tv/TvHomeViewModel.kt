@@ -19,6 +19,7 @@ import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.data.local.WatchHistoryEntry
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.domain.AnimeRepository
+import space.nicart.watchbox.domain.friendlyMessage
 import space.nicart.watchbox.extension.ExtensionManager
 import space.nicart.watchbox.ui.browse.SourceEntry
 
@@ -337,7 +338,7 @@ class TvHomeViewModel(
                 // Only when nothing loaded at all: one feed failing while the other
                 // returned titles is not worth an error over content the user can see.
                 errorMessage = (popular.exceptionOrNull() ?: latest?.exceptionOrNull())
-                    ?.let { it.message ?: "This source could not be reached." }
+                    ?.let { it.friendlyMessage() }
                     ?.takeIf { popularItems.isEmpty() && latestItems.isEmpty() },
             )
         }

@@ -1,5 +1,7 @@
 package space.nicart.watchbox.ui.home
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -22,6 +24,13 @@ import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,16 +40,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.util.lerp
 import kotlinx.coroutines.delay
+import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.ui.components.WbAsyncImage
@@ -117,6 +131,7 @@ fun HomeHeroSection(
     items: List<AnimeCard>,
     onOpen: (AnimeCard) -> Unit,
     modifier: Modifier = Modifier,
+    onMoreInfo: ((AnimeCard) -> Unit)? = null,
 ) {
     if (items.isEmpty()) return
 
@@ -124,10 +139,38 @@ fun HomeHeroSection(
         val layout = rememberHeroLayout(maxWidth, maxHeight)
         val pagerState = rememberPagerState(pageCount = { items.size })
 
+        // How far through the current slide's dwell time we are, 0..1.
+        //
+        // Animated rather than sampled on a timer: one animation drives the fill for
+        // the whole dwell, so the indicator cannot drift out of step with the pager
+        // the way a separately-ticking progress value would.
+        val dwellProgress = remember { Animatable(0f) }
+
         // Auto-advance, restarted whenever the user lands on a new page.
+        //
+        // The fill and the page turn are the same effect, so the bar always completes
+        // exactly as the slide changes. Keyed on `settledPage`, so a manual swipe
+        // restarts the dwell instead of inheriting the previous slide's remainder.
         LaunchedEffect(pagerState.settledPage, items.size) {
             if (items.size <= 1) return@LaunchedEffect
-            delay(HERO_AUTO_SCROLL_MS)
+            dwellProgress.snapTo(0f)
+            dwellProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(
+                    durationMillis = HERO_AUTO_SCROLL_MS.toInt(),
+                    easing = LinearEasing,
+                ),
+            )
+
+            // Cleared before the page turns, not after it lands.
+            //
+            // `settledPage` only changes once the scroll has finished, so this effect
+            // cannot restart until then. Leaving the value at 1f across the transition
+            // made the incoming pill grow fully white and then drop to its empty track
+            // the moment the scroll settled. Zeroing it here means nothing is filled
+            // while the slide is moving.
+            dwellProgress.snapTo(0f)
+
             val next = (pagerState.settledPage + 1) % items.size
             pagerState.animateScrollToPage(next)
         }
@@ -147,6 +190,7 @@ fun HomeHeroSection(
                     layout = layout,
                     pageOffset = pagerState.pageOffsetFor(page),
                     onOpen = { onOpen(items[page]) },
+                    onMoreInfo = onMoreInfo?.let { handler -> { handler(items[page]) } },
                 )
             }
 
@@ -154,9 +198,15 @@ fun HomeHeroSection(
                 HeroPageIndicators(
                     pagerState = pagerState,
                     count = items.size,
+                    progress = { dwellProgress.value },
+                    // Bottom-start, inset by the same horizontal padding as the
+                    // content column so the dots line up with the logo above them.
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = layout.verticalPadding),
+                        .align(Alignment.BottomStart)
+                        .padding(
+                            start = layout.horizontalPadding,
+                            bottom = layout.verticalPadding,
+                        ),
                 )
             }
         }
@@ -173,6 +223,7 @@ private fun HeroPage(
     layout: HeroLayout,
     pageOffset: Float,
     onOpen: () -> Unit,
+    onMoreInfo: (() -> Unit)? = null,
 ) {
     val tokens = MaterialTheme.wb
     val background = MaterialTheme.colorScheme.background
@@ -236,7 +287,10 @@ private fun HeroPage(
                     translationX = -pageOffset * size.width * HERO_CONTENT_PARALLAX
                     alpha = fade
                 },
-            horizontalAlignment = Alignment.CenterHorizontally,
+            // Left-aligned rather than centred: the logo, meta and synopsis read as a
+            // block this way, and a centred multi-line synopsis is noticeably harder
+            // to scan.
+            horizontalAlignment = Alignment.Start,
         ) {
             // Nuvio shows a transparent title logo at 62% width / 2.6 aspect and
             // falls back to bold display text when none exists.
@@ -245,6 +299,12 @@ private fun HeroPage(
                     url = item.logoUrl,
                     contentDescription = item.title,
                     contentScale = ContentScale.Fit,
+                    // Fit letterboxes inside the 2.6 box, and a centred logo reads as
+                    // an indent next to the left-aligned text below it.
+                    alignment = Alignment.CenterStart,
+                    // The logo sits over the backdrop: a filled placeholder would
+                    // cover the artwork with a solid block while it loads.
+                    transparentPlaceholder = true,
                     modifier = Modifier
                         .fillMaxWidth(layout.logoWidthFraction)
                         .aspectRatio(2.6f),
@@ -255,7 +315,7 @@ private fun HeroPage(
                     style = MaterialTheme.typography.displaySmall,
                     fontWeight = FontWeight.Black,
                     color = tokens.colors.textPrimary,
-                    textAlign = TextAlign.Center,
+                    textAlign = TextAlign.Start,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -263,28 +323,201 @@ private fun HeroPage(
 
             Spacer(Modifier.height(12.dp))
 
-            HeroMetaRow(card = item)
+            // Pill-shaped facts: score, year, type. Each is omitted when unknown
+            // rather than shown as a placeholder - a row of "N/A" chips is worse
+            // than a shorter row.
+            HeroFactRow(card = item)
+
+            if (item.genres.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                HeroGenreRow(genres = item.genres)
+            }
+
+            if (item.overview.isNotBlank()) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = item.overview,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = tokens.colors.textPrimary.copy(alpha = 0.82f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
 
             Spacer(Modifier.height(14.dp))
 
-            // White pill CTA: onBackground fill with background-coloured label.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                // White pill CTA: onBackground fill with background-coloured label.
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(40.dp))
+                        .background(tokens.colors.textPrimary)
+                        .clickable(onClick = onOpen)
+                        .padding(horizontal = 24.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.PlayArrow,
+                        contentDescription = null,
+                        tint = tokens.colors.background,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.hero_watch_now),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = tokens.colors.background,
+                    )
+                }
+
+                // Secondary action, only when the caller wired one up.
+                onMoreInfo?.let { moreInfo ->
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(40.dp))
+                            .background(tokens.colors.textPrimary.copy(alpha = 0.18f))
+                            .clickable(onClick = moreInfo)
+                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Info,
+                            contentDescription = null,
+                            tint = tokens.colors.textPrimary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Text(
+                            text = stringResource(R.string.hero_more_info),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = tokens.colors.textPrimary,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Score / year / type pills, mirroring Anikage's hero.
+ *
+ * The score carries a star and the accent colour because it is the one fact a
+ * viewer scans for; the rest are neutral.
+ */
+@Composable
+private fun HeroFactRow(card: AnimeCard) {
+    val tokens = MaterialTheme.wb
+    val facts = buildList {
+        card.ratingPercent?.let { add(HeroFact.Score(it)) }
+        card.year?.let { add(HeroFact.Plain(it, Icons.Rounded.CalendarMonth)) }
+        add(
+            HeroFact.Plain(
+                label = if (card.isMovie) {
+                    stringResource(R.string.hero_type_movie)
+                } else {
+                    stringResource(R.string.hero_type_series)
+                },
+                icon = Icons.Rounded.Tv,
+            ),
+        )
+    }
+
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        facts.forEach { fact ->
+            when (fact) {
+                is HeroFact.Score -> HeroPill(
+                    label = "${fact.percent}%",
+                    icon = Icons.Rounded.Star,
+                    // The fixed amber, not the theme accent: a score is a rating, and
+                    // the accent changes per theme - a red or purple star reads as a
+                    // warning or a brand mark rather than a rating.
+                    tint = tokens.colors.warning,
+                )
+
+                is HeroFact.Plain -> HeroPill(label = fact.label, icon = fact.icon)
+            }
+        }
+    }
+}
+
+private sealed interface HeroFact {
+    data class Score(val percent: Int) : HeroFact
+    data class Plain(val label: String, val icon: ImageVector) : HeroFact
+}
+
+@Composable
+private fun HeroPill(
+    label: String,
+    icon: ImageVector,
+    tint: Color? = null,
+) {
+    val tokens = MaterialTheme.wb
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(40.dp))
+            .background(tokens.colors.textPrimary.copy(alpha = 0.14f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint ?: tokens.colors.textPrimary.copy(alpha = 0.9f),
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = tint ?: tokens.colors.textPrimary.copy(alpha = 0.9f),
+            maxLines = 1,
+        )
+    }
+}
+
+/** Up to three genre chips; more than that wraps and pushes the CTA off-screen. */
+@Composable
+private fun HeroGenreRow(genres: List<String>) {
+    val tokens = MaterialTheme.wb
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        genres.take(MAX_HERO_GENRES).forEach { genre ->
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(40.dp))
-                    .background(tokens.colors.textPrimary)
-                    .clickable(onClick = onOpen)
-                    .padding(horizontal = 28.dp, vertical = 12.dp),
+                    .background(tokens.colors.textPrimary.copy(alpha = 0.10f))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
             ) {
                 Text(
-                    text = "Watch Now",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = tokens.colors.background,
+                    text = genre,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = tokens.colors.textPrimary.copy(alpha = 0.88f),
+                    maxLines = 1,
                 )
             }
         }
     }
 }
+
+private const val MAX_HERO_GENRES = 3
+
+/** Alpha of a dot that is not the current page. */
+private const val INACTIVE_DOT_ALPHA = 0.35f
+
+/**
+ * Alpha of the selected pill's track.
+ *
+ * Dimmer than an inactive dot on purpose: the white fill drawn over it supplies the
+ * contrast, and a brighter track would leave a full pill and an empty one looking
+ * nearly identical.
+ */
+private const val SELECTED_TRACK_ALPHA = 0.28f
 
 /**
  * `2024 • Action • Cineby`, separated by 4dp dots.
@@ -325,14 +558,26 @@ private fun HeroMetaRow(card: AnimeCard) {
     }
 }
 
-/** Dots that stretch 8dp -> 32dp for the active page. */
+/**
+ * Dots that stretch 8dp -> 32dp for the active page, the active one filling as its
+ * dwell time elapses.
+ *
+ * The fill doubles as a countdown: it shows both which slide is showing and how long
+ * is left on it, so an auto-advance is never a surprise.
+ *
+ * [progress] is read as a lambda so the fill animates without recomposing this
+ * function 60 times a second - only the draw phase re-runs.
+ */
 @Composable
 private fun HeroPageIndicators(
     pagerState: PagerState,
     count: Int,
+    progress: () -> Float,
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.wb
+    val fillColor = tokens.colors.textPrimary
+
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -347,14 +592,40 @@ private fun HeroPageIndicators(
                 animationSpec = tween(220),
                 label = "dotWidth",
             )
+
+            // The track's alpha interpolates on `active` instead of switching at a
+            // threshold, so the pill dims smoothly as it grows rather than changing
+            // appearance partway through the transition.
+            val trackAlpha = lerp(INACTIVE_DOT_ALPHA, SELECTED_TRACK_ALPHA, active)
+
+            // Whether to draw the countdown, kept separate from the track's
+            // appearance. It requires the pager to be at rest: mid-scroll the dwell
+            // has not restarted, so the fill would show the outgoing slide's
+            // remaining time on the incoming pill.
+            //
+            // Tying the fill and the track to one flag is what produced the reported
+            // flash - the track brightened at the same moment the fill vanished, so
+            // the pill flared white before dropping back to grey.
+            val showsFill = active > 0.5f && !pagerState.isScrollInProgress
+
             Box(
                 modifier = Modifier
                     .height(8.dp)
                     .width(width.dp)
                     .clip(CircleShape)
-                    .background(
-                        tokens.colors.textPrimary.copy(alpha = 0.35f + 0.57f * active),
-                    ),
+                    .background(tokens.colors.textPrimary.copy(alpha = trackAlpha))
+                    .drawWithContent {
+                        drawContent()
+                        if (!showsFill) return@drawWithContent
+                        // Clipped to the pill by the parent's `clip`, so the fill
+                        // keeps the rounded ends without a second shape.
+                        drawRect(
+                            color = fillColor,
+                            size = size.copy(
+                                width = size.width * progress().coerceIn(0f, 1f),
+                            ),
+                        )
+                    },
             )
         }
     }

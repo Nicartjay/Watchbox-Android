@@ -639,6 +639,9 @@ private fun TvHeroTitle(card: AnimeCard, modifier: Modifier = Modifier) {
                 // Left, not the default centre: Fit letterboxes, and a centred logo
                 // reads as an indent beside left-aligned text.
                 alignment = Alignment.CenterStart,
+                // Over the full-bleed backdrop, so a filled placeholder would show as
+                // a solid block across the hero while the logo loads.
+                transparentPlaceholder = true,
                 modifier = Modifier
                     .fillMaxWidth(0.92f)
                     .height(HERO_LOGO_HEIGHT),

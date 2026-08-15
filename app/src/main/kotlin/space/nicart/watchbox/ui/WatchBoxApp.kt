@@ -98,6 +98,7 @@ fun WatchBoxApp(
                 TabShell(
                     container = container,
                     onOpenAnime = navController::openAnime,
+                    onPlayAnime = navController::playAnime,
                     onResume = navController::openPlayer,
                     onOpenExtensions = { navController.navigate(Routes.Extensions) },
                     onOpenSource = { id, name ->
@@ -141,6 +142,7 @@ fun WatchBoxApp(
                             ),
                         )
                     },
+                    autoPlay = route.autoPlay,
                 )
             }
 
@@ -254,6 +256,17 @@ private fun NavHostController.openAnime(card: AnimeCard) {
     navigate(Routes.Detail(card.sourceId, card.url, card.title))
 }
 
+/**
+ * Opens a title and starts playing it.
+ *
+ * Goes through the detail route rather than straight to the player: the episode to
+ * play is only known once the episode list has loaded, and doing that here would
+ * leave the tap unacknowledged while the request ran.
+ */
+private fun NavHostController.playAnime(card: AnimeCard) {
+    navigate(Routes.Detail(card.sourceId, card.url, card.title, autoPlay = true))
+}
+
 private fun NavHostController.openPlayer(entry: WatchHistoryEntry) {
     navigate(
         Routes.Player(
@@ -278,6 +291,8 @@ private fun TabShell(
     onResume: (WatchHistoryEntry) -> Unit,
     onOpenExtensions: () -> Unit,
     onOpenSource: (sourceId: Long, sourceName: String) -> Unit,
+    /** Opens a title and starts it playing, for the home hero's primary action. */
+    onPlayAnime: (AnimeCard) -> Unit,
 ) {
     var selectedTab by remember { mutableStateOf(AppTab.HOME) }
     val stateHolder = rememberSaveableStateHolder()
@@ -317,6 +332,7 @@ private fun TabShell(
                     HomeScreen(
                         viewModel = viewModel,
                         onOpenAnime = onOpenAnime,
+                        onPlayAnime = onPlayAnime,
                         onResume = onResume,
                         onOpenSaved = openSaved,
                         onBrowseSource = onOpenSource,

@@ -131,12 +131,22 @@ fun WbAsyncImage(
      * left-aligned.
      */
     alignment: Alignment = Alignment.Center,
+    /**
+     * Draw nothing while loading or on failure, instead of a filled placeholder.
+     *
+     * For an image laid *over* other artwork - a hero logo - the opaque surface
+     * placeholder is worse than an empty gap: it covers the backdrop with a solid
+     * block for as long as the request takes, which reads as a rendering fault.
+     * A poster in a grid still wants the placeholder, so this is opt-in.
+     */
+    transparentPlaceholder: Boolean = false,
 ) {
     val tokens = MaterialTheme.wb
+    val placeholderColor = if (transparentPlaceholder) Color.Transparent else tokens.colors.surface
 
     if (url.isNullOrBlank()) {
         Box(
-            modifier = modifier.background(tokens.colors.surface),
+            modifier = modifier.background(placeholderColor),
             contentAlignment = Alignment.Center,
         ) {
             fallbackLabel?.takeIf { it.isNotBlank() }?.let {
@@ -164,11 +174,13 @@ fun WbAsyncImage(
         alignment = alignment,
         modifier = modifier,
         loading = {
-            Box(modifier = Modifier.fillMaxSize().background(rememberShimmerBrush()))
+            if (!transparentPlaceholder) {
+                Box(modifier = Modifier.fillMaxSize().background(rememberShimmerBrush()))
+            }
         },
         error = {
             Box(
-                modifier = Modifier.fillMaxSize().background(tokens.colors.surface),
+                modifier = Modifier.fillMaxSize().background(placeholderColor),
                 contentAlignment = Alignment.Center,
             ) {
                 fallbackLabel?.takeIf { it.isNotBlank() }?.let {

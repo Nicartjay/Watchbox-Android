@@ -33,6 +33,14 @@ object Routes {
         val sourceId: Long,
         val animeUrl: String,
         val title: String = "",
+        /**
+         * Start playing as soon as the episode list resolves.
+         *
+         * The hero's "Watch Now" cannot open the player directly: choosing an episode
+         * needs the episode list, which only loading the title provides. So it routes
+         * here and hands off, rather than blocking the tap on a network round-trip.
+         */
+        val autoPlay: Boolean = false,
     )
 
     /** Full-screen player. */

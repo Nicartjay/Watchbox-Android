@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -69,8 +70,25 @@ fun DetailScreen(
     onPlay: (episode: EpisodeEntry, resumeMs: Long) -> Unit,
     onOpenAnime: (AnimeCard) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Start playback as soon as the episode list is known.
+     *
+     * Set by the home hero's "Watch Now", which has no episode list of its own.
+     */
+    autoPlay: Boolean = false,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    // Fires once per screen, not once per recomposition: `startTarget` stays
+    // non-null for the life of the page, so an un-latched effect would re-navigate
+    // every time the user came back from the player.
+    var autoPlayed by remember { mutableStateOf(false) }
+    LaunchedEffect(autoPlay, state.startTarget, autoPlayed) {
+        if (!autoPlay || autoPlayed) return@LaunchedEffect
+        val target = state.startTarget ?: return@LaunchedEffect
+        autoPlayed = true
+        onPlay(target, state.resumeTarget?.second ?: 0L)
+    }
     val listState = rememberLazyListState()
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()

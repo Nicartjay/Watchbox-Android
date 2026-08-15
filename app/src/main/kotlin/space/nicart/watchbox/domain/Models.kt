@@ -46,6 +46,18 @@ data class AnimeCard(
     val tmdbId: Int? = null,
     val year: String? = null,
     val genres: List<String> = emptyList(),
+    /**
+     * TMDB user score, 0.0 when unknown.
+     *
+     * Already fetched for every enriched card and previously discarded. Kept as the
+     * raw 0-10 value rather than a percentage so the formatting choice stays in the
+     * UI layer.
+     */
+    val rating: Double = 0.0,
+    /** TMDB synopsis, blank when unknown. */
+    val overview: String = "",
+    /** True when TMDB classifies this as a film rather than a series. */
+    val isMovie: Boolean = false,
 ) {
     /** Stable identity across sources. */
     val key: String get() = "$sourceId::$url"
@@ -69,7 +81,28 @@ data class AnimeCard(
     val metaLine: String
         get() = listOfNotNull(year, genres.firstOrNull(), sourceName.takeIf { it.isNotBlank() })
             .joinToString(" · ")
+
+    /**
+     * The score as a whole percentage, or null when TMDB had none.
+     *
+     * TMDB reports 0.0 both for "unrated" and for a genuine zero score; the
+     * distinction does not exist in the payload, and showing "0%" on a title nobody
+     * has rated reads as a verdict rather than missing data, so it is treated as
+     * absent.
+     */
+    val ratingPercent: Int? get() = (rating * 10).toInt().takeIf { it > 0 }
 }
+
+/**
+ * A studio credited on a title.
+ *
+ * Mirrors `TmdbStudio` rather than reusing it, so the domain layer does not depend on
+ * the shape of a remote DTO.
+ */
+data class Studio(
+    val name: String,
+    val logoUrl: String?,
+)
 
 /** One horizontal rail on the home screen, backed by a single source. */
 data class AnimeRow(
@@ -85,6 +118,13 @@ data class AnimeRow(
 data class HomeFeed(
     val hero: List<AnimeCard>,
     val rows: List<AnimeRow>,
+    /**
+     * Wide "featured" cards, drawn from the same pool as [hero] but disjoint from it.
+     *
+     * Only TMDB-matched cards appear here: the card shows a synopsis and a score, so
+     * an unmatched entry has nothing to render.
+     */
+    val featured: List<AnimeCard> = emptyList(),
 )
 
 /** Fully-resolved detail for one title. */
@@ -109,6 +149,16 @@ data class AnimeDetail(
     val episodes: List<EpisodeEntry>,
     /** Related-anime suggestions, empty until they have been fetched. */
     val suggestions: List<AnimeCard> = emptyList(),
+    /**
+     * Labelled facts recovered from the source's description.
+     *
+     * Several extensions pack studio, tags and cast into the description as markdown.
+     * Parsing them out is what keeps `**Studio:** Lesprit` off the synopsis; keeping
+     * them here means the information is still shown rather than discarded.
+     */
+    val infoFields: List<Pair<String, String>> = emptyList(),
+    /** Credited studios from TMDB, with logos where TMDB has them. */
+    val studios: List<Studio> = emptyList(),
 ) {
     val key: String get() = "$sourceId::$url"
 
