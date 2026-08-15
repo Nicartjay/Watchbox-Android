@@ -26,6 +26,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
@@ -199,11 +200,31 @@ fun ExtensionsScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Text(
-                            text = stringResource(R.string.extensions_failed_title),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = tokens.colors.warning,
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.extensions_failed_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = tokens.colors.warning,
+                                modifier = Modifier.weight(1f),
+                            )
+                            // Dismissable because it is advisory, not actionable: a broken
+                            // extension stays broken whether or not the banner is showing, and
+                            // it previously sat above the list for ever with no way to clear it.
+                            //
+                            // Dismissal is per package, so a *different* extension failing later
+                            // still reports rather than being silently swallowed.
+                            TextButton(onClick = { viewModel.dismissFailures() }) {
+                                Text(
+                                    text = stringResource(R.string.extensions_failed_dismiss),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = tokens.colors.warning,
+                                )
+                            }
+                        }
                         state.failures.forEach { failure ->
                             Text(
                                 text = failure,
@@ -222,6 +243,8 @@ fun ExtensionsScreen(
                 items(items = state.installed, key = { it.pkgName }) { extension ->
                     InstalledRow(
                         extension = extension,
+                        step = state.installing[extension.pkgName],
+                        onUpdate = { viewModel.update(extension) },
                         onUninstall = { viewModel.uninstall(extension) },
                         onOpenSettings = extension
                             .takeIf { it.hasConfigurableSources() }
@@ -299,6 +322,8 @@ private fun SectionLabel(text: String) {
 @Composable
 private fun InstalledRow(
     extension: Extension.Installed,
+    step: InstallStep?,
+    onUpdate: () -> Unit,
     onUninstall: () -> Unit,
     onOpenSettings: (() -> Unit)?,
 ) {
@@ -329,6 +354,20 @@ private fun InstalledRow(
         iconDrawable = extension.icon,
         trailing = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // The update badge previously reported a newer build with no way to take it -
+                // the only actions were settings and uninstall, so updating meant removing and
+                // reinstalling by hand.
+                //
+                // Hidden while an install for this package is in flight, so a second press
+                // cannot start a competing download over the same file.
+                if (extension.hasUpdate && step == null) {
+                    ActionButton(
+                        icon = Icons.Rounded.Download,
+                        description = stringResource(R.string.extensions_update),
+                        onClick = onUpdate,
+                    )
+                }
+
                 // Only shown when the extension actually exposes preferences, so
                 // the button never opens an empty screen.
                 onOpenSettings?.let {

@@ -39,6 +39,14 @@ data class ExtensionsUiState(
 }
 
 /** Carries the local flows through the outer [combine], which is full. */
+/** The settings-derived and panel flags, grouped so the nested combine stays legible. */
+private data class ScreenFlags(
+    val repos: List<ExtensionRepo>,
+    val panelOpen: Boolean,
+    val partial: Boolean,
+    val dismissedFailures: Set<String>,
+)
+
 private data class LocalState(
     val installing: Map<String, InstallStep>,
     val refreshing: Boolean,
@@ -47,6 +55,8 @@ private data class LocalState(
     val repos: List<ExtensionRepo>,
     val panelOpen: Boolean,
     val partial: Boolean,
+    /** Packages whose load failure has been dismissed; see `dismissFailures`. */
+    val dismissedFailures: Set<String>,
 )
 
 /**
@@ -79,6 +89,15 @@ class ExtensionsViewModel(
     private val _installing = MutableStateFlow<Map<String, InstallStep>>(emptyMap())
     private val _refreshing = MutableStateFlow(false)
     private val _error = MutableStateFlow<String?>(null)
+
+    /**
+     * Packages whose load failure the user has dismissed.
+     *
+     * Declared here rather than beside `dismissFailures` because `uiState` reads it: Kotlin
+     * initialises properties in declaration order, so a flow the combine touches has to exist
+     * before it.
+     */
+    private val _dismissedFailures = MutableStateFlow<Set<String>>(emptySet())
     private val _filters = MutableStateFlow(ExtensionFilters())
     private val _panelOpen = MutableStateFlow(false)
     private val _partial = MutableStateFlow(false)
@@ -93,11 +112,27 @@ class ExtensionsViewModel(
             _refreshing,
             _error,
             _filters,
-            combine(store.settings, _panelOpen, _partial) { settings, panelOpen, partial ->
-                Triple(settings.repos, panelOpen, partial)
+            // A named holder rather than a fourth positional tuple: combine caps out at five
+            // flows, and nesting Triples inside Triples stops being readable at this depth.
+            combine(
+                store.settings,
+                _panelOpen,
+                _partial,
+                _dismissedFailures,
+            ) { settings, panelOpen, partial, dismissed ->
+                ScreenFlags(settings.repos, panelOpen, partial, dismissed)
             },
-        ) { installing, refreshing, error, filters, (repos, panelOpen, partial) ->
-            LocalState(installing, refreshing, error, filters, repos, panelOpen, partial)
+        ) { installing, refreshing, error, filters, flags ->
+            LocalState(
+                installing = installing,
+                refreshing = refreshing,
+                error = error,
+                filters = filters,
+                repos = flags.repos,
+                panelOpen = flags.panelOpen,
+                partial = flags.partial,
+                dismissedFailures = flags.dismissedFailures,
+            )
         },
     ) { installed, available, failures, isLoading, local ->
         val installedPkgs = installed.map { it.pkgName }.toSet()
@@ -113,7 +148,9 @@ class ExtensionsViewModel(
             installed = installed.applyFilters(local.filters),
             available = visibleAvailable.applyFilters(local.filters),
             filters = local.filters,
-            failures = failures.map { "${it.pkgName}: ${it.reason}" },
+            failures = failures
+                .filterNot { it.pkgName in local.dismissedFailures }
+                .map { "${it.pkgName}: ${it.reason}" },
             isLoading = isLoading,
             isRefreshing = local.refreshing,
             errorMessage = local.error,
@@ -208,6 +245,14 @@ class ExtensionsViewModel(
                     _installing.value = _installing.value - extension.pkgName
                 }
 
+                // Un-dismiss this package on any install attempt.
+                //
+                // Dismissal previously outlived a reinstall: it recorded package names, and a
+                // reinstall produces the same name, so pressing Install again reported nothing
+                // whether it worked or failed. Someone retrying an install is precisely the
+                // person who needs to see the result.
+                _dismissedFailures.value = _dismissedFailures.value - extension.pkgName
+
                 if (step == InstallStep.Error) {
                     _error.value = extensions.lastInstallError
                         ?: "Could not install ${extension.name}."
@@ -227,6 +272,41 @@ class ExtensionsViewModel(
 
     fun dismissError() {
         _error.value = null
+    }
+
+    /**
+     * Hides the load-failure banner.
+     *
+     * Records which packages were dismissed rather than clearing the list: the failures are
+     * recomputed on every extension reload, so a plain flag would be undone the moment anything
+     * else changed. Keying on the package also means a *different* extension failing later still
+     * reports, which a blanket "never show again" would suppress.
+     *
+     * The record is cleared for a package when the user installs it again - see [install]. Without
+     * that, dismissing once silenced every future attempt at the same extension, since a
+     * reinstall reports under the same name.
+     */
+    fun dismissFailures() {
+        _dismissedFailures.value = extensions.failures.value.map { it.pkgName }.toSet()
+    }
+
+    /**
+     * Installs the newer build over an existing extension.
+     *
+     * The same code path as a first install - the installer replaces the file in place and the
+     * loader re-reads it - so this only exists to give the action a name that matches what the
+     * user is doing, and to look up the available build the update badge refers to.
+     */
+    fun update(extension: Extension.Installed) {
+        val newer = extensions.available.value.firstOrNull { it.pkgName == extension.pkgName }
+
+        if (newer == null) {
+            // The badge came from a repo listing that has since gone away.
+            _error.value = "No update is available for ${extension.name} any more."
+            return
+        }
+
+        install(newer)
     }
 
     companion object {

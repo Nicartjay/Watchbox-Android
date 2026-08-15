@@ -2,6 +2,7 @@ package space.nicart.watchbox.ui.source
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.util.Log
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
@@ -85,12 +86,21 @@ sealed interface SourcePreference {
  */
 @SuppressLint("RestrictedApi")
 fun readSourcePreferences(context: Context, source: AnimeSource): List<SourcePreference> {
-    if (source !is ConfigurableAnimeSource) return emptyList()
+    // Each early return is logged. There are four ways to end up with no preferences, they all
+    // land the user on a blank screen, and from the outside that is indistinguishable from the
+    // settings button not working at all - so "nothing happened" was unanswerable without this.
+    if (source !is ConfigurableAnimeSource) {
+        Log.i(TAG, "${source.name}: not configurable, no settings to show")
+        return emptyList()
+    }
 
     // PreferenceManager's context constructor is marked @RestrictTo, but it is the
     // only way to build a detached screen without a fragment. Aniyomi does the
     // same thing for the same reason.
-    val manager = runCatching { PreferenceManager(context) }.getOrNull() ?: return emptyList()
+    val manager = runCatching { PreferenceManager(context) }
+        .onFailure { Log.w(TAG, "${source.name}: PreferenceManager failed: ${it.javaClass.simpleName}: ${it.message}") }
+        .getOrNull()
+        ?: return emptyList()
 
     // CRITICAL: point the manager at the source's own preference file.
     //
@@ -101,16 +111,29 @@ fun readSourcePreferences(context: Context, source: AnimeSource): List<SourcePre
     manager.sharedPreferencesName = source.preferenceKey()
     manager.sharedPreferencesMode = Context.MODE_PRIVATE
 
-    val screen = runCatching { manager.createPreferenceScreen(context) }.getOrNull()
+    val screen = runCatching { manager.createPreferenceScreen(context) }
+        .onFailure { Log.w(TAG, "${source.name}: createPreferenceScreen failed: ${it.javaClass.simpleName}: ${it.message}") }
+        .getOrNull()
         ?: return emptyList()
 
     // An extension's setupPreferenceScreen runs arbitrary code and may throw;
     // a broken settings screen must not take down the extension list.
     runCatching { source.setupPreferenceScreen(screen) }
-        .onFailure { return emptyList() }
+        .onFailure {
+            Log.w(TAG, "${source.name}: setupPreferenceScreen threw: ${it.javaClass.simpleName}: ${it.message}")
+            return emptyList()
+        }
 
-    return screen.flatten().mapNotNull { it.toSourcePreference() }
+    val prefs = screen.flatten().mapNotNull { it.toSourcePreference() }
+
+    // The fourth path, and the least obvious: the screen was built without error but nothing in
+    // it survived conversion - an unsupported preference type, or a blank label.
+    Log.i(TAG, "${source.name}: ${screen.flatten().size} preference(s) built, ${prefs.size} shown")
+
+    return prefs
 }
+
+private const val TAG = "WbSourcePrefs"
 
 /** Depth-first flatten; nested groups are inlined rather than shown as sections. */
 private fun PreferenceGroup.flatten(): List<Preference> =

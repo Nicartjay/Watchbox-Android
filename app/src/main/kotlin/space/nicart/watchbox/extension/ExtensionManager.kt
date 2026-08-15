@@ -1,6 +1,7 @@
 package space.nicart.watchbox.extension
 
 import android.content.Context
+import android.util.Log
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import kotlinx.coroutines.CoroutineScope
@@ -111,7 +112,13 @@ class ExtensionManager(
             _installed.value = loaded.sortedBy { it.name.lowercase() }
             _untrusted.value = results.filterIsInstance<LoadResult.Untrusted>()
                 .map { it.extension }
-            _failures.value = results.filterIsInstance<LoadResult.Error>()
+            val errors = results.filterIsInstance<LoadResult.Error>()
+            _failures.value = errors
+
+            // Logged as well as shown. The banner is the user-facing report, but a load failure
+            // is exactly the thing to capture over adb - the reason is already specific, it just
+            // was not recoverable once the screen had moved on.
+            errors.forEach { Log.w(TAG, "load failed: ${it.pkgName}: ${it.reason}") }
 
             _sources.value = loaded
                 .flatMap { it.sources }
@@ -285,3 +292,5 @@ data class RepoRefreshResult(
     val allFailed: Boolean get() = succeeded == 0 && failures.isNotEmpty()
     val hasFailures: Boolean get() = failures.isNotEmpty()
 }
+
+private const val TAG = "WbExtensions"
