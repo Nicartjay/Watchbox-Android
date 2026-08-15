@@ -21,6 +21,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -117,6 +118,26 @@ fun TvTabShell(
             if (shellHasFocus) return@LaunchedEffect
             delay(REFOCUS_RETRY_MS)
         }
+    }
+
+    /**
+     * Back moves focus to the navigation rail before it will leave the app.
+     *
+     * On a television Back is the only way out of a section, and exiting the app from
+     * inside a content row is almost never what was meant: the remote has no other
+     * "go up a level", so Back is what a viewer reaches for to get back to the menu.
+     *
+     * Disabled once the rail already has focus, so a second press falls through to the
+     * system and closes the app as normal - otherwise there would be no way out at all.
+     *
+     * Also disabled while the source picker is open, which owns Back for itself.
+     */
+    BackHandler(enabled = !railFocused && !pickerOpen) {
+        // A single request, not a retry loop: the rail is already composed here, unlike
+        // the tab-switch case above, so its requester has a node. A loop would also spin
+        // without yielding, so `railFocused` could not update between attempts and every
+        // iteration would see the stale value.
+        runCatching { railFocusRequester.requestFocus() }
     }
 
     // The rail overlays the content rather than sitting beside it in a Row. A

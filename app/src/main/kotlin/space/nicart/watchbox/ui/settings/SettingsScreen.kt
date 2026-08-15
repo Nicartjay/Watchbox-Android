@@ -87,6 +87,8 @@ import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.WbScreenHeader
 import space.nicart.watchbox.ui.components.sectionHorizontalPadding
+import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.delay
 
 /**
  * Settings.
@@ -780,11 +782,17 @@ private fun SettingsActionRow(title: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun SettingsTextAction(label: String, onClick: () -> Unit) {
+private fun SettingsTextAction(
+    label: String,
+    onClick: () -> Unit,
+    /** Set when focus should land here, e.g. Update once a check finds one. */
+    focusRequester: FocusRequester? = null,
+) {
     val interaction = remember { MutableInteractionSource() }
     val tokens = MaterialTheme.wb
     Box(
         modifier = Modifier
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
             .clip(RoundedCornerShape(12.dp))
             .background(tokens.colors.surface)
@@ -886,10 +894,35 @@ private fun UpdateCard(
             }
 
             Spacer(Modifier.height(12.dp))
+
+            // Focus moves to Update when a check finds one.
+            //
+            // The check is started from the row above, which then reports its result in a
+            // card that appears below - so on a remote the focused element is the button
+            // the user just pressed, and the new choice is somewhere off in a direction
+            // they have to guess. Landing on Update makes the next press act on the
+            // answer.
+            //
+            // Focus-driven only: on touch the buttons are simply visible, and stealing
+            // focus there would pop the keyboard-less highlight onto something the user
+            // did not reach for.
+            val downloadFocus = remember { FocusRequester() }
+            val isFocusDriven = LocalLayoutMetrics.current.isFocusDriven
+
+            LaunchedEffect(state.update.versionName) {
+                if (!isFocusDriven) return@LaunchedEffect
+                repeat(UPDATE_FOCUS_ATTEMPTS) {
+                    withFrameNanos { }
+                    runCatching { downloadFocus.requestFocus() }
+                    delay(UPDATE_FOCUS_RETRY_MS)
+                }
+            }
+
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SettingsTextAction(
                     label = stringResource(R.string.update_download),
                     onClick = { onDownload(state.update) },
+                    focusRequester = downloadFocus,
                 )
                 SettingsTextAction(
                     label = stringResource(R.string.update_skip),
@@ -1035,3 +1068,7 @@ private fun String.looksLikeHttpUrl(): Boolean {
     val host = trimmed.substringAfter("://").substringBefore('/')
     return host.isNotBlank() && host.contains('.')
 }
+
+/** Matches the focus retries elsewhere: requestFocus succeeds before a node exists. */
+private const val UPDATE_FOCUS_ATTEMPTS = 12
+private const val UPDATE_FOCUS_RETRY_MS = 60L
