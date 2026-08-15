@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
@@ -68,6 +69,14 @@ fun ComposeSubtitleView(
     offsetMs: Long = 0L,
     /** Current playback position, only read when [offsetCues] is in use. */
     positionMs: Long = 0L,
+    /**
+     * Extra clearance beneath the cues.
+     *
+     * Raised while the player controls are showing so dialogue is not covered by the
+     * scrubber and button rows. Passed in rather than derived here because the control
+     * stack's height is the player screen's own metric.
+     */
+    bottomInset: Dp = 0.dp,
 ) {
     var playerCues by remember { mutableStateOf<List<String>>(emptyList()) }
 
@@ -124,7 +133,7 @@ fun ComposeSubtitleView(
 
     if (cues.isEmpty()) return
 
-    BoxWithSubtitleMetrics(modifier = modifier) { fontSize ->
+    BoxWithSubtitleMetrics(modifier = modifier, bottomInset = bottomInset) { fontSize ->
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -148,6 +157,7 @@ fun ComposeSubtitleView(
 @Composable
 private fun BoxWithSubtitleMetrics(
     modifier: Modifier,
+    bottomInset: Dp,
     content: @Composable (fontSizeSp: Float) -> Unit,
 ) {
     androidx.compose.foundation.layout.BoxWithConstraints(
@@ -160,7 +170,9 @@ private fun BoxWithSubtitleMetrics(
         // device's font scale, which the player pins anyway.
         val fontSizeSp = with(density) { (heightPx * SUBTITLE_FRACTION_UNIT).toSp().value }
 
-        Box(modifier = Modifier.padding(bottom = 32.dp)) {
+        // The resting gap plus whatever the controls need. Animated by the caller, so
+        // the cues rise and settle with the overlay rather than jumping.
+        Box(modifier = Modifier.padding(bottom = SUBTITLE_BOTTOM_GAP + bottomInset)) {
             content(fontSizeSp)
         }
     }
@@ -168,6 +180,9 @@ private fun BoxWithSubtitleMetrics(
 
 /** Multiplied by the style's fraction; keeps the maths in one place. */
 private const val SUBTITLE_FRACTION_UNIT = 1f
+
+/** Resting gap between the cues and the bottom edge. */
+private val SUBTITLE_BOTTOM_GAP = 32.dp
 
 @Composable
 private fun SubtitleLine(

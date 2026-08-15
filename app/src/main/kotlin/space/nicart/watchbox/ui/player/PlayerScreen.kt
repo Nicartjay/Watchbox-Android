@@ -959,12 +959,53 @@ fun PlayerScreen(
 
         // Above the video, below the controls: cues must not be covered by the
         // scrubber, but must not sit above a dialog either.
+        // How far the bottom-edge overlays clear the control stack.
+        //
+        // One value shared by the subtitles and the skip button, derived from the metrics
+        // the controls are built from rather than hardcoded: the stack is the slider plus
+        // its touch height, the timecode row and the pill row, all of which scale with
+        // screen width. Animated so both rise and settle with the overlay instead of
+        // jumping between two positions.
+        val controlsUp = controlsVisible && !state.isResolving
+        // The subtitles clear the same stack but need no button clearance, and they have
+        // their own resting gap, so they animate on a slightly smaller value.
+        val subtitleLift by animateDpAsState(
+            targetValue = if (controlsUp) {
+                metrics.sliderBottomOffset + metrics.sliderTouchHeight + CONTROL_STACK_HEIGHT
+            } else {
+                0.dp
+            },
+            animationSpec = tween(durationMillis = 220),
+            label = "subtitle-lift",
+        )
+
+        val bottomOverlayLift by animateDpAsState(
+            targetValue = if (controlsUp) {
+                metrics.sliderBottomOffset +
+                    metrics.sliderTouchHeight +
+                    CONTROL_STACK_HEIGHT +
+                    SKIP_CLEARANCE
+            } else {
+                metrics.verticalPadding
+            },
+            animationSpec = tween(durationMillis = 220),
+            label = "bottom-overlay-lift",
+        )
+
         ComposeSubtitleView(
             player = exoPlayer,
             style = subtitleStyle,
             offsetCues = state.offsetCues,
             offsetMs = state.subtitleOffsetMs,
             positionMs = positionMs,
+            // Lifted clear of the controls so dialogue is not hidden behind the scrubber
+            // while they are on screen.
+            //
+            // Uses the stack height without the skip button's extra clearance, and drops
+            // the resting inset entirely: the subtitle view already carries a 32dp gap of
+            // its own, and stacking all three pushed cues into the middle of the picture
+            // on a phone.
+            bottomInset = if (controlsUp) subtitleLift else 0.dp,
             modifier = Modifier.fillMaxSize(),
         )
 
@@ -1006,27 +1047,8 @@ fun PlayerScreen(
         //
         // Still hidden while locked, where input is deliberately ignored.
         if (!state.locked) {
-            // Lifted clear of the controls when they are up, and animated so it slides rather
-            // than jumping between the two positions.
-            //
-            // Derived from the same metrics the controls are built from, not a fixed number: the
-            // bottom stack is the slider plus its touch height, the timecode row and the pill
-            // row, and all of those scale with screen width. A hardcoded offset was correct on
-            // one size and overlapped on the others.
-            val controlsUp = controlsVisible && !state.isResolving
-            val skipLift by animateDpAsState(
-                targetValue = if (controlsUp) {
-                    metrics.sliderBottomOffset +
-                        metrics.sliderTouchHeight +
-                        CONTROL_STACK_HEIGHT +
-                        SKIP_CLEARANCE
-                } else {
-                    metrics.verticalPadding
-                },
-                animationSpec = tween(durationMillis = 220),
-                label = "skip-button-lift",
-            )
-
+            // Shares bottomOverlayLift with the subtitles, so the two never disagree about
+            // where the control stack ends.
             SkipSegmentButton(
                 intervals = state.skipIntervals,
                 positionMs = positionMs,
@@ -1038,7 +1060,7 @@ fun PlayerScreen(
                 autoFocus = skipButtonOwnsFocus,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = metrics.horizontalPadding, bottom = skipLift),
+                    .padding(end = metrics.horizontalPadding, bottom = bottomOverlayLift),
             )
         }
 

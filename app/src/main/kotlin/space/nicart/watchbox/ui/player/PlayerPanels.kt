@@ -47,7 +47,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -595,6 +598,17 @@ private fun PanelActionRow(
     label: String,
     onClick: () -> Unit,
     icon: ImageVector = Icons.Rounded.Tune,
+    /**
+     * When false the row stays in place, dimmed and inert.
+     *
+     * Disabling beats removing for a row whose own action makes it redundant. A row
+     * that vanishes under the D-pad takes the focus with it, and Compose does not
+     * re-home focus when the focused node leaves the tree - the remote goes dead and
+     * only Back recovers. Keeping the row keeps the focus target.
+     */
+    enabled: Boolean = true,
+    /** Set when another row needs to hand focus here after disabling itself. */
+    focusRequester: FocusRequester? = null,
 ) {
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
@@ -602,12 +616,14 @@ private fun PanelActionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
             .clip(RoundedCornerShape(12.dp))
             .background(tokens.colors.surfaceCard)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
+                enabled = enabled,
                 onClick = onClick,
             )
             .padding(horizontal = 14.dp, vertical = 12.dp),
@@ -617,13 +633,13 @@ private fun PanelActionRow(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = tokens.colors.accent,
+            tint = if (enabled) tokens.colors.accent else tokens.colors.textDisabled,
             modifier = Modifier.size(18.dp),
         )
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            color = tokens.colors.textPrimary,
+            color = if (enabled) tokens.colors.textPrimary else tokens.colors.textDisabled,
         )
     }
 }
@@ -682,37 +698,37 @@ private fun SubtitleSyncPanel(
 
         PanelSectionLabel(stringResource(R.string.player_subtitle_sync_measure))
 
-        // Focus follows the measurement onto whichever mark is still outstanding.
-        //
-        // On a remote the second tap is the whole point of the pair, and leaving focus on
-        // the button just pressed - which is now disabled - would strand it: a disabled row
-        // is not focusable, so the next directional press has to hunt for the other one.
-        // Moving focus makes the sequence two presses of OK.
+        // Every row here can disable itself by being pressed, and Compose does not
+        // re-home focus when the focused node stops being focusable - the remote goes
+        // dead and only Back recovers. So each action names where focus should land
+        // afterwards, and the request is made once rather than on a retry loop: these
+        // rows are already on screen, so there is no node to wait for, and a loop would
+        // fight the user for its duration.
         val subtitleFocus = remember { FocusRequester() }
         val spokenFocus = remember { FocusRequester() }
+        val laterFocus = remember { FocusRequester() }
 
-        LaunchedEffect(calibration.firstMark) {
-            // Only while a measurement is pending. On completion the panel returns to
-            // having both buttons live, and stealing focus then would fight the user.
-            val target = when (calibration.firstMark) {
-                SyncMark.SUBTITLE -> spokenFocus
-                SyncMark.SPOKEN -> subtitleFocus
-                null -> return@LaunchedEffect
-            }
-            // Same retry shape as the panel's own initial focus: requestFocus reports
-            // success even before its target has a node.
-            repeat(PANEL_FOCUS_ATTEMPTS) {
-                withFrameNanos { }
-                runCatching { target.requestFocus() }
-                delay(PANEL_FOCUS_RETRY_MS)
-            }
+        // Requested on the next frame, not inline: the recomposition that disables the
+        // row has to land first, or focus is moved and then immediately invalidated.
+        var pendingFocus by remember { mutableStateOf<FocusRequester?>(null) }
+        LaunchedEffect(pendingFocus) {
+            val target = pendingFocus ?: return@LaunchedEffect
+            withFrameNanos { }
+            runCatching { target.requestFocus() }
+            pendingFocus = null
         }
 
         PanelChoiceRow(
             label = stringResource(R.string.player_subtitle_sync_mark_subtitle),
             selected = calibration.firstMark == SyncMark.SUBTITLE,
             enabled = calibration.isEnabled(SyncMark.SUBTITLE),
-            onClick = { onMark(SyncMark.SUBTITLE) },
+            onClick = {
+                // Arming disables this row, so focus moves to the mark still
+                // outstanding; completing re-enables both, and the stepper is the
+                // natural next stop.
+                pendingFocus = if (calibration.isArmed) laterFocus else spokenFocus
+                onMark(SyncMark.SUBTITLE)
+            },
             focusRequester = subtitleFocus,
         )
 
@@ -720,12 +736,18 @@ private fun SubtitleSyncPanel(
             label = stringResource(R.string.player_subtitle_sync_mark_spoken),
             selected = calibration.firstMark == SyncMark.SPOKEN,
             enabled = calibration.isEnabled(SyncMark.SPOKEN),
-            onClick = { onMark(SyncMark.SPOKEN) },
+            onClick = {
+                pendingFocus = if (calibration.isArmed) laterFocus else subtitleFocus
+                onMark(SyncMark.SPOKEN)
+            },
             focusRequester = spokenFocus,
         )
 
-        // Only while a measurement is pending: a cancel button with nothing to cancel
-        // invites the user to wonder what it would undo.
+        // The prompt is conditional, the button is not.
+        //
+        // Cancel stays in place and greys out instead of disappearing, because tapping
+        // it is what makes it redundant: a row that removes itself under the D-pad takes
+        // the focus with it and leaves the remote dead. Same for Reset below.
         if (calibration.isArmed) {
             Text(
                 text = if (calibration.firstMark == SyncMark.SUBTITLE) {
@@ -737,13 +759,17 @@ private fun SubtitleSyncPanel(
                 color = tokens.colors.accent,
                 modifier = Modifier.padding(top = 4.dp),
             )
-
-            PanelActionRow(
-                label = stringResource(R.string.player_subtitle_sync_cancel),
-                onClick = onCancel,
-                icon = Icons.Rounded.Close,
-            )
         }
+
+        PanelActionRow(
+            label = stringResource(R.string.player_subtitle_sync_cancel),
+            onClick = {
+                pendingFocus = subtitleFocus
+                onCancel()
+            },
+            icon = Icons.Rounded.Close,
+            enabled = calibration.isArmed,
+        )
 
         PanelSectionLabel(stringResource(R.string.player_subtitle_sync_adjust))
 
@@ -757,15 +783,20 @@ private fun SubtitleSyncPanel(
             label = stringResource(R.string.player_subtitle_sync_later),
             onClick = { onNudge(SUBTITLE_OFFSET_STEP_MS) },
             icon = Icons.Rounded.Add,
+            focusRequester = laterFocus,
         )
 
-        if (offsetMs != 0L) {
-            PanelActionRow(
-                label = stringResource(R.string.player_subtitle_sync_reset),
-                onClick = onReset,
-                icon = Icons.Rounded.Refresh,
-            )
-        }
+        PanelActionRow(
+            label = stringResource(R.string.player_subtitle_sync_reset),
+            onClick = {
+                // Resetting to zero disables this row, so focus goes to the stepper
+                // above it, which is always live.
+                pendingFocus = laterFocus
+                onReset()
+            },
+            icon = Icons.Rounded.Refresh,
+            enabled = offsetMs != 0L,
+        )
     }
 }
 
