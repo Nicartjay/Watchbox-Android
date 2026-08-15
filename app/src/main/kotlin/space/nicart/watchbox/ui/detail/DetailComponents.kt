@@ -585,6 +585,12 @@ fun DetailMetaInfo(
                     // three lines.
                     modifier = Modifier.width(IntrinsicSize.Max),
                 ) {
+                    // The label keeps TMDB's brand blue; the score is gold.
+                    //
+                    // Two colours on purpose: the label attributes the number to a source,
+                    // and TMDB's blue is how that source is recognised - recolouring it
+                    // would misattribute the score to the app. The number itself is gold,
+                    // which is what a rating means everywhere else here.
                     Text(
                         text = "TMDB",
                         style = MaterialTheme.typography.labelMedium,
@@ -595,7 +601,7 @@ fun DetailMetaInfo(
                         text = "%.1f".format(rating),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color = tokens.colors.textPrimary,
+                        color = tokens.colors.warning,
                         maxLines = 1,
                         softWrap = false,
                     )
@@ -848,6 +854,8 @@ private const val MAX_STUDIO_LOGOS = 5
 /** Sources can emit a long tail of labels; the useful ones come first. */
 private const val MAX_INFO_FIELDS = 5
 
+
+/** TMDB's brand blue, for the label that attributes a score to them. */
 private val TMDB_BLUE = Color(0xFF01B4E4)
 
 /** Section title: 20sp SemiBold on phones (`DetailSection.kt`). */

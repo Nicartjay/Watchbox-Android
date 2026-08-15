@@ -31,6 +31,9 @@ import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.domain.AnimeDetail
 import space.nicart.watchbox.ui.components.WbAsyncImage
 import space.nicart.watchbox.ui.extensions.ExtensionIconSlot
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material3.Icon
 
 /**
  * Netflix-style hero for large screens.
@@ -226,21 +229,54 @@ private fun MetaRow(detail: AnimeDetail) {
 
     val parts = buildList {
         detail.year?.takeIf { it.isNotBlank() }?.let(::add)
-        if (detail.rating > 0.0) add("★ ${"%.1f".format(detail.rating)}")
         // Episode count is meaningless for a film.
         if (!detail.isMovie) add("${detail.episodes.size} episodes")
         detail.genres.take(3).takeIf { it.isNotEmpty() }?.let { add(it.joinToString(" · ")) }
     }
 
-    if (parts.isEmpty()) return
+    if (parts.isEmpty() && detail.rating <= 0.0) return
 
-    Text(
-        text = parts.joinToString("   ·   "),
-        style = MaterialTheme.typography.titleMedium,
-        color = tokens.colors.textMuted,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
+    // The rating is drawn separately from the rest of the line so it can be gold.
+    //
+    // It was previously concatenated into the same string, which meant it inherited the
+    // muted grey of the surrounding metadata - a rating reads as a value, not as another
+    // dot-separated fact, and gold is what one means everywhere else in the app.
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (detail.rating > 0.0) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Star,
+                    contentDescription = null,
+                    tint = tokens.colors.warning,
+                    modifier = Modifier.size(15.dp),
+                )
+                Text(
+                    text = "%.1f".format(detail.rating),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = tokens.colors.warning,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            }
+        }
+
+        if (parts.isEmpty()) return@Row
+
+        Text(
+            text = parts.joinToString("   ·   "),
+            style = MaterialTheme.typography.titleMedium,
+            color = tokens.colors.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }
 
 /**
