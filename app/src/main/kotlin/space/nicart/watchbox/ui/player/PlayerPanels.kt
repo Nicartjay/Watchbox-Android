@@ -32,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Remove
@@ -195,10 +196,22 @@ fun PlayerPanels(
 
                         // Next to search and appearance because they are the three answers
                         // to "these subtitles are wrong": missing, ugly, or mistimed.
+                        //
+                        // Carries its own value, and goes amber once a correction is set.
+                        // Both, because they answer different questions: the colour says
+                        // "this has been changed" at a glance across the whole panel, while
+                        // the number says what it was changed to without opening it.
+                        //
+                        // Amber rather than the accent, matching every other rating and
+                        // measurement in the app, and distinct from the accent the other
+                        // rows use so an active correction stands out among them.
                         PanelActionRow(
                             label = stringResource(R.string.player_subtitle_sync),
                             onClick = onOpenSubtitleSync,
                             icon = Icons.Rounded.Schedule,
+                            value = formatSubtitleOffset(state.subtitleOffsetMs)
+                                .takeIf { state.subtitleOffsetMs != 0L },
+                            highlighted = state.subtitleOffsetMs != 0L,
                         )
                     }
 
@@ -231,6 +244,7 @@ fun PlayerPanels(
                     PlayerPanel.SUBTITLE_SYNC -> SubtitleSyncPanel(
                         offsetMs = state.subtitleOffsetMs,
                         calibration = state.syncCalibration,
+                        embedded = state.subtitleIsEmbedded,
                         onMark = onMarkSync,
                         onCancel = onCancelSync,
                         onNudge = onNudgeSubtitleOffset,
@@ -612,6 +626,19 @@ private fun PanelActionRow(
     enabled: Boolean = true,
     /** Set when another row needs to hand focus here after disabling itself. */
     focusRequester: FocusRequester? = null,
+    /**
+     * Current value, shown at the trailing edge.
+     *
+     * For a row that opens a sub-panel this answers "what is it set to" without opening it -
+     * otherwise the only way to know a correction is active is to go and look.
+     */
+    value: String? = null,
+    /**
+     * Tints the icon, label and value.
+     *
+     * Used to mark a row as carrying a non-default setting, which a label alone cannot say.
+     */
+    highlighted: Boolean = false,
 ) {
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
@@ -636,14 +663,36 @@ private fun PanelActionRow(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = if (enabled) tokens.colors.accent else tokens.colors.textDisabled,
+            tint = when {
+                !enabled -> tokens.colors.textDisabled
+                highlighted -> tokens.colors.warning
+                else -> tokens.colors.accent
+            },
             modifier = Modifier.size(18.dp),
         )
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            color = if (enabled) tokens.colors.textPrimary else tokens.colors.textDisabled,
+            color = when {
+                !enabled -> tokens.colors.textDisabled
+                highlighted -> tokens.colors.warning
+                else -> tokens.colors.textPrimary
+            },
+            modifier = Modifier.weight(1f),
         )
+
+        // Trailing, so the label stays left-aligned with the rows above it and the values
+        // line up with each other down the panel.
+        value?.takeIf { it.isNotBlank() }?.let { shown ->
+            Text(
+                text = shown,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = if (highlighted) tokens.colors.warning else tokens.colors.textMuted,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
     }
 }
 
@@ -667,6 +716,8 @@ private fun PanelActionRow(
 private fun SubtitleSyncPanel(
     offsetMs: Long,
     calibration: SyncCalibration,
+    /** True when the track is embedded in the stream and can only be delayed. */
+    embedded: Boolean,
     onMark: (SyncMark) -> Unit,
     onCancel: () -> Unit,
     onNudge: (Long) -> Unit,
@@ -698,6 +749,35 @@ private fun SubtitleSyncPanel(
             style = MaterialTheme.typography.labelSmall,
             color = tokens.colors.textMuted,
         )
+
+        // Only for a track embedded in the stream, where it is a real constraint.
+        //
+        // Those have no file to parse, so the only way to move them is to hold the
+        // decoder's own cues back - which delays a line but cannot surface one early. Said
+        // here rather than left to be discovered by a stepper press that does nothing.
+        if (embedded) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(tokens.colors.warning.copy(alpha = 0.14f))
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Info,
+                    contentDescription = null,
+                    tint = tokens.colors.warning,
+                    modifier = Modifier.size(15.dp),
+                )
+                Text(
+                    text = stringResource(R.string.player_subtitle_sync_embedded_warning),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tokens.colors.warning,
+                )
+            }
+        }
 
         PanelSectionLabel(stringResource(R.string.player_subtitle_sync_measure))
 
@@ -784,10 +864,17 @@ private fun SubtitleSyncPanel(
 
         PanelSectionLabel(stringResource(R.string.player_subtitle_sync_adjust))
 
+        // Disabled below zero on an embedded track, where a negative offset cannot be
+        // honoured. Leaving it live would let the value go negative and the subtitles not
+        // move, which is the silent failure the warning above exists to prevent.
+        //
+        // Still enabled while the offset is positive: stepping down from +3s to +2s is a
+        // reduction of a delay, not a negative shift, and that works.
         PanelActionRow(
             label = stringResource(R.string.player_subtitle_sync_earlier),
             onClick = { onNudge(-SUBTITLE_OFFSET_STEP_MS) },
             icon = Icons.Rounded.Remove,
+            enabled = !embedded || offsetMs > 0L,
         )
 
         PanelActionRow(

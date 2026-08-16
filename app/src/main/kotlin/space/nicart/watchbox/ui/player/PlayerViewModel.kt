@@ -117,6 +117,18 @@ data class PlayerUiState(
      */
     val offsetCues: List<SubtitleCue> = emptyList(),
 ) {
+    /**
+     * True when the selected subtitle cannot be shifted earlier, only later.
+     *
+     * A track with no URL is embedded in the stream, so there is no file to parse and the
+     * only way to move it is to hold the decoder's own cues back. That serves a delay but
+     * cannot surface a line before the decoder has emitted it, so a negative correction is
+     * impossible for these - a real limit of the format rather than a missing feature.
+     */
+    val subtitleIsEmbedded: Boolean
+        get() = selectedSubtitleIndex >= 0 &&
+            subtitles.getOrNull(selectedSubtitleIndex)?.url.isNullOrBlank()
+
     val title: String get() = detail?.title.orEmpty()
 
     val episodeLabel: String? get() = episode?.displayName

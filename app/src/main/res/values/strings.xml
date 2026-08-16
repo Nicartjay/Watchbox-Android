@@ -86,6 +86,7 @@
     <string name="player_subtitle_sync_later">Later</string>
     <string name="player_subtitle_sync_reset">Reset to 0.00s</string>
     <string name="player_subtitle_sync_hint">A positive offset delays the subtitles.</string>
+    <string name="player_subtitle_sync_embedded_warning">This subtitle is built into the video, so it can only be delayed \u2014 not shown earlier. Search for a downloadable subtitle if you need it earlier.</string>
     <string name="detail_videos_count">Videos (%1$d)</string>
     <string name="detail_reviews">Reviews</string>
     <string name="review_show_more">Show more</string>

@@ -649,6 +649,9 @@ private fun ProgressControls(
                         icon = Icons.Rounded.ClosedCaption,
                         label = stringResource(R.string.player_subtitles),
                         onClick = { onOpenPanel(PlayerPanel.SUBTITLES) },
+                        // Amber while a timing correction is set, so it is visible from the
+                        // controls rather than only from inside the sub-panel that holds it.
+                        highlighted = state.subtitleOffsetMs != 0L,
                     )
                     if (state.episodes.size > 1) {
                         ActionPill(
@@ -687,6 +690,14 @@ private fun ActionPill(
     icon: ImageVector,
     label: String,
     onClick: () -> Unit,
+    /**
+     * Marks the pill as carrying a non-default setting.
+     *
+     * Amber, matching every other measurement in the app. Without it a correction set deep
+     * in a sub-panel is invisible from the controls, and the only way to find out whether
+     * one is active is to go looking for it.
+     */
+    highlighted: Boolean = false,
 ) {
     val type = MaterialTheme.wbType
     val interaction = rememberFocusInteraction()
@@ -708,16 +719,18 @@ private fun ActionPill(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        val tint = if (highlighted) MaterialTheme.wb.colors.warning else Color.White
+
         Icon(
             imageVector = icon,
             contentDescription = label,
-            tint = Color.White,
+            tint = tint,
             modifier = Modifier.size(18.dp),
         )
         Text(
             text = label,
             style = type.labelSm,
-            color = Color.White,
+            color = tint,
             maxLines = 1,
         )
     }
