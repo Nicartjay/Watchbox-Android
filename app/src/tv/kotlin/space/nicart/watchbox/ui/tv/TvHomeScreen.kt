@@ -212,6 +212,18 @@ fun TvHomeScreen(
 
     val heroCard = enrichedHero ?: rawHero?.takeIf { artworkGraceElapsed }
 
+    // The artwork grace window is a loading state, not an empty one.
+    //
+    // `state.isLoading` goes false as soon as the feed arrives, but the hero deliberately
+    // withholds a card for a moment while its backdrop resolves - so the placeholder was
+    // reached with nothing to show and no reason given, and printed "Nothing to show" over a
+    // source that was loading perfectly well. The message then vanished when the artwork
+    // landed, which is exactly the misleading flash reported.
+    //
+    // A source that genuinely returned nothing has no rawHero at all, so it still reports
+    // empty rather than spinning forever.
+    val heroIsResolving = state.isLoading || (rawHero != null && heroCard == null)
+
     /**
      * Bumped on every user action on the hero, to restart the rotation delay.
      *
@@ -390,7 +402,7 @@ fun TvHomeScreen(
                     // Any input on the hero gives the user a fresh full interval before the
                     // spotlight moves under them.
                     onInteraction = { heroInteraction++ },
-                    isLoading = state.isLoading,
+                    isLoading = heroIsResolving,
                     onRetry = { state.selected?.let(viewModel::select) },
                 )
             },
