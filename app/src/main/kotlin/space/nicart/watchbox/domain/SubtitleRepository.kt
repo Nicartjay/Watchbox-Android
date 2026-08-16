@@ -84,9 +84,19 @@ class SubtitleRepository(
             } else {
                 api.fetchText(url)
             }
-            SubtitleParser.parse(text)
+            val cues = SubtitleParser.parse(text)
+
+            // Logged with both sizes, because "nothing came back" and "it came back and
+            // parsed to nothing" are different faults and look identical from the UI: the
+            // offset silently does nothing either way. An empty result here is the whole
+            // reason a timing correction can appear to be ignored.
+            android.util.Log.i(
+                TAG,
+                "cues($url): ${text.length} chars -> ${cues.size} cues",
+            )
+            cues
         }.onFailure {
-            android.util.Log.w(TAG, "cue parse failed: ${it::class.java.simpleName}")
+            android.util.Log.w(TAG, "cue parse failed for $url: ${it::class.java.simpleName}: ${it.message}")
         }.getOrDefault(emptyList())
     }
 

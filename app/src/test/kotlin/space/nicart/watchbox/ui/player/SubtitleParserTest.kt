@@ -189,6 +189,19 @@ class SubtitleParserTest {
     }
 
     @Test
+    fun `an empty cue list yields nothing whatever the offset`() {
+        // The shape of a real bug: a correction was set and shown in the panel, but the cue
+        // list it needs had never been fetched, so every lookup returned nothing and the
+        // renderer silently fell back to the player's own unshifted timing. Nothing here
+        // fails loudly - which is why the load has to happen on every path that picks a
+        // subtitle, not only when one is changed.
+        val none = emptyList<SubtitleCue>()
+
+        assertTrue(none.activeAt(2_000L, offsetMs = 2_000L).isEmpty())
+        assertTrue(none.activeAt(2_000L, offsetMs = -2_000L).isEmpty())
+    }
+
+    @Test
     fun `an empty cue list is safe to look up`() {
         assertTrue(emptyList<SubtitleCue>().activeAt(1_000L, 0L).isEmpty())
     }

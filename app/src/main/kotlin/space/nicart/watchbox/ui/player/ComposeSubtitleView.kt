@@ -100,6 +100,17 @@ fun ComposeSubtitleView(
     // offset is unrepresentable that way.
     val usesOffset = offsetMs != 0L && offsetCues.isNotEmpty()
 
+    // Says why an offset is being ignored, which is otherwise invisible: the correction is
+    // set, the panel shows it, and the subtitles do not move. Both causes look the same
+    // from the screen - an unparsable format, or an embedded track with no URL to fetch.
+    LaunchedEffect(offsetMs, offsetCues.size) {
+        if (offsetMs == 0L) return@LaunchedEffect
+        android.util.Log.i(
+            "WbSubOffset",
+            "offset=${offsetMs}ms cues=${offsetCues.size} applied=$usesOffset",
+        )
+    }
+
     // Its own clock while shifting, polled far more often than the screen's 500ms
     // progress tick.
     //

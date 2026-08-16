@@ -259,6 +259,16 @@ class PlayerViewModel(
                         selectedSubtitleIndex = subtitleIndex,
                         errorMessage = if (chosen == null) NO_STREAM else null,
                     )
+
+                    // Loads the cues for the subtitle picked here.
+                    //
+                    // Without this a saved offset did nothing on a fresh episode: the
+                    // correction was restored from settings and shown in the panel, but the
+                    // cue list it needs was only ever fetched when the subtitle or the
+                    // offset changed. Resolution picks a subtitle without going through
+                    // either path, so the list stayed empty and the renderer fell back to
+                    // the player's own unshifted timing - the offset appeared to be ignored.
+                    refreshOffsetCues()
                 }
                 .onFailure { error ->
                     _uiState.value = _uiState.value.copy(
@@ -553,6 +563,10 @@ class PlayerViewModel(
             subtitleSearch = SubtitleSearchState.Idle,
             // The previous episode's opening is not this one's.
             skipIntervals = emptyList(),
+            // Nor are its cues. Left in place they would be shifted against the new
+            // episode's clock, putting the wrong dialogue on screen - worse than no
+            // correction. `resolve` reloads them for whatever subtitle it picks.
+            offsetCues = emptyList(),
         )
         resolve(episode)
     }
