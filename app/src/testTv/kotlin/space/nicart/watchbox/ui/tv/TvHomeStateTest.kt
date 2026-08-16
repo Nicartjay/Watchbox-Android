@@ -87,12 +87,68 @@ class TvHomeStateTest {
     @Test
     fun `a short popular feed is not padded from latest`() {
         // Mixing the two would put a Latest title in the spotlight under a Popular
-        // heading, and the same title would then appear twice on screen.
+        // heading, and the same title would then appear twice on screen. Compared as a
+        // set because the hero shuffles - the point here is which feed the titles came
+        // from, not what order they landed in.
         val state = TvHomeState(
             popular = listOf(card("A"), card("B")),
             latest = (1..10).map { card("L$it") },
         )
-        assertEquals(listOf("A", "B"), state.heroItems().map { it.title })
+        assertEquals(setOf("A", "B"), state.heroItems().map { it.title }.toSet())
+    }
+
+    @Test
+    fun `the hero draws from all of popular, not just the top`() {
+        // The reason for shuffling at all: a catalogue's ranking barely moves, so taking
+        // the first five spotlights the same titles every launch. Across seeds the draw
+        // has to be able to reach past the head of the feed.
+        val popular = (1..30).map { card("T$it") }
+        val reached = (1L..40L)
+            .flatMap { TvHomeState(popular = popular, heroSeed = it).heroItems() }
+            .map { it.title }
+            .toSet()
+        assertTrue(reached.size > HERO_ITEM_COUNT, "the draw never left the first five")
+    }
+
+    @Test
+    fun `the same seed always draws the same hero`() {
+        // heroItems() is read during composition, so it has to be pure: if equal state
+        // could yield a different order, the carousel would reshuffle under the user
+        // mid-rotation and the dots would stop tracking anything.
+        val popular = (1..30).map { card("T$it") }
+        val once = TvHomeState(popular = popular, heroSeed = 99L).heroItems()
+        val twice = TvHomeState(popular = popular, heroSeed = 99L).heroItems()
+        assertEquals(once.map { it.title }, twice.map { it.title })
+    }
+
+    @Test
+    fun `a different seed redraws the hero`() {
+        // The seed is reissued per load, and it only means anything if it actually
+        // changes the result.
+        val popular = (1..30).map { card("T$it") }
+        val orders = (1L..20L)
+            .map { TvHomeState(popular = popular, heroSeed = it).heroItems().map { c -> c.title } }
+            .toSet()
+        assertTrue(orders.size > 1, "the seed did not affect the draw")
+    }
+
+    @Test
+    fun `the latest fallback keeps its order`() {
+        // Latest is ordered by recency, which is all it means. A random five from it
+        // would present old titles as new, so the fallback is not shuffled.
+        val latest = (1..10).map { card("L$it") }
+        val state = TvHomeState(latest = latest, heroSeed = 7L)
+        assertEquals(listOf("L1", "L2", "L3", "L4", "L5"), state.heroItems().map { it.title })
+    }
+
+    @Test
+    fun `the hero never repeats a title`() {
+        // A shuffle that sampled with replacement would put the same poster on two dots.
+        val popular = (1..30).map { card("T$it") }
+        (1L..25L).forEach { seed ->
+            val titles = TvHomeState(popular = popular, heroSeed = seed).heroItems().map { it.title }
+            assertEquals(titles.size, titles.toSet().size)
+        }
     }
 
     // ---------------------------------------------------------------- paging

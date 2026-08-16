@@ -174,7 +174,10 @@ fun TvHomeScreen(
         return
     }
 
-    val heroItems = remember(state.popular, state.latest) { state.heroItems() }
+    // Keyed on the seed as well as the feeds: the shuffle is part of the result, so a new
+    // draw has to invalidate this cache or the carousel would keep showing the previous
+    // one for as long as the list identities happened to match.
+    val heroItems = remember(state.popular, state.latest, state.heroSeed) { state.heroItems() }
 
     // The artwork cache is dropped alongside the feed reload in the view model: the cards it
     // holds carry URLs resolved under the previous language, so keeping them would leave every

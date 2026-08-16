@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -22,6 +23,8 @@ import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.friendlyMessage
 import space.nicart.watchbox.extension.ExtensionManager
 import space.nicart.watchbox.ui.browse.SourceEntry
+import space.nicart.watchbox.data.local.ARTWORK_LANGUAGE_DEFAULT
+import kotlin.random.Random
 
 /**
  * TV home state: one source at a time.
@@ -60,6 +63,17 @@ data class TvHomeState(
      * Once one exists the prompt has to change, or it keeps pointing at a step already done.
      */
     val hasNoRepos: Boolean = true,
+    /**
+     * Seed for the hero's shuffle.
+     *
+     * The spotlight draws a random handful of Popular rather than its first five, so
+     * opening the app twice does not present the same titles - but the draw has to be
+     * stable for as long as that feed is on screen. Recomputing it per recomposition
+     * would reshuffle under the user mid-carousel, and the dots would stop meaning
+     * anything. Holding the seed in state ties one draw to one load: it changes when the
+     * feed is replaced, and only then.
+     */
+    val heroSeed: Long = 0L,
 ) {
     val hasNoSources: Boolean get() = sources.isEmpty()
 
@@ -122,6 +136,17 @@ class TvHomeViewModel(
      */
     private val _heroIndex = MutableStateFlow(0)
     val heroIndex: StateFlow<Int> = _heroIndex.asStateFlow()
+
+    /**
+     * The artwork language, so the screen can drop its own image cache when it changes.
+     *
+     * Exposed rather than observed twice: the view model already collects settings, and a
+     * second collector in the composition would fire on a different schedule.
+     */
+    val artworkLanguage: StateFlow<String> = store.settings
+        .map { it.artworkLanguage }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ARTWORK_LANGUAGE_DEFAULT)
 
     /** Moves the spotlight on, wrapping. [count] is the current item count. */
     fun advanceHero(count: Int) {
@@ -255,6 +280,22 @@ class TvHomeViewModel(
                 .collect { hasRepos -> _state.value = _state.value.copy(hasNoRepos = !hasRepos) }
         }
 
+        // The artwork language reloads the feed, not just the artwork client's cache.
+        //
+        // Clearing that cache is necessary but not sufficient: the cards already in state
+        // hold poster and logo URLs resolved under the previous language, and nothing
+        // re-resolves them - so the setting appeared to do nothing until the feed reloaded
+        // for some other reason.
+        //
+        // `drop(1)` skips the value present at startup, which the first load already used.
+        viewModelScope.launch {
+            store.settings
+                .map { it.artworkLanguage }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { _state.value.selected?.let(::select) }
+        }
+
         viewModelScope.launch {
             // Re-derived whenever extensions change, so installing one appears here
             // without leaving the screen.
@@ -348,6 +389,10 @@ class TvHomeViewModel(
             _state.value = _state.value.copy(
                 popular = popularItems,
                 latest = latestItems,
+                // A fresh draw per load: the same catalogue opened tomorrow spotlights a
+                // different handful. Issued here, with the feed it belongs to, so the
+                // shuffle changes exactly when its input does and never in between.
+                heroSeed = Random.nextLong(),
                 latestPage = if (latestItems.isEmpty()) 0 else 1,
                 isLoading = false,
                 // Inferred from an empty page rather than the ABI's hasNextPage, which
@@ -422,12 +467,21 @@ class TvHomeViewModel(
  * carousel is only useful while the user can believe they might see all of it, and a
  * spotlight of thirty titles is just Popular again with one item visible at a time.
  *
+ * Drawn at random from that feed rather than off the top, so the spotlight is not the
+ * same five titles every launch while the catalogue's own ranking barely moves. The draw
+ * is seeded from state, which makes this a pure function of the state: the same state
+ * always yields the same order, so recomposition cannot reshuffle the carousel under
+ * whoever is watching it.
+ *
  * Falls back to Latest so a source with no Popular feed still gets a hero rather than an
- * empty band above the rows. The first entry is also what seeds the backdrop before the
- * D-pad has touched anything, so the order matches what is on screen at rest.
+ * empty band above the rows. That fallback is deliberately *not* shuffled - Latest is
+ * ordered by recency, which is the whole of its meaning, and a random five from it would
+ * claim to be new without being it.
  */
-fun TvHomeState.heroItems(): List<AnimeCard> =
-    (popular.takeIf { it.isNotEmpty() } ?: latest).take(HERO_ITEM_COUNT)
+fun TvHomeState.heroItems(): List<AnimeCard> = when {
+    popular.isNotEmpty() -> popular.shuffled(Random(heroSeed)).take(HERO_ITEM_COUNT)
+    else -> latest.take(HERO_ITEM_COUNT)
+}
 
 /**
  * How many titles the hero rotates through.
