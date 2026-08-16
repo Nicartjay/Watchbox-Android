@@ -321,6 +321,22 @@ class PlayerViewModel(
         val url = state.subtitles.getOrNull(state.selectedSubtitleIndex)?.url
 
         if (state.subtitleOffsetMs == 0L || url == null) {
+            // Logged, because this is the one path that fails in complete silence. An
+            // offset with no URL to shift against does nothing at all, and from the screen
+            // that is indistinguishable from the offset being wrong: the panel shows the
+            // correction, the subtitles do not move, and nothing reports a problem.
+            //
+            // No URL means the track is embedded in the stream rather than sideloaded -
+            // common for HLS - so there is no file to parse and the timing belongs to the
+            // decoder.
+            if (state.subtitleOffsetMs != 0L) {
+                android.util.Log.w(
+                    TAG,
+                    "offset=${state.subtitleOffsetMs}ms but the selected subtitle has no " +
+                        "URL (index=${state.selectedSubtitleIndex}, " +
+                        "tracks=${state.subtitles.size}) - embedded track, cannot shift",
+                )
+            }
             cuesJob?.cancel()
             cuesLoadedFor = null
             if (state.offsetCues.isNotEmpty()) {
@@ -536,7 +552,25 @@ class PlayerViewModel(
 
         val resolved = current.resolve(mark, positionMs)
         if (resolved != null) {
-            setSubtitleOffset(_uiState.value.subtitleOffsetMs + resolved)
+            // Added to the current offset, because the marks are taken against subtitles
+            // that are already shifted by it: the measurement is the error that remains,
+            // not the total.
+            //
+            // That only holds while the shift is actually being applied. When it is not -
+            // an embedded track with no cue list - the subtitle stays where it was, so a
+            // second measurement re-measures the same error and the offset doubles. Which
+            // is exactly what a report of "5.57 then 11.11 for the same line" describes.
+            //
+            // So it replaces rather than accumulates when nothing is being shifted, and the
+            // value stays the honest measurement instead of compounding.
+            // A positive offset is served from the player's own buffered cues even without
+            // a parsed list, so that counts as live too - otherwise an embedded track would
+            // replace on every measurement and never converge.
+            val st = _uiState.value
+            val shiftIsLive = st.offsetCues.isNotEmpty() || st.subtitleOffsetMs > 0L
+            setSubtitleOffset(
+                if (shiftIsLive) st.subtitleOffsetMs + resolved else resolved,
+            )
             return
         }
 
@@ -697,3 +731,5 @@ class PlayerViewModel(
         }
     }
 }
+
+private const val TAG = "WbPlayer"

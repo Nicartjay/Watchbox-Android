@@ -86,6 +86,50 @@ class SubtitleSyncTest {
         assertEquals(0L, armed.resolve(SyncMark.SPOKEN, 10_000L))
     }
 
+    // ------------------------------------------------- repeated measurement
+
+    @Test
+    fun `a second measurement measures only the remaining error`() {
+        // The marks are taken against subtitles that are ALREADY shifted by the current
+        // offset, so what the user measures is the error that is left - never the total.
+        // Adding it is therefore correct, and is what makes repeated measurement converge.
+        //
+        // Cue at media 10s, offset already +3s, so it displays at 13s. True speech at 15s.
+        val armed = SyncCalibration(SyncMark.SUBTITLE, firstPositionMs = 13_000L)
+        val remaining = armed.resolve(SyncMark.SPOKEN, 15_000L)
+
+        assertEquals(2_000L, remaining)
+
+        // 3s + 2s = 5s, which puts the cue at 10 + 5 = 15s: exactly the speech.
+        assertEquals(5_000L, 3_000L + remaining!!)
+    }
+
+    @Test
+    fun `converging measurements approach zero remaining error`() {
+        // Each pass halves the error in this example; the point is that the total only ever
+        // grows towards the right answer rather than oscillating.
+        var offset = 0L
+        var displayedError = 4_000L
+
+        repeat(3) {
+            val armed = SyncCalibration(SyncMark.SUBTITLE, firstPositionMs = 10_000L)
+            val measured = armed.resolve(SyncMark.SPOKEN, 10_000L + displayedError)!!
+            offset += measured
+            displayedError /= 2
+        }
+
+        // 4000 + 2000 + 1000
+        assertEquals(7_000L, offset)
+    }
+
+    @Test
+    fun `a perfectly synced subtitle measures no change`() {
+        // Once correct, both taps land at the same instant and the offset is left alone.
+        val armed = SyncCalibration(SyncMark.SUBTITLE, firstPositionMs = 20_000L)
+
+        assertEquals(0L, armed.resolve(SyncMark.SPOKEN, 20_000L))
+    }
+
     // --------------------------------------------------------------- clamp
 
     @Test

@@ -12,6 +12,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -80,11 +81,34 @@ fun ComposeSubtitleView(
 ) {
     var playerCues by remember { mutableStateOf<List<String>>(emptyList()) }
 
+    // The player's cues as they arrive, kept with the position they arrived at.
+    //
+    // This is what makes an offset work for a track the app cannot fetch - one embedded in
+    // an HLS stream, which has no URL and so no file to parse. `onCues` gives no timing of
+    // its own, but the player's position at the moment of the callback is when the line was
+    // meant to appear, and that is enough to hold it back.
+    //
+    // Only a positive offset can be served this way: a line cannot be shown before the
+    // decoder has emitted it. Negative offsets still need the parsed list.
+    val recentCues = remember(player) { mutableStateListOf<TimedCue>() }
+
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onCues(cueGroup: CueGroup) {
-                playerCues = cueGroup.cues.mapNotNull { it.text?.toString() }
+                val texts = cueGroup.cues.mapNotNull { it.text?.toString() }
                     .filter { it.isNotBlank() }
+                playerCues = texts
+
+                if (texts.isEmpty()) return
+
+                // Stamped with the player's own clock, not the callback's
+                // presentationTimeUs: that is relative to the current period and does not
+                // line up with `currentPosition` on a multi-period stream.
+                recentCues += TimedCue(atMs = player.currentPosition, lines = texts)
+
+                // Bounded, since this grows for the length of the episode otherwise. A few
+                // seconds of history is all a delay can draw from.
+                while (recentCues.size > MAX_BUFFERED_CUES) recentCues.removeAt(0)
             }
         }
         player.addListener(listener)
@@ -119,24 +143,46 @@ fun ComposeSubtitleView(
     // truncate by the same amount, which is the very error being corrected. Read from the
     // player rather than derived from [positionMs] so it stays true across a seek, and
     // only while an offset is set - otherwise this is a timer doing nothing.
+    // A delay drawn from the player's own cues, for tracks the app cannot parse.
+    //
+    // Shows the line whose arrival was `offsetMs` ago, which is exactly a positive shift.
+    // Used only when the parsed list is unavailable - that path handles both directions and
+    // does not depend on the decoder having emitted anything yet.
+    val usesBufferedDelay = !usesOffset && offsetMs > 0L
+
     var tickMs by remember { mutableLongStateOf(positionMs) }
-    LaunchedEffect(usesOffset, player) {
-        if (!usesOffset) return@LaunchedEffect
+    LaunchedEffect(usesOffset, usesBufferedDelay, player) {
+        // Polled for either shifting path. The screen's own 500ms tick is for a scrubber,
+        // where half a second is invisible; a cue boundary is not.
+        if (!usesOffset && !usesBufferedDelay) return@LaunchedEffect
         while (true) {
             tickMs = player.currentPosition
             delay(CUE_POLL_MS)
         }
     }
 
-    // Dropped the moment the app takes over drawing.
+    // Dropped the moment the app takes over drawing from the parsed list.
     //
     // Disabling the decoder stops new callbacks but does not retract the last one, so the
     // line showing at that instant would stay frozen on screen until the next state change.
+    // Not cleared for the buffered path, which needs those callbacks to keep arriving.
     LaunchedEffect(usesOffset) {
         if (usesOffset) playerCues = emptyList()
     }
 
-    val cues = if (usesOffset) {
+    val bufferedCues = if (usesBufferedDelay) {
+        // The fine clock when it agrees with the screen, else the screen's - the same
+        // trust rule the parsed path uses, for the same reasons.
+        val drift = kotlin.math.abs(tickMs - positionMs)
+        val clock = if (drift <= CUE_CLOCK_TRUST_MS) tickMs else positionMs
+        recentCues.lastOrNull { it.atMs <= clock - offsetMs }?.lines.orEmpty()
+    } else {
+        emptyList()
+    }
+
+    val cues = if (usesBufferedDelay) {
+        bufferedCues
+    } else if (usesOffset) {
         // The fine clock is used only while it agrees with the screen's own position.
         //
         // They diverge in two cases, and in both the screen is right: after a seek, until
@@ -291,3 +337,21 @@ private const val CUE_POLL_MS = 100L
  * between the two is tolerated, while a seek or a frozen local clock during casting is not.
  */
 private const val CUE_CLOCK_TRUST_MS = 1_500L
+
+/**
+ * One cue group and the playback position it was emitted at.
+ *
+ * `onCues` carries no timing usable against `currentPosition`, so the position is sampled
+ * at the callback instead. That is accurate to the poll interval, which is well inside the
+ * tolerance a subtitle delay needs.
+ */
+private data class TimedCue(val atMs: Long, val lines: List<String>)
+
+/**
+ * How many cue groups to keep for the buffered delay.
+ *
+ * Enough to cover the largest offset at a realistic line rate, and bounded because this
+ * otherwise grows for the length of the episode. Dialogue rarely exceeds a line per second,
+ * so this covers several minutes of delay.
+ */
+private const val MAX_BUFFERED_CUES = 400
