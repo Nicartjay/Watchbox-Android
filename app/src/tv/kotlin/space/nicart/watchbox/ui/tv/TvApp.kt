@@ -39,6 +39,10 @@ import androidx.compose.foundation.layout.Box
 import space.nicart.watchbox.ui.update.UpdatePromptDialog
 import space.nicart.watchbox.ui.update.UpdatePromptState
 import space.nicart.watchbox.ui.update.UpdatePromptViewModel
+import androidx.compose.ui.platform.LocalContext
+import space.nicart.watchbox.ui.source.SourcePreferenceGroup
+import space.nicart.watchbox.ui.source.SourceSettingsScreen
+import space.nicart.watchbox.ui.source.readSourcePreferences
 
 /**
  * TV entry point.
@@ -189,7 +193,42 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
             ExtensionsScreen(
                 viewModel = viewModel,
                 onBack = navController::popBackStack,
-                onOpenSettings = { },
+                // Navigates, as on the phone. This was an empty lambda, so the per-extension
+                // settings button was present, focusable and did nothing at all - and the
+                // destination it needs was never registered on this nav host either.
+                onOpenSettings = { extension ->
+                    navController.navigate(
+                        Routes.SourceSettings(extension.pkgName, extension.name),
+                    )
+                },
+            )
+        }
+
+        composable<Routes.SourceSettings> { entry ->
+            val route = entry.toRoute<Routes.SourceSettings>()
+            val context = LocalContext.current
+
+            // Read once per visit rather than per recomposition: building the preference
+            // tree runs extension code and touches SharedPreferences.
+            val groups = remember(route.pkgName) {
+                container.extensionManager.installed.value
+                    .firstOrNull { it.pkgName == route.pkgName }
+                    ?.sources
+                    ?.map { source ->
+                        SourcePreferenceGroup(
+                            sourceId = source.id,
+                            sourceName = source.name,
+                            preferences = readSourcePreferences(context, source),
+                        )
+                    }
+                    ?.filter { it.preferences.isNotEmpty() }
+                    .orEmpty()
+            }
+
+            SourceSettingsScreen(
+                extensionName = route.extensionName,
+                groups = groups,
+                onBack = navController::popBackStack,
             )
         }
     }
