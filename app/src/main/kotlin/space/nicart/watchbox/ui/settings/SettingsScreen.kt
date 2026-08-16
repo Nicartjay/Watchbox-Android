@@ -605,17 +605,37 @@ fun SettingsScreen(
                     // What changed, rather than what the app is.
                     //
                     // The description said the same thing on every build and was read once;
-                    // after an update the useful question is what moved. The GPL attribution
-                    // stays below it, since that is a licence obligation and not a
-                    // description.
+                    // after an update the useful question is what moved. The licence
+                    // attribution now has its own group below, so About is version and
+                    // changelog only.
                     if (changelog.isNotEmpty()) {
                         Spacer(Modifier.height(14.dp))
                         ChangelogList(entries = changelog)
                     }
+                }
+            }
 
-                    Spacer(Modifier.height(12.dp))
+            // Kept in the app, not just the README.
+            //
+            // The design system is ported from GPL-3.0 code rather than merely inspired by
+            // it, which is why WatchBox is GPL-3.0 at all - and the GPL asks that those
+            // notices survive in what you ship. Dropping the only in-app attribution would
+            // save one line and put the licence in question, so it moved out of About
+            // instead of going away.
+            item(key = "licences-label") {
+                SettingsGroupLabel(stringResource(R.string.settings_licences))
+            }
+
+            item(key = "licences") {
+                SettingsCard {
                     Text(
-                        text = "Interface derived from NuvioMobile (GPL-3.0).",
+                        text = stringResource(R.string.settings_licence_watchbox),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.textMuted,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.settings_licence_nuvio),
                         style = MaterialTheme.typography.labelSmall,
                         color = tokens.colors.textMuted,
                     )

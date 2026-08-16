@@ -203,6 +203,9 @@
     <string name="settings_artwork_language_note">Applies to posters and title logos only, not subtitles. Falls back to English, then to whatever the title has.</string>
     <string name="settings_whats_new">What\'s new</string>
     <string name="settings_about">About</string>
+    <string name="settings_licences">Licences</string>
+    <string name="settings_licence_nuvio">Interface derived from NuvioMobile (GPL-3.0).</string>
+    <string name="settings_licence_watchbox">WatchBox is free software under the GNU GPL-3.0. It plays media from user-installed extensions and hosts no content itself.</string>
 
     <!-- Casting -->
     <string name="cast_title">Cast to device</string>
