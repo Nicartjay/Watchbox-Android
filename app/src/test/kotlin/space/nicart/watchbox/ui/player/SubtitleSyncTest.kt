@@ -90,20 +90,28 @@ class SubtitleSyncTest {
 
     @Test
     fun `offsets are clamped to the supported range`() {
-        assertEquals(SUBTITLE_OFFSET_LIMIT_MS, clampSubtitleOffset(60_000L))
-        assertEquals(-SUBTITLE_OFFSET_LIMIT_MS, clampSubtitleOffset(-60_000L))
+        assertEquals(SUBTITLE_OFFSET_LIMIT_MS, clampSubtitleOffset(SUBTITLE_OFFSET_LIMIT_MS * 2))
+        assertEquals(-SUBTITLE_OFFSET_LIMIT_MS, clampSubtitleOffset(-SUBTITLE_OFFSET_LIMIT_MS * 2))
         assertEquals(1_500L, clampSubtitleOffset(1_500L))
         assertEquals(0L, clampSubtitleOffset(0L))
     }
 
     @Test
-    fun `a mistap far from the mark is clamped rather than rejected`() {
-        // Leaving the player running for a minute between taps must not produce an
-        // offset that hides every subtitle with no way back.
-        val armed = SyncCalibration(SyncMark.SUBTITLE, 10_000L)
-        val raw = armed.resolve(SyncMark.SPOKEN, 90_000L)!!
+    fun `a minute of desync is accepted`() {
+        // The earlier ten-second ceiling refused corrections that were legitimate: a
+        // subtitle timed to a different release - an extra recap, a broadcast cut - can be
+        // out by far more than that, and clamping it read as the feature not working.
+        assertEquals(60_000L, clampSubtitleOffset(60_000L))
+        assertEquals(-90_000L, clampSubtitleOffset(-90_000L))
+    }
 
-        assertEquals(80_000L, raw)
+    @Test
+    fun `a mistap beyond the bound is clamped rather than rejected`() {
+        // Walking away mid-measurement must not produce an offset that moves every cue
+        // outside the runtime, leaving no subtitles to correct by.
+        val armed = SyncCalibration(SyncMark.SUBTITLE, 10_000L)
+        val raw = armed.resolve(SyncMark.SPOKEN, SUBTITLE_OFFSET_LIMIT_MS * 3)!!
+
         assertEquals(SUBTITLE_OFFSET_LIMIT_MS, clampSubtitleOffset(raw))
     }
 

@@ -640,7 +640,24 @@ fun PlayerScreen(
     // Text groups are matched positionally against `state.subtitles` because that is the order
     // they were handed to the MediaItem in. Anything already embedded in the stream itself is
     // skipped, since it has no entry in our list to correspond to.
-    LaunchedEffect(state.selectedSubtitleIndex, state.selectedStream?.url, tracks) {
+    //
+    // The player's own text track is switched off entirely while a timing offset is in
+    // effect. This is what actually makes the offset visible: the app draws its own shifted
+    // cues, but leaving the decoder enabled meant it went on emitting the same lines at
+    // their original times through `onCues`, so the unshifted copy kept appearing and the
+    // correction looked like it did nothing.
+    //
+    // Only when there are cues to draw instead. With an unparsable subtitle - ASS/SSA, or an
+    // embedded track with no URL - disabling the track would leave no subtitles at all,
+    // which is far worse than ones that are slightly out.
+    val rendersOwnCues = state.subtitleOffsetMs != 0L && state.offsetCues.isNotEmpty()
+
+    LaunchedEffect(
+        state.selectedSubtitleIndex,
+        state.selectedStream?.url,
+        tracks,
+        rendersOwnCues,
+    ) {
         val wanted = state.selectedSubtitleIndex.takeIf { it >= 0 }
 
         val textGroups = tracks?.groups.orEmpty()
@@ -648,7 +665,16 @@ fun PlayerScreen(
 
         val builder = exoPlayer.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_TEXT)
-            .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, wanted == null)
+            .setTrackTypeDisabled(
+                androidx.media3.common.C.TRACK_TYPE_TEXT,
+                wanted == null || rendersOwnCues,
+            )
+
+        // Nothing further to select when the app is drawing the cues itself.
+        if (rendersOwnCues) {
+            exoPlayer.trackSelectionParameters = builder.build()
+            return@LaunchedEffect
+        }
 
         // Sideloaded configurations are appended after the stream's own text tracks, so the
         // tail of the list lines up with ours.

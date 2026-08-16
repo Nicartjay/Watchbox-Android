@@ -173,6 +173,14 @@ class PlayerViewModel(
 
     private var resolveJob: Job? = null
     private var cuesJob: Job? = null
+
+    /**
+     * The subtitle URL whose cues are loaded or loading.
+     *
+     * Guards against refetching: the cue list depends on which subtitle is selected, not on
+     * the offset value, so adjusting the offset must not restart the load.
+     */
+    private var cuesLoadedFor: String? = null
     private var subtitleJob: Job? = null
     private var skipJob: Job? = null
     private var lastHistoryWrite = 0L
@@ -309,17 +317,33 @@ class PlayerViewModel(
      * changed track.
      */
     private fun refreshOffsetCues() {
-        cuesJob?.cancel()
-
         val state = _uiState.value
         val url = state.subtitles.getOrNull(state.selectedSubtitleIndex)?.url
 
         if (state.subtitleOffsetMs == 0L || url == null) {
+            cuesJob?.cancel()
+            cuesLoadedFor = null
             if (state.offsetCues.isNotEmpty()) {
                 _uiState.value = _uiState.value.copy(offsetCues = emptyList())
             }
             return
         }
+
+        // Already have them, or already fetching them, for this exact subtitle.
+        //
+        // This is what made the offset appear to do nothing. Every call used to cancel the
+        // job in flight and start again, and the callers fire repeatedly - the stepper on
+        // each press, and the sync buttons on each mark - so on device the fetch was killed
+        // and restarted several times a second and never once completed. The log was a wall
+        // of `cue parse failed: CancellationException`, and offsetCues stayed empty, so the
+        // renderer kept falling back to the player's own unshifted timing.
+        //
+        // The cue list depends only on which subtitle is selected, never on the offset
+        // value, so changing the offset must not refetch at all.
+        if (cuesLoadedFor == url) return
+
+        cuesJob?.cancel()
+        cuesLoadedFor = url
 
         cuesJob = viewModelScope.launch {
             val cues = subtitles.cues(url)
@@ -330,6 +354,10 @@ class PlayerViewModel(
             ) {
                 return@launch
             }
+            // Cleared on failure so a later attempt is not blocked by a load that produced
+            // nothing - a transient network error should not disable the feature for the
+            // rest of the episode.
+            if (cues.isEmpty()) cuesLoadedFor = null
             _uiState.value = _uiState.value.copy(offsetCues = cues)
         }
     }
@@ -568,6 +596,10 @@ class PlayerViewModel(
             // correction. `resolve` reloads them for whatever subtitle it picks.
             offsetCues = emptyList(),
         )
+        // Reset alongside them, or the guard would treat the next episode's identical
+        // subtitle URL as already loaded and never refetch. Some sources reuse a URL
+        // shape per episode, so this is not hypothetical.
+        cuesLoadedFor = null
         resolve(episode)
     }
 

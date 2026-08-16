@@ -76,6 +76,8 @@
     <string name="player_subtitle_sync_measure">Measure from the video</string>
     <string name="player_subtitle_sync_mark_subtitle">Subtitle appeared</string>
     <string name="player_subtitle_sync_mark_spoken">Line was spoken</string>
+    <string name="player_subtitle_sync_tap_hint">Tap at the exact moment</string>
+    <string name="player_subtitle_sync_marked">MARKED</string>
     <string name="player_subtitle_sync_cancel">Cancel measurement</string>
     <string name="player_subtitle_sync_waiting_spoken">Now tap when the line is spoken</string>
     <string name="player_subtitle_sync_waiting_subtitle">Now tap when the subtitle appears</string>

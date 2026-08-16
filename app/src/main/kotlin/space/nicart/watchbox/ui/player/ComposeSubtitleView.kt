@@ -128,6 +128,14 @@ fun ComposeSubtitleView(
         }
     }
 
+    // Dropped the moment the app takes over drawing.
+    //
+    // Disabling the decoder stops new callbacks but does not retract the last one, so the
+    // line showing at that instant would stay frozen on screen until the next state change.
+    LaunchedEffect(usesOffset) {
+        if (usesOffset) playerCues = emptyList()
+    }
+
     val cues = if (usesOffset) {
         // The fine clock is used only while it agrees with the screen's own position.
         //

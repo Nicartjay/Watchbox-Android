@@ -74,6 +74,9 @@ import space.nicart.watchbox.data.remote.SubtitleResult
 import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.domain.StreamOption
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.border
+import androidx.compose.material.icons.rounded.Subtitles
+import androidx.compose.material.icons.rounded.RecordVoiceOver
 
 /**
  * Player side panels + skip button.
@@ -718,12 +721,17 @@ private fun SubtitleSyncPanel(
             pendingFocus = null
         }
 
-        PanelChoiceRow(
+        // These two are the only controls in the panel that capture a moment rather than
+        // set a value, so they are drawn as buttons rather than as list rows. Everything
+        // else here is a choice or a nudge; these are a stopwatch, and mistaking one for a
+        // menu entry is what makes the measurement hard to find.
+        SyncMarkButton(
             label = stringResource(R.string.player_subtitle_sync_mark_subtitle),
-            selected = calibration.firstMark == SyncMark.SUBTITLE,
+            icon = Icons.Rounded.Subtitles,
+            armed = calibration.firstMark == SyncMark.SUBTITLE,
             enabled = calibration.isEnabled(SyncMark.SUBTITLE),
             onClick = {
-                // Arming disables this row, so focus moves to the mark still
+                // Arming disables this button, so focus moves to the mark still
                 // outstanding; completing re-enables both, and the stepper is the
                 // natural next stop.
                 pendingFocus = if (calibration.isArmed) laterFocus else spokenFocus
@@ -732,9 +740,12 @@ private fun SubtitleSyncPanel(
             focusRequester = subtitleFocus,
         )
 
-        PanelChoiceRow(
+        Spacer(Modifier.height(8.dp))
+
+        SyncMarkButton(
             label = stringResource(R.string.player_subtitle_sync_mark_spoken),
-            selected = calibration.firstMark == SyncMark.SPOKEN,
+            icon = Icons.Rounded.RecordVoiceOver,
+            armed = calibration.firstMark == SyncMark.SPOKEN,
             enabled = calibration.isEnabled(SyncMark.SPOKEN),
             onClick = {
                 pendingFocus = if (calibration.isArmed) laterFocus else subtitleFocus
@@ -797,6 +808,103 @@ private fun SubtitleSyncPanel(
             icon = Icons.Rounded.Refresh,
             enabled = offsetMs != 0L,
         )
+    }
+}
+
+/**
+ * A tap-to-mark button for the two-tap sync measurement.
+ *
+ * Deliberately unlike the panel's other controls. Everything else here selects a value from
+ * a list or nudges one; these capture the instant they are pressed, and drawn as list rows
+ * they read as settings rather than as a stopwatch.
+ *
+ * Taller, accent-outlined, with an icon and a hint line, so the pair reads as one action
+ * with two halves. The armed one fills solid, which is the clearest available signal that
+ * a measurement is in progress and the other button is what completes it.
+ */
+@Composable
+private fun SyncMarkButton(
+    label: String,
+    icon: ImageVector,
+    armed: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    focusRequester: FocusRequester? = null,
+) {
+    val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
+
+    val background = when {
+        armed -> tokens.colors.accent
+        !enabled -> tokens.colors.surface
+        else -> tokens.colors.surfaceCard
+    }
+    val content = when {
+        armed -> tokens.colors.onAccent
+        !enabled -> tokens.colors.textDisabled
+        else -> tokens.colors.textPrimary
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+            .adaptiveFocus(interaction, RoundedCornerShape(14.dp), scale = false)
+            .clip(RoundedCornerShape(14.dp))
+            .background(background)
+            // An outline only while it is actionable: on a disabled button it would suggest
+            // something to press, and on the armed one the fill already carries the emphasis.
+            .then(
+                if (enabled && !armed) {
+                    Modifier.border(
+                        width = 1.dp,
+                        color = tokens.colors.accent.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(14.dp),
+                    )
+                } else {
+                    Modifier
+                },
+            )
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                enabled = enabled,
+                onClick = onClick,
+            )
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (armed) content else tokens.colors.accent.takeIf { enabled } ?: content,
+            modifier = Modifier.size(22.dp),
+        )
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = content,
+            )
+            Text(
+                text = stringResource(R.string.player_subtitle_sync_tap_hint),
+                style = MaterialTheme.typography.labelSmall,
+                color = content.copy(alpha = 0.7f),
+            )
+        }
+
+        // Only on the armed button, where it names what the fill means.
+        if (armed) {
+            Text(
+                text = stringResource(R.string.player_subtitle_sync_marked),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = content,
+            )
+        }
     }
 }
 

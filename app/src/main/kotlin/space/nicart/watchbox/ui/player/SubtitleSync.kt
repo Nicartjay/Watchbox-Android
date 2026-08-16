@@ -60,15 +60,21 @@ fun SyncCalibration.resolve(second: SyncMark, secondPositionMs: Long): Long? {
 /**
  * Clamps an offset to the supported range.
  *
- * Bounded because an unbounded value is unrecoverable in practice: a wildly wrong offset
- * hides every subtitle, which removes the feedback needed to correct it. Ten seconds is
- * far beyond any genuine desync while still leaving the subtitles visible.
+ * Ten seconds was too tight. A subtitle matched to a different release can be out by far
+ * more than that - a version with an extra recap, a different intro, or one timed to a
+ * broadcast cut rather than a stream - and the earlier ceiling silently refused corrections
+ * that were entirely legitimate, which read as the feature not working.
+ *
+ * Still bounded rather than free. The bound is a sanity limit, not a judgement about
+ * plausible desync: an offset larger than the episode itself moves every cue outside the
+ * runtime, and with no subtitles left on screen there is no feedback to correct it by. Ten
+ * minutes is beyond any real mismatch while staying recoverable.
  */
 fun clampSubtitleOffset(offsetMs: Long): Long =
     offsetMs.coerceIn(-SUBTITLE_OFFSET_LIMIT_MS, SUBTITLE_OFFSET_LIMIT_MS)
 
 /** Largest correction offered, in either direction. */
-const val SUBTITLE_OFFSET_LIMIT_MS = 10_000L
+const val SUBTITLE_OFFSET_LIMIT_MS = 600_000L
 
 /** One nudge of the manual stepper. */
 const val SUBTITLE_OFFSET_STEP_MS = 250L
