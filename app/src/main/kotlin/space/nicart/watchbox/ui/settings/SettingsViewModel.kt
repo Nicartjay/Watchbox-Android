@@ -58,15 +58,23 @@ class SettingsViewModel(
     private var updateJob: Job? = null
 
     init {
+        // The changelog is fetched on its own, unconditionally.
+        //
+        // It used to ride along inside the auto-check block below, which looked economical -
+        // same endpoint, same open - but that block returns early unless an update check is
+        // actually due. The check is throttled to once a day, so for the other 23 hours
+        // About showed a version number and nothing else, and disabling automatic updates
+        // hid the changelog permanently. What changed in the last release does not expire on
+        // a timer, so it does not belong behind one.
+        viewModelScope.launch {
+            _changelog.value = updateChecker.changelog()
+        }
+
         // Silent check on first open: only surfaces something when an update
         // actually exists, so it never interrupts with "you are up to date".
         viewModelScope.launch {
             val current = store.settings.first()
             if (!current.shouldAutoCheck) return@launch
-
-            // Fetched here rather than on its own trigger: this block already runs once per
-            // open and already talks to the same endpoint, so the changelog rides along.
-            _changelog.value = updateChecker.changelog()
 
             store.markUpdateChecked()
             val result = updateChecker.check()
