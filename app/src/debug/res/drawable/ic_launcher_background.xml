@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only adaptive-icon background.
+
+  The release icon is ink-on-#14161B. This swaps the tile for the vermilion of the seek
+  rule and leaves the 見 glyph untouched, so the debug build is instantly distinguishable
+  in a launcher while still reading as WatchBox rather than an unrelated app.
+
+  Vermilion because it is already the palette's accent - no new colour is introduced - and
+  because a red tile reads as "not the real one" without needing a label.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M0,0h108v108h-108z"
+        android:fillColor="#EE5C33" />
+</vector>

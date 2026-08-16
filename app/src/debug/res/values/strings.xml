@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only overrides.
+
+  The debug build installs alongside the release one - a different applicationId, its own
+  data - so on a device carrying both there is no way to tell which is which from the
+  launcher. Two identical icons with the same name led to a real session of testing the
+  released build and concluding a fix had not worked.
+
+  Only the label and the icon differ. Nothing here changes behaviour.
+-->
+<resources>
+    <string name="app_name">WatchBox DEV</string>
+</resources>
