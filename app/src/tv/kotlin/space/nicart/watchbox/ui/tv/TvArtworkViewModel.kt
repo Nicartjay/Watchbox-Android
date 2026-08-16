@@ -164,6 +164,38 @@ class TvArtworkViewModel(
         _lastOpened.value = null
     }
 
+    /**
+     * Drops every resolved image so the next request re-picks it.
+     *
+     * Called when the artwork language changes. The client's own cache is cleared at the same
+     * time, but that alone is not enough: the entries here hold the poster and logo URLs
+     * chosen under the previous language, and nothing re-resolves them - so the setting
+     * appeared to do nothing until a source switch happened to discard them anyway.
+     *
+     * Deliberately does not touch [lastSourceId]: the source has not changed, and resetting
+     * it would make the next recomposition look like a switch and strand focus.
+     */
+    fun onArtworkLanguageChanged() {
+        focusJob?.cancel()
+        _artwork.value = emptyMap()
+        requestedRows.clear()
+
+        // Re-resolved rather than blanked, so the hero does not lose its backdrop while the
+        // new artwork is fetched. The card itself is unchanged; only its URLs are stale.
+        //
+        // Refetched directly rather than through onFocus, which returns early for a card that
+        // already carries a backdrop - true of every card that has been enriched once, so
+        // routing through it here would silently do nothing.
+        val showing = _focused.value ?: return
+        focusJob = viewModelScope.launch {
+            val enriched = repository.artworkFor(showing)
+            if (!enriched.hasArtwork()) return@launch
+            _artwork.value = _artwork.value + (showing.key to enriched)
+            // Guarded, since focus may have moved while this was in flight.
+            if (_focused.value?.key == showing.key) _focused.value = enriched
+        }
+    }
+
     /** The source the retained state belongs to, so a switch can be told from a recomposition. */
     private var lastSourceId: Long? = null
 

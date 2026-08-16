@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -94,6 +95,22 @@ class HomeViewModel(
                         _uiState.value = _uiState.value.copy(hasNoRepos = !hasRepos)
                     }
                 }
+        }
+
+        // The artwork language rebuilds the feed, not just the artwork client's cache.
+        //
+        // Clearing that cache is necessary but not sufficient: the cards already in state
+        // hold the poster and logo URLs resolved under the previous language, and nothing
+        // re-resolves them. So the setting appeared to do nothing until the feed happened to
+        // reload for some other reason.
+        //
+        // `drop(1)` skips the value present at startup, which the initial load already used.
+        viewModelScope.launch {
+            store.settings
+                .map { it.artworkLanguage }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { load(refresh = true) }
         }
     }
 

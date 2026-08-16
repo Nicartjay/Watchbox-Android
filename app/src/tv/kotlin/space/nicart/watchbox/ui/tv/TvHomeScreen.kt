@@ -176,6 +176,12 @@ fun TvHomeScreen(
 
     val heroItems = remember(state.popular, state.latest) { state.heroItems() }
 
+    // The artwork cache is dropped alongside the feed reload in the view model: the cards it
+    // holds carry URLs resolved under the previous language, so keeping them would leave every
+    // already-seen title on its old logo.
+    val artworkLanguage by viewModel.artworkLanguage.collectAsStateWithLifecycle()
+    LaunchedEffect(artworkLanguage) { artworkViewModel.onArtworkLanguageChanged() }
+
     // Kept in the view model, which survives navigation: a remembered index came back as 0
     // after visiting a detail page, resetting the spotlight and leaving focus restoration
     // with no matching card to return to.
