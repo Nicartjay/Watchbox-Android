@@ -88,6 +88,39 @@ class UpdateChecker(
             ?.let { runCatching { json.decodeFromString<List<GithubRelease>>(it) }.getOrNull() }
             ?.firstOrNull { !it.draft && !it.prerelease }
 
+    /**
+     * Recent releases, newest first, for the changelog in Settings.
+     *
+     * Reuses the release list this class already fetches for the update check, so it costs
+     * no new endpoint and no new parsing. Pre-releases and drafts are skipped for the same
+     * reason they are there: they describe builds nobody was offered.
+     *
+     * Returns an empty list on failure rather than throwing. A changelog is informational,
+     * so an unreachable GitHub should leave the card without notes rather than break the
+     * screen - and the version number above it is read locally and always correct.
+     */
+    suspend fun changelog(limit: Int = CHANGELOG_ENTRIES): List<ReleaseNote> {
+        val body = request(
+            "https://api.github.com/repos/$owner/$repo/releases?per_page=$limit",
+        ) ?: return emptyList()
+
+        return runCatching { json.decodeFromString<List<GithubRelease>>(body) }
+            .getOrNull()
+            .orEmpty()
+            .filterNot { it.draft || it.prerelease }
+            .map { release ->
+                ReleaseNote(
+                    // The tag is the reliable one: `name` is free text and is sometimes
+                    // left empty or set to something that is not a version at all.
+                    version = release.tagName.removePrefix("v").ifBlank { release.name.orEmpty() },
+                    notes = release.body.orEmpty().asPlainNotes(),
+                    url = release.htmlUrl,
+                )
+            }
+            .filter { it.version.isNotBlank() }
+    }
+
+
     private suspend fun request(url: String): String? = runCatching {
         val response = client.get(url) {
             header("Accept", "application/vnd.github+json")
@@ -97,6 +130,14 @@ class UpdateChecker(
     }.getOrNull()
 
     companion object {
+        /**
+         * How many past releases the changelog shows.
+         *
+         * Enough to cover recent history without turning Settings into a scrolling wall;
+         * the full list is a tap away on GitHub.
+         */
+        const val CHANGELOG_ENTRIES = 5
+
         const val REPO_OWNER = "Nicartjay"
         const val REPO_NAME = "Watchbox-Android"
 
@@ -189,6 +230,13 @@ sealed interface UpdateResult {
 
 // ---------------------------------------------------------------- wire format
 
+/** One release's notes, for the changelog card. */
+data class ReleaseNote(
+    val version: String,
+    val notes: String,
+    val url: String,
+)
+
 @Serializable
 internal data class GithubRelease(
     @SerialName("tag_name") val tagName: String = "",
@@ -206,3 +254,53 @@ internal data class GithubAsset(
     val size: Long = 0,
     @SerialName("browser_download_url") val downloadUrl: String = "",
 )
+
+/**
+ * Turns a GitHub release body into something readable in a settings card.
+ *
+ * The notes are generated from commit subjects, so they arrive as conventional-commit
+ * lines with a trailing short hash - `feat(player): subtitle timing (4d928c4)`. That is
+ * right for a release page a developer reads and wrong for a card in an app: the scope
+ * prefix and the hash are noise to someone who only wants to know what changed.
+ *
+ * So the prefix and hash are dropped, the leading `## WatchBox <version>` heading goes
+ * (the version is already the label above the notes), and `-` bullets become `·` so the
+ * list reads without a markdown renderer.
+ *
+ * Top-level and internal so it can be tested without the network.
+ */
+internal fun String.asPlainNotes(): String = trim()
+    .lineSequence()
+    .map { it.trim() }
+    .filterNot { it.startsWith("## WatchBox") }
+    .filterNot { it.equals("### Changes", ignoreCase = true) }
+    .map { line ->
+        when {
+            line.startsWith("#") -> line.trimStart('#', ' ')
+            line.startsWith("- ") -> "\u00B7 " + line.removePrefix("- ").asCommitSummary()
+            else -> line
+        }
+    }
+    .joinToString("\n")
+    .replace(Regex("""\n{3,}"""), "\n\n")
+    .trim()
+
+/**
+ * Strips the machinery from one commit subject.
+ *
+ * `feat(player): subtitle timing (4d928c4)` becomes `Subtitle timing`. The type and scope
+ * describe where a change landed in the source, which the reader of a settings card has no
+ * use for, and the hash is only meaningful next to a repository.
+ *
+ * Left alone when the line does not look like a conventional commit, so a hand-written note
+ * survives untouched.
+ */
+private fun String.asCommitSummary(): String {
+    val withoutHash = replace(Regex("""\s*\([0-9a-f]{7,40}\)\s*$"""), "")
+    val summary = CONVENTIONAL_PREFIX.replace(withoutHash, "").trim()
+    return summary.replaceFirstChar { it.uppercase() }
+}
+
+/** `type(scope):` or `type:` at the start of a commit subject. */
+private val CONVENTIONAL_PREFIX =
+    Regex("""^(feat|fix|docs|style|refactor|perf|test|build|ci|chore)(\([^)]*\))?!?:\s*""")

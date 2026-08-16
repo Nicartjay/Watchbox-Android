@@ -19,6 +19,7 @@ import space.nicart.watchbox.ui.player.SubtitleBackground
 import space.nicart.watchbox.ui.player.SubtitleEdgeWidth
 import space.nicart.watchbox.ui.player.SubtitleSize
 import space.nicart.watchbox.data.remote.AppUpdate
+import space.nicart.watchbox.data.remote.ReleaseNote
 import space.nicart.watchbox.data.remote.UpdateChecker
 import space.nicart.watchbox.data.remote.UpdateDownload
 import space.nicart.watchbox.data.remote.UpdateInstaller
@@ -45,6 +46,15 @@ class SettingsViewModel(
     private val _updateState = MutableStateFlow<UpdateUiState>(UpdateUiState.Idle)
     val updateState: StateFlow<UpdateUiState> = _updateState.asStateFlow()
 
+    /**
+     * Recent release notes, for the About card.
+     *
+     * Empty until they arrive, and empty on failure. The card renders the version without
+     * them, so an unreachable GitHub costs the notes rather than the section.
+     */
+    private val _changelog = MutableStateFlow<List<ReleaseNote>>(emptyList())
+    val changelog: StateFlow<List<ReleaseNote>> = _changelog.asStateFlow()
+
     private var updateJob: Job? = null
 
     init {
@@ -53,6 +63,10 @@ class SettingsViewModel(
         viewModelScope.launch {
             val current = store.settings.first()
             if (!current.shouldAutoCheck) return@launch
+
+            // Fetched here rather than on its own trigger: this block already runs once per
+            // open and already talks to the same endpoint, so the changelog rides along.
+            _changelog.value = updateChecker.changelog()
 
             store.markUpdateChecked()
             val result = updateChecker.check()
@@ -148,6 +162,17 @@ class SettingsViewModel(
 
     fun setSubtitleProvider(provider: SubtitleProvider) {
         viewModelScope.launch { store.setSubtitleProvider(provider) }
+    }
+
+    /**
+     * Preferred language for posters and title logos.
+     *
+     * Nothing more is needed here: the application observes this value and hands it to the
+     * artwork client, which drops its cache so already-seen titles are re-resolved rather
+     * than keeping the logos chosen under the previous language.
+     */
+    fun setArtworkLanguage(code: String) {
+        viewModelScope.launch { store.setArtworkLanguage(code) }
     }
 
     fun setSubtitleApiKey(key: String) {

@@ -7,6 +7,7 @@ import io.ktor.http.isSuccess
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import space.nicart.watchbox.data.local.ARTWORK_LANGUAGE_DEFAULT
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -36,6 +37,33 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
 
     /** Memoises hits and misses; cleared only with the process. */
     private val cache = ConcurrentHashMap<String, Any>()
+
+    /**
+     * Preferred language for posters and logos.
+     *
+     * Held here rather than threaded through every call site: artwork is requested from
+     * rails, heroes, detail pages and the cast layer, and passing a language through all of
+     * them to reach two selection points would touch far more code than it informs.
+     *
+     * Written from settings at startup and whenever it changes. Volatile because the write
+     * comes from a coroutine and the reads happen on whichever thread a lookup runs on.
+     */
+    @Volatile
+    private var artworkLanguage: String = ARTWORK_LANGUAGE_DEFAULT
+
+    /**
+     * Sets the artwork language and drops anything already resolved.
+     *
+     * The cache has to go: entries hold the URLs chosen under the previous language, so
+     * keeping them would leave every already-seen title on its old logo until the process
+     * restarted - which reads as the setting not working.
+     */
+    fun setArtworkLanguage(code: String) {
+        val next = code.trim().lowercase().ifBlank { ARTWORK_LANGUAGE_DEFAULT }
+        if (next == artworkLanguage) return
+        artworkLanguage = next
+        cache.clear()
+    }
 
     /**
      * Exact lookup by TMDB id, for sources whose URLs already carry one.
@@ -136,10 +164,11 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
                 // costs nothing extra. Subtitle providers key on IMDb, not TMDB, and this
                 // is the only place the two are ever linked.
                 "append_to_response" to "images,external_ids",
-                // `null` is the language-neutral set: the clean text-free logos, and the
-                // textless posters the portrait hero uses. The language entries cover
-                // logos for titles that have no neutral cut.
-                "include_image_language" to "en,ja,null",
+                // The chosen language, then English, then the language-neutral set - which
+                // is the clean text-free logos and the textless posters the portrait hero
+                // uses. Requested together because the selection falls back through exactly
+                // this order, and asking for one at a time would cost a request per step.
+                "include_image_language" to imageLanguageParam(),
             ),
         ) ?: return null
 
@@ -162,7 +191,7 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
             // Full-height, because a portrait hero fills the screen: the card transform
             // would upscale visibly at that size.
             heroPosterUrl = image(dto.textlessPosterPath, HERO_BACKDROP_SIZE),
-            logoUrl = image(dto.bestLogoPath, LOGO_SIZE),
+            logoUrl = image(dto.logoPathFor(artworkLanguage), LOGO_SIZE),
             overview = dto.overview.orEmpty(),
             year = dto.year,
             rating = dto.voteAverage,
@@ -397,6 +426,15 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
             android.util.Log.w(TAG, "GET $path failed: ${it::class.java.simpleName}")
         }.getOrNull()
     }
+
+    /**
+     * The `include_image_language` value: the chosen language, English, and neutral.
+     *
+     * Deduplicated, so choosing English does not ask for it twice - TMDB accepts that but
+     * it makes the request look wrong to anyone reading it.
+     */
+    private fun imageLanguageParam(): String =
+        listOf(artworkLanguage, "en", "null").distinct().joinToString(",")
 
     private fun image(path: String?, size: String): String? =
         path?.takeIf { it.isNotBlank() }?.let { "$IMAGE_BASE/$size$it" }
@@ -732,14 +770,33 @@ private data class DetailsResponse(
             .maxByOrNull { it.voteAverage }
             ?.filePath
 
+    /**
+     * A poster in [language], falling back through English to whatever exists.
+     *
+     * Used only when the hero is not the portrait one: [textlessPosterPath] is preferred
+     * there, since the app draws the title logo itself and a poster carrying its own would
+     * print the name twice.
+     */
+    fun posterPathFor(language: String): String? =
+        images?.posters.orEmpty().pickByLanguage(language)
+
+    /**
+     * The title logo in [language], falling back through English to whatever exists.
+     *
+     * A logo is drawn per-market, so this is the setting's main effect: someone watching
+     * Japanese releases can have the Japanese lettering with an English interface.
+     */
+    fun logoPathFor(language: String): String? =
+        images?.logos.orEmpty().pickByLanguage(language)
+
+    private fun List<ImageEntry>.pickByLanguage(language: String): String? =
+        pickArtworkByLanguage(
+            candidates = map { ArtworkCandidate(it.filePath, it.iso6391, it.voteAverage) },
+            language = language,
+        )
+
     val bestLogoPath: String?
-        get() = images?.logos.orEmpty()
-            .filterNot { it.filePath.endsWith(".svg", ignoreCase = true) }
-            .let { logos ->
-                logos.firstOrNull { it.iso6391 == "en" }
-                    ?: logos.firstOrNull { it.iso6391 == null }
-                    ?: logos.firstOrNull()
-            }?.filePath
+        get() = logoPathFor("en")
 }
 
 @Serializable
@@ -915,3 +972,53 @@ private data class NextEpisode(
     @SerialName("air_date") val airDate: String = "",
     @SerialName("episode_number") val episodeNumber: Int = 0,
 )
+
+/**
+ * One image TMDB offers, reduced to what the choice depends on.
+ *
+ * Mirrors the response DTO rather than exposing it, so the selection rule can be tested
+ * without constructing a serialised payload.
+ */
+internal data class ArtworkCandidate(
+    val filePath: String,
+    val language: String?,
+    val voteAverage: Double,
+)
+
+/**
+ * Picks the highest-voted image in [language], then English, then language-neutral, then
+ * anything at all.
+ *
+ * The fallback chain matters more than the preference. TMDB's coverage outside English is
+ * patchy, so a strict match would leave most titles with no logo - and a missing logo is
+ * worse than one in the wrong language, because the hero then falls back to plain text.
+ *
+ * English is tried before language-neutral because a neutral entry is usually the textless
+ * cut: correct for a poster behind a logo, wrong for the logo itself, where it would show
+ * artwork with no title on it.
+ *
+ * SVG is excluded throughout: Coil has no SVG decoder registered, so those fail to decode
+ * and the caller silently gets nothing.
+ *
+ * Ordered by vote within each step, since the set mixes official key art with fan uploads
+ * and the votes separate them better than upload order does.
+ */
+internal fun pickArtworkByLanguage(
+    candidates: List<ArtworkCandidate>,
+    language: String,
+): String? {
+    val usable = candidates.filterNot { it.filePath.endsWith(".svg", ignoreCase = true) }
+    if (usable.isEmpty()) return null
+
+    val wanted = language.trim().lowercase().ifBlank { ARTWORK_LANGUAGE_DEFAULT }
+
+    fun bestOf(predicate: (ArtworkCandidate) -> Boolean) =
+        usable.filter(predicate).maxByOrNull { it.voteAverage }
+
+    return (
+        bestOf { it.language.equals(wanted, ignoreCase = true) }
+            ?: bestOf { it.language.equals(ARTWORK_LANGUAGE_DEFAULT, ignoreCase = true) }
+            ?: bestOf { it.language == null }
+            ?: usable.maxByOrNull { it.voteAverage }
+        )?.filePath
+}

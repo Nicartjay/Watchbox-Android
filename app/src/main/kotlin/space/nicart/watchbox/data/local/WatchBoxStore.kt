@@ -70,6 +70,7 @@ class WatchBoxStore(context: Context) {
                 ),
                 subtitleOffsetMs = prefs[Keys.SUB_OFFSET] ?: 0L,
                 subtitleLanguage = prefs[Keys.SUB_LANG] ?: "en",
+                artworkLanguage = prefs[Keys.ARTWORK_LANG] ?: ARTWORK_LANGUAGE_DEFAULT,
                 subtitleProvider = enumOrDefault(
                     prefs[Keys.SUB_PROVIDER],
                     SubtitleProvider.OPEN_SUBTITLES_LEGACY,
@@ -175,6 +176,17 @@ class WatchBoxStore(context: Context) {
 
     suspend fun setSubtitleBackground(background: SubtitleBackground) = store.edit {
         it[Keys.SUB_BACKGROUND] = background.name
+    }
+
+    /**
+     * Preferred language for posters and logos.
+     *
+     * Stored as an ISO 639-1 code. English remains the default because TMDB's English
+     * artwork is by far the most complete, and a language with sparse coverage would
+     * otherwise mean falling back on most titles.
+     */
+    suspend fun setArtworkLanguage(code: String) = store.edit {
+        it[Keys.ARTWORK_LANG] = code.trim().lowercase().ifBlank { ARTWORK_LANGUAGE_DEFAULT }
     }
 
     suspend fun setSubtitleTextColor(color: Int) = store.edit { it[Keys.SUB_COLOR] = color }
@@ -358,6 +370,7 @@ class WatchBoxStore(context: Context) {
         val UI_SCALE = floatPreferencesKey("ui_scale")
         val POSTER_SCALE = floatPreferencesKey("poster_scale")
         val SUB_LANG = stringPreferencesKey("subtitle_language")
+        val ARTWORK_LANG = stringPreferencesKey("artwork_language")
         val SUB_PROVIDER = stringPreferencesKey("subtitle_provider")
         val SUB_API_KEY = stringPreferencesKey("subtitle_api_key")
         val CAST_FORCE_PROXY = booleanPreferencesKey("cast_force_proxy")
@@ -404,6 +417,14 @@ data class AppSettings(
     /** Multiplier applied to poster and card sizes only. */
     val posterScale: Float = 1f,
     val subtitleLanguage: String = "en",
+    /**
+     * Preferred language for TMDB posters and title logos.
+     *
+     * Artwork only - it does not touch the subtitle language or the app's own strings. A
+     * title's logo is usually drawn per-market, so someone watching Japanese releases may
+     * want the Japanese lettering even with an English interface.
+     */
+    val artworkLanguage: String = ARTWORK_LANGUAGE_DEFAULT,
     /** Which online catalogue the subtitle search uses. */
     val subtitleProvider: SubtitleProvider = SubtitleProvider.OPEN_SUBTITLES_LEGACY,
     /** Key for the OpenSubtitles REST API. Empty means that provider is unavailable. */
@@ -463,3 +484,6 @@ internal const val UI_SCALE_MAX = 1.4f
 /** Posters tolerate a wider range: they scale independently of any text inside them. */
 internal const val POSTER_SCALE_MIN = 0.7f
 internal const val POSTER_SCALE_MAX = 1.6f
+
+/** Artwork language default: TMDB's English coverage is the most complete. */
+internal const val ARTWORK_LANGUAGE_DEFAULT = "en"

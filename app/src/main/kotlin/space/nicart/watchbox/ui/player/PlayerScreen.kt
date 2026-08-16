@@ -377,6 +377,22 @@ fun PlayerScreen(
     var seekTapBump by remember { mutableIntStateOf(0) }
 
     /**
+     * Seeks by [delta] and draws the on-screen readout.
+     *
+     * Every relative seek goes through this, so the feedback cannot be forgotten at one call
+     * site. It was: the double-tap gesture and the remote keys each drew the readout
+     * themselves, while the +10/-10 buttons called the bare seek and moved the position with
+     * no acknowledgement at all - the same action feeling broken depending on how it was
+     * invoked.
+     */
+    fun seekByAnnounced(delta: Long) {
+        transportSeekBy(delta)
+        seekTapAccumulatedMs = accumulateSeekTap(seekTapAccumulatedMs, delta)
+        seekTapOnLeft = delta < 0
+        seekTapBump++
+    }
+
+    /**
      * Applies a mapped remote action.
      *
      * Returns true when the key was consumed, so unhandled keys still fall through to
@@ -415,13 +431,9 @@ fun PlayerScreen(
                 } else {
                     -PLAYER_KEY_SEEK_MS
                 }
-                transportSeekBy(delta)
-
-                // The same readout the double-tap gesture draws, so a remote seek is
-                // acknowledged on screen even with the controls hidden.
-                seekTapAccumulatedMs = accumulateSeekTap(seekTapAccumulatedMs, delta)
-                seekTapOnLeft = delta < 0
-                seekTapBump++
+                // Draws the readout too, so a remote seek is acknowledged on screen even
+                // with the controls hidden.
+                seekByAnnounced(delta)
                 true
             }
 
@@ -880,12 +892,7 @@ fun PlayerScreen(
                             val forward = offset.x > size.width / 2f
                             val delta = if (forward) 10_000L else -10_000L
 
-                            transportSeekBy(delta)
-
-                            seekTapAccumulatedMs =
-                                accumulateSeekTap(seekTapAccumulatedMs, delta)
-                            seekTapOnLeft = !forward
-                            seekTapBump++
+                            seekByAnnounced(delta)
                         },
                     )
                 }
@@ -1132,7 +1139,8 @@ fun PlayerScreen(
                 bufferedMs = bufferedMs,
                 onPlayPause = transportTogglePlay,
                 onSeek = transportSeekTo,
-                onSeekBy = transportSeekBy,
+                // Announced, so the buttons draw the same readout as a double-tap.
+                onSeekBy = ::seekByAnnounced,
                 onBack = {
                     viewModel.flushProgress(exoPlayer.currentPosition, exoPlayer.duration)
                     onBack()

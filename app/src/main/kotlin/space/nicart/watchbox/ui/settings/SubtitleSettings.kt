@@ -208,6 +208,66 @@ fun SubtitleProviderRow(
 }
 
 /**
+ * One offered artwork language.
+ *
+ * A fixed shortlist rather than TMDB's full list. Artwork coverage outside a handful of
+ * markets is thin enough that most entries would fall straight back to English, and a
+ * hundred-item picker to reach that outcome is worse than a short one that is honest about
+ * what exists.
+ *
+ * Held as an ISO 639-1 code because that is what TMDB's `include_image_language` takes.
+ */
+data class ArtworkLanguage(val code: String, val label: String)
+
+/**
+ * Languages offered for posters and title logos.
+ *
+ * English first because it is the default and by far the best covered. The rest are the
+ * markets whose releases carry their own lettering often enough for the choice to matter.
+ */
+val ARTWORK_LANGUAGES = listOf(
+    ArtworkLanguage("en", "English"),
+    ArtworkLanguage("ja", "日本語"),
+    ArtworkLanguage("ko", "한국어"),
+    ArtworkLanguage("zh", "中文"),
+    ArtworkLanguage("es", "Español"),
+    ArtworkLanguage("fr", "Français"),
+    ArtworkLanguage("de", "Deutsch"),
+    ArtworkLanguage("pt", "Português"),
+    ArtworkLanguage("it", "Italiano"),
+    ArtworkLanguage("ru", "Русский"),
+)
+
+/**
+ * Preferred language for posters and title logos.
+ *
+ * Artwork only: it does not affect subtitles or the app's own strings. A title logo is drawn
+ * per-market, so someone watching Japanese releases can have the Japanese lettering while
+ * keeping an English interface.
+ *
+ * Chips rather than a dropdown, matching the provider row above it, and horizontally
+ * scrolling because the list is longer than a phone is wide.
+ */
+@Composable
+fun ArtworkLanguageRow(
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(ARTWORK_LANGUAGES.size) { index ->
+            val language = ARTWORK_LANGUAGES[index]
+            WbChip(
+                label = language.label,
+                // Compared case-insensitively: the stored value is normalised on write, but
+                // a value written by an older build may not be.
+                selected = language.code.equals(selected, ignoreCase = true),
+                onClick = { onSelect(language.code) },
+            )
+        }
+    }
+}
+
+/**
  * The OpenSubtitles API key.
  *
  * Kept as a draft until committed so a half-typed key is never saved and used for a search.

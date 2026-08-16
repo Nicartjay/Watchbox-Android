@@ -99,8 +99,14 @@ fun ComposeSubtitleView(
                     .filter { it.isNotBlank() }
                 playerCues = texts
 
-                if (texts.isEmpty()) return
-
+                // An empty group is recorded, not discarded.
+                //
+                // ExoPlayer emits one when a line's own end time passes - it is the "clear
+                // the screen now" event, and it carries the timing the cue list does not.
+                // Dropping it meant the buffer only ever held appearances, so the delayed
+                // view had nothing that said a line had ended: the last subtitle stayed on
+                // screen indefinitely and was only replaced when somebody next spoke.
+                //
                 // Stamped with the player's own clock, not the callback's
                 // presentationTimeUs: that is relative to the current period and does not
                 // line up with `currentPosition` on a multi-period stream.
@@ -175,7 +181,20 @@ fun ComposeSubtitleView(
         // trust rule the parsed path uses, for the same reasons.
         val drift = kotlin.math.abs(tickMs - positionMs)
         val clock = if (drift <= CUE_CLOCK_TRUST_MS) tickMs else positionMs
-        recentCues.lastOrNull { it.atMs <= clock - offsetMs }?.lines.orEmpty()
+        val target = clock - offsetMs
+
+        // The most recent entry at or before the delayed position, which is now either a
+        // line or a clear - both are recorded, so an ended line resolves to nothing rather
+        // than lingering.
+        val current = recentCues.lastOrNull { it.atMs <= target }
+
+        // Expired anyway if nothing has arrived for a long time.
+        //
+        // A stream that stops emitting cue events entirely - the end of a subtitle track,
+        // or a source that never sends a clear - would otherwise leave the last line up for
+        // good. This is a backstop, not the mechanism: the clear events above do the work.
+        val staleAfter = target - MAX_CUE_LIFETIME_MS
+        if (current != null && current.atMs >= staleAfter) current.lines else emptyList()
     } else {
         emptyList()
     }
@@ -355,3 +374,13 @@ private data class TimedCue(val atMs: Long, val lines: List<String>)
  * so this covers several minutes of delay.
  */
 private const val MAX_BUFFERED_CUES = 400
+
+/**
+ * How long a buffered cue may remain on screen with nothing following it.
+ *
+ * Generous, because a genuine subtitle can legitimately hold for several seconds and cutting
+ * one short mid-sentence is worse than holding it a moment too long. This only fires when a
+ * stream stops emitting cue events altogether; the empty groups ExoPlayer sends at a line's
+ * end are what normally clears the screen.
+ */
+private const val MAX_CUE_LIFETIME_MS = 12_000L

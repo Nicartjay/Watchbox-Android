@@ -89,6 +89,7 @@ import space.nicart.watchbox.ui.components.WbScreenHeader
 import space.nicart.watchbox.ui.components.sectionHorizontalPadding
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.delay
+import space.nicart.watchbox.data.remote.ReleaseNote
 
 /**
  * Settings.
@@ -105,6 +106,7 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val metrics = LocalLayoutMetrics.current
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
+    val changelog by viewModel.changelog.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
 
     var repoDraft by remember { mutableStateOf("") }
@@ -465,6 +467,35 @@ fun SettingsScreen(
             }
 
             // ---------------------------------------------- online subtitles
+            item(key = "artwork-label") {
+                SettingsGroupLabel(stringResource(R.string.settings_artwork))
+            }
+
+            item(key = "artwork") {
+                SettingsCard {
+                    Text(
+                        text = stringResource(R.string.settings_artwork_language),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = tokens.colors.textMuted,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    ArtworkLanguageRow(
+                        selected = settings.artworkLanguage,
+                        onSelect = viewModel::setArtworkLanguage,
+                    )
+
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        // The fallback is stated, because coverage outside English is thin
+                        // and a title showing English artwork under a Japanese setting would
+                        // otherwise look like the preference being ignored.
+                        text = stringResource(R.string.settings_artwork_language_note),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tokens.colors.textMuted,
+                    )
+                }
+            }
+
             item(key = "subtitle-online-label") {
                 SettingsGroupLabel(stringResource(R.string.settings_subtitle_online))
             }
@@ -570,12 +601,22 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = tokens.colors.textMuted,
                     )
-                    Spacer(Modifier.height(8.dp))
+
+                    // What changed, rather than what the app is.
+                    //
+                    // The description said the same thing on every build and was read once;
+                    // after an update the useful question is what moved. The GPL attribution
+                    // stays below it, since that is a licence obligation and not a
+                    // description.
+                    if (changelog.isNotEmpty()) {
+                        Spacer(Modifier.height(14.dp))
+                        ChangelogList(entries = changelog)
+                    }
+
+                    Spacer(Modifier.height(12.dp))
                     Text(
-                        text = "Interface derived from NuvioMobile (GPL-3.0). " +
-                            "Plays media from user-installed extensions; this app " +
-                            "hosts and distributes no content itself.",
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "Interface derived from NuvioMobile (GPL-3.0).",
+                        style = MaterialTheme.typography.labelSmall,
                         color = tokens.colors.textMuted,
                     )
                 }
@@ -583,6 +624,55 @@ fun SettingsScreen(
         }
     }
 }
+
+/**
+ * Recent release notes.
+ *
+ * Rendered as plain text rather than parsed markdown: the notes are written as prose with
+ * the occasional dash list, and a partial markdown renderer would show stray markers on
+ * anything it did not handle - worse than showing the text as written.
+ *
+ * Capped per entry. A release note can run to many paragraphs, and the point here is to see
+ * what changed at a glance; the full text is a tap away on GitHub.
+ */
+@Composable
+private fun ChangelogList(entries: List<ReleaseNote>) {
+    val tokens = MaterialTheme.wb
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = stringResource(R.string.settings_whats_new).uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = tokens.colors.textMuted,
+        )
+
+        entries.forEach { entry ->
+            Column {
+                Text(
+                    text = entry.version,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = tokens.colors.accent,
+                )
+
+                entry.notes.takeIf { it.isNotBlank() }?.let { notes ->
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        text = notes,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.textMuted,
+                        maxLines = CHANGELOG_LINES_PER_ENTRY,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Enough to convey what a release did without the card dominating the screen. */
+private const val CHANGELOG_LINES_PER_ENTRY = 6
 
 @Composable
 private fun SettingsGroupLabel(text: String) {

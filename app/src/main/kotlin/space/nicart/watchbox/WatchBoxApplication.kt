@@ -28,6 +28,8 @@ import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.SkipRepository
 import space.nicart.watchbox.domain.SubtitleRepository
 import space.nicart.watchbox.extension.installExtensionInjekt
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 /**
  * Application + service locator.
@@ -70,6 +72,19 @@ class WatchBoxApplication : Application(), ImageLoaderFactory {
             container.castManager.setForceProxy(
                 container.store.currentSettings().castForceProxy,
             )
+        }
+
+        // The artwork language is observed, not read once.
+        //
+        // Changing it has to take effect while Settings is still open - the alternative is a
+        // preference that appears to do nothing until the app is restarted. TmdbApi drops its
+        // cache on a change, so already-seen titles are re-resolved rather than keeping the
+        // logos chosen under the previous language.
+        CoroutineScope(Dispatchers.IO).launch {
+            container.store.settings
+                .map { it.artworkLanguage }
+                .distinctUntilChanged()
+                .collect { container.setArtworkLanguage(it) }
         }
     }
 
@@ -126,6 +141,14 @@ class AppContainer(
     )
 
     val repository = AnimeRepository(extensionManager, tmdbApi)
+
+    /**
+     * Applies the artwork-language preference.
+     *
+     * Exposed on the container because [tmdbApi] is private to it: the language belongs to
+     * the artwork layer, and nothing outside needs a handle on the client itself.
+     */
+    fun setArtworkLanguage(code: String) = tmdbApi.setArtworkLanguage(code)
 
     /** Online subtitle search, on the shared app-level client. */
     /**
