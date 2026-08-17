@@ -136,6 +136,14 @@
     <string name="empty_library_body">Titles you save or start watching show up here.</string>
     <string name="error_generic">Something went wrong.</string>
     <string name="error_no_source">No playable source found.</string>
+    <string name="player_error_title">Cannot play this source</string>
+    <string name="player_error_retry">Try again</string>
+    <string name="player_error_network">The source could not be reached. It may have expired — try another server.</string>
+    <string name="player_error_denied">The source refused the request. Try another server.</string>
+    <string name="player_error_missing">The source is no longer available. Try another server.</string>
+    <string name="player_error_container">This file could not be read. Try another server.</string>
+    <string name="player_error_decoder">This device cannot decode this file. Try a lower quality or another server.</string>
+    <string name="player_error_audio">This device cannot decode this audio track. Try another server.</string>
 
     <!-- Home sections -->
     <string name="section_continue_watching">Continue Watching</string>
@@ -155,6 +163,14 @@
     <string name="player_audio">Audio</string>
     <string name="player_speed">Speed</string>
     <string name="player_quality">Quality</string>
+    <string name="player_server">Server</string>
+    <string name="player_dub">Audio</string>
+    <string name="player_quality_requires_dub">%1$s only</string>
+    <string name="player_server_up_to">Up to %1$s</string>
+    <string name="player_subtitle_embedded">In this file</string>
+    <string name="player_subtitle_track">Track</string>
+    <string name="player_resolving">Finding streams…</string>
+    <string name="player_resolving_slow">Still searching — %1$ds</string>
     <string name="player_servers">Servers</string>
     <string name="player_episodes">Episodes</string>
     <string name="player_skip_intro">Skip Intro</string>

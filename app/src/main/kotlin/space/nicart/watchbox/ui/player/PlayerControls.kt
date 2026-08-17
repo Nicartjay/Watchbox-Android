@@ -33,10 +33,13 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.ClosedCaption
+import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Forward10
+import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -116,12 +119,33 @@ fun playerMetricsFor(width: Dp): PlayerMetrics = when {
 /**
  * Which sheet is open, if any.
  *
- * No audio-track or alternate-host panels: the lib-14 extension ABI exposes
- * neither, so offering them would be dead UI.
+ * The server and audio panels do not use an extension API for either - lib-14
+ * exposes no host list and no audio-track selection. Both are derived from the
+ * stream labels the source already returns, so they switch streams rather than
+ * tracks. See [StreamFacets].
  */
 enum class PlayerPanel {
     NONE,
+
+    /**
+     * Which server to play from.
+     *
+     * A source returns one flat list of streams that differ by server, resolution
+     * and audio track all at once - thirty-odd entries for a well-served film. The
+     * three are split into their own panels so each list is short enough to scan,
+     * which matters most on a remote. See [StreamFacets].
+     */
+    SERVER,
     QUALITY,
+
+    /**
+     * Which audio track, where the server offers a choice.
+     *
+     * Not an ExoPlayer track selection: these are separate streams the source
+     * happens to label by language, so switching is a stream switch. Servers with
+     * one track label no audio at all, and the button is left out for them.
+     */
+    DUB,
     SUBTITLES,
 
     /**
@@ -173,6 +197,15 @@ fun PlayerControlsOverlay(
     isCasting: Boolean = false,
     castDeviceName: String? = null,
     onOpenCast: () -> Unit = {},
+    /**
+     * Hides the centre transport row.
+     *
+     * Set while a playback error is on screen: that message is centred too, so
+     * the play button and the seek arrows would sit on top of it. None of the
+     * three does anything useful for a stream that failed to load, so the row
+     * gives way rather than being rearranged around the message.
+     */
+    hideTransport: Boolean = false,
     /**
      * Claims focus for the play button when the controls appear.
      *
@@ -229,18 +262,20 @@ fun PlayerControlsOverlay(
                     .padding(top = metrics.verticalPadding / 4),
             )
 
-            CenterControls(
-                isPlaying = isPlaying,
-                isBuffering = isBuffering,
-                metrics = metrics,
-                onPlayPause = onPlayPause,
-                onSeekBy = onSeekBy,
-                playFocusRequester = playFocusRequester,
-                onPlayFocusChanged = onPlayFocusChanged,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(bottom = metrics.centerLift),
-            )
+            if (!hideTransport) {
+                CenterControls(
+                    isPlaying = isPlaying,
+                    isBuffering = isBuffering,
+                    metrics = metrics,
+                    onPlayPause = onPlayPause,
+                    onSeekBy = onSeekBy,
+                    playFocusRequester = playFocusRequester,
+                    onPlayFocusChanged = onPlayFocusChanged,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(bottom = metrics.centerLift),
+                )
+            }
 
             ProgressControls(
                 state = state,
@@ -635,10 +670,51 @@ private fun ProgressControls(
                         label = "${state.speed.formatSpeed()}x",
                         onClick = { onOpenPanel(PlayerPanel.SPEED) },
                     )
-                    if (state.streams.size > 1) {
+                    // Server, quality and audio, split out of what used to be a
+                    // single pill showing the whole stream label. That label runs to
+                    // "Art/4k-Hub · 2160p · BluRay · HEVC · 66.39 GB · MKV", which
+                    // neither fits the row nor says which part is selectable.
+                    //
+                    // Each pill appears only when there is a choice to make: one
+                    // server means no server pill, and a server whose streams label
+                    // no audio has no dub pill.
+                    val facets = state.selectedStream?.facets
+                    val servers = state.streams.serverOptions()
+                    val qualities = state.streams.qualityOptions(facets?.server)
+                    val dubs = state.streams.dubOptions(facets?.server)
+
+                    if (servers.size > 1) {
                         ActionPill(
-                            icon = Icons.Rounded.SkipNext,
-                            label = state.selectedStream?.label ?: "Auto",
+                            icon = Icons.Rounded.Dns,
+                            label = facets?.server ?: stringResource(R.string.player_server),
+                            onClick = { onOpenPanel(PlayerPanel.SERVER) },
+                        )
+                    }
+                    if (qualities.size > 1) {
+                        ActionPill(
+                            icon = Icons.Rounded.HighQuality,
+                            label = facets?.quality ?: stringResource(R.string.player_quality),
+                            onClick = { onOpenPanel(PlayerPanel.QUALITY) },
+                        )
+                    }
+                    if (dubs.size > 1) {
+                        ActionPill(
+                            icon = Icons.Rounded.Translate,
+                            label = facets?.dub ?: stringResource(R.string.player_dub),
+                            onClick = { onOpenPanel(PlayerPanel.DUB) },
+                        )
+                    }
+                    // Nothing above could be split into axes - a single unlabelled
+                    // stream set, or labels this could not read - but there is still
+                    // more than one to choose from, so the flat list stays reachable.
+                    if (servers.size <= 1 && qualities.size <= 1 && dubs.size <= 1 &&
+                        state.streams.size > 1
+                    ) {
+                        ActionPill(
+                            icon = Icons.Rounded.HighQuality,
+                            label = facets?.quality
+                                ?: facets?.server
+                                ?: stringResource(R.string.player_quality),
                             onClick = { onOpenPanel(PlayerPanel.QUALITY) },
                         )
                     }

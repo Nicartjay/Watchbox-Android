@@ -108,6 +108,20 @@ fun PlayerPanels(
     onNudgeSubtitleOffset: (Long) -> Unit,
     onResetSubtitleOffset: () -> Unit,
     onOpenSubtitleSync: () -> Unit,
+    /**
+     * Text tracks carried inside the stream itself, newest track list first.
+     *
+     * Separate from `state.subtitles`, which holds only what the source handed
+     * over or the user downloaded. An MKV routinely embeds its own, and those had
+     * no entry anywhere: the panel listed our list alone, so a file whose only
+     * subtitles were embedded showed "Off" and nothing else, and the selection
+     * effect disabled the text renderer because nothing was selected.
+     */
+    embeddedSubtitles: List<String> = emptyList(),
+    /** Which embedded track is active, or -1. */
+    selectedEmbeddedIndex: Int = -1,
+    /** Selects an embedded track by index, or -1 to turn subtitles off. */
+    onSelectEmbedded: (Int) -> Unit = {},
 ) {
     val visible = panel != PlayerPanel.NONE
     val panelFocus = remember { FocusRequester() }
@@ -151,27 +165,150 @@ fun PlayerPanels(
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
             PlayerPanelSurface(panelFocus = panelFocus) {
                 when (panel) {
-                    PlayerPanel.QUALITY -> PanelList(
-                        title = stringResource(R.string.player_quality),
-                        entries = state.streams.map { it.label },
-                        selectedIndex = state.streams
-                            .indexOfFirst { it.url == state.selectedStream?.url },
-                        onSelect = { index ->
-                            state.streams.getOrNull(index)?.let(onSelectStream)
-                        },
-                    )
+                    // The three axes below all end in the same place: a stream is
+                    // chosen, not a track. Changing one axis carries the other two
+                    // over where the new server has them, so picking a server does
+                    // not silently discard a chosen resolution - see pickStream.
+                    PlayerPanel.SERVER -> {
+                        val current = state.selectedStream?.facets
+                        val servers = state.streams.serverOptions()
+                        val best = state.streams.serverBestQuality()
+                        PanelList(
+                            title = stringResource(R.string.player_server),
+                            entries = servers,
+                            selectedIndex = servers.indexOf(current?.server),
+                            // Server names say nothing about what they carry, so the
+                            // best resolution each one offers is shown alongside.
+                            secondary = servers.map { server ->
+                                best[server]?.let {
+                                    stringResource(R.string.player_server_up_to, it)
+                                }
+                            },
+                            onSelect = { index ->
+                                servers.getOrNull(index)?.let { server ->
+                                    pickStream(
+                                        streams = state.streams,
+                                        server = server,
+                                        quality = current?.quality,
+                                        dub = current?.dub,
+                                    )?.let(onSelectStream)
+                                }
+                            },
+                        )
+                    }
+
+                    PlayerPanel.QUALITY -> {
+                        val current = state.selectedStream?.facets
+                        val choices = state.streams.qualityChoices(current?.server, current?.dub)
+                        // Falls back to the flat list when the labels carry no
+                        // resolution to group by, so this panel is never empty.
+                        if (choices.isEmpty()) {
+                            PanelList(
+                                title = stringResource(R.string.player_quality),
+                                entries = state.streams.map { it.label },
+                                selectedIndex = state.streams
+                                    .indexOfFirst { it.url == state.selectedStream?.url },
+                                onSelect = { index ->
+                                    state.streams.getOrNull(index)?.let(onSelectStream)
+                                },
+                            )
+                        } else {
+                            PanelList(
+                                title = stringResource(R.string.player_quality),
+                                entries = choices.map { it.quality },
+                                // Only a row playable on the current track can be the
+                                // selected one, so an annotated row never shows a tick.
+                                selectedIndex = choices.indexOfFirst {
+                                    it.quality == current?.quality && it.requiresDub == null
+                                },
+                                secondary = choices.map { choice ->
+                                    choice.requiresDub?.let {
+                                        stringResource(R.string.player_quality_requires_dub, it)
+                                    }
+                                },
+                                onSelect = { index ->
+                                    choices.getOrNull(index)?.let { choice ->
+                                        pickStream(
+                                            streams = state.streams,
+                                            server = current?.server,
+                                            quality = choice.quality,
+                                            // Follows the row: a resolution carried only
+                                            // by another track has to move the audio too,
+                                            // or the pick resolves back to what is already
+                                            // playing and the tap does nothing.
+                                            dub = choice.requiresDub ?: current?.dub,
+                                        )?.let(onSelectStream)
+                                    }
+                                },
+                            )
+                        }
+                    }
+
+                    PlayerPanel.DUB -> {
+                        val current = state.selectedStream?.facets
+                        val dubs = state.streams.dubOptions(current?.server)
+                        PanelList(
+                            title = stringResource(R.string.player_dub),
+                            entries = dubs,
+                            selectedIndex = dubs.indexOf(current?.dub),
+                            onSelect = { index ->
+                                dubs.getOrNull(index)?.let { dub ->
+                                    pickStream(
+                                        streams = state.streams,
+                                        server = current?.server,
+                                        quality = current?.quality,
+                                        dub = dub,
+                                    )?.let(onSelectStream)
+                                }
+                            },
+                        )
+                    }
 
                     // Track choice and appearance in one panel: both are "the
                     // subtitle settings" as far as the user is concerned, and
                     // appearance is most often adjusted while watching something
                     // whose subtitles are hard to read.
                     PlayerPanel.SUBTITLES -> Column {
+                        // One list over three sources: off, the stream's own tracks,
+                        // then ours. Embedded tracks come first because they need no
+                        // download and are what a file arrives with.
+                        val offLabel = stringResource(R.string.player_subtitles_off)
+                        val embeddedLabel = stringResource(R.string.player_subtitle_embedded)
                         PanelList(
                             title = stringResource(R.string.player_subtitles),
-                            entries = listOf(stringResource(R.string.player_subtitles_off)) +
+                            entries = listOf(offLabel) +
+                                embeddedSubtitles +
                                 state.subtitles.map { it.label },
-                            selectedIndex = state.selectedSubtitleIndex + 1,
-                            onSelect = { onSelectSubtitle(it - 1) },
+                            selectedIndex = when {
+                                state.selectedSubtitleIndex >= 0 ->
+                                    1 + embeddedSubtitles.size + state.selectedSubtitleIndex
+                                selectedEmbeddedIndex >= 0 -> 1 + selectedEmbeddedIndex
+                                else -> 0
+                            },
+                            // Says where a track came from, so an embedded one is not
+                            // mistaken for a download that failed to appear.
+                            secondary = listOf(null) +
+                                embeddedSubtitles.map { embeddedLabel } +
+                                state.subtitles.map { null },
+                            onSelect = { index ->
+                                when {
+                                    index == 0 -> {
+                                        onSelectEmbedded(-1)
+                                        onSelectSubtitle(-1)
+                                    }
+                                    index <= embeddedSubtitles.size -> {
+                                        // Ours has to be cleared as well, or the
+                                        // override for it would win over the
+                                        // embedded track just chosen.
+                                        onSelectSubtitle(-1)
+                                        onSelectEmbedded(index - 1)
+                                    }
+                                    else -> {
+                                        onSelectEmbedded(-1)
+                                        onSelectSubtitle(index - 1 - embeddedSubtitles.size)
+                                    }
+                                }
+                            },
                             modifier = Modifier.weight(1f, fill = false),
                         )
 
@@ -469,6 +606,15 @@ private fun PanelList(
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Optional note under an entry, indexed alongside [entries].
+     *
+     * Used to say that a row would also change something else - a resolution
+     * carried only by another audio track, for instance. Kept as a parallel list
+     * rather than folded into the label so the entry text stays the thing being
+     * chosen, and a null leaves the row exactly as it was.
+     */
+    secondary: List<String?> = emptyList(),
 ) {
     val tokens = MaterialTheme.wb
 
@@ -510,18 +656,32 @@ private fun PanelList(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (selected) {
-                            tokens.colors.onAccent
-                        } else {
-                            tokens.colors.textPrimary
-                        },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (selected) {
+                                tokens.colors.onAccent
+                            } else {
+                                tokens.colors.textPrimary
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        secondary.getOrNull(index)?.let { note ->
+                            Text(
+                                text = note,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (selected) {
+                                    tokens.colors.onAccent
+                                } else {
+                                    tokens.colors.textMuted
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                     if (selected) {
                         Icon(
                             imageVector = Icons.Rounded.Check,

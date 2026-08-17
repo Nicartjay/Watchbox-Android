@@ -10,8 +10,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -235,6 +237,54 @@ fun WbLoading(modifier: Modifier = Modifier, size: Dp = 34.dp) {
             strokeWidth = 3.dp,
             modifier = Modifier.size(size),
         )
+    }
+}
+
+/**
+ * Spinner with a line saying what is being waited for, and for how long.
+ *
+ * [seconds] shows only once it passes [slowAfterSeconds], which is where a wait
+ * stops reading as normal and starts reading as a hang.
+ *
+ * Deliberately silent about *which* server is being tried: a source resolves all
+ * of them inside one suspend call and reports nothing until it returns, so naming
+ * one would be invented detail.
+ */
+@Composable
+fun WbLoadingStatus(
+    label: String,
+    seconds: Int,
+    modifier: Modifier = Modifier,
+    slowLabel: String? = null,
+    slowAfterSeconds: Int = 5,
+) {
+    val tokens = MaterialTheme.wb
+    Column(
+        modifier = modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        CircularProgressIndicator(
+            color = tokens.colors.accent,
+            strokeWidth = 3.dp,
+            modifier = Modifier.size(34.dp),
+        )
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            color = tokens.colors.textPrimary,
+            textAlign = TextAlign.Center,
+        )
+        if (slowLabel != null && seconds >= slowAfterSeconds) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = slowLabel,
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.colors.textMuted,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 

@@ -6,6 +6,7 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -68,6 +69,7 @@ import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.domain.StreamOption
 import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
+import space.nicart.watchbox.ui.components.WbLoadingStatus
 
 /**
  * Full-screen player.
@@ -166,10 +168,14 @@ fun PlayerScreen(
         }
     }
 
-    // Rebuilt when the header set changes: OkHttpDataSource takes its default
-    // request properties at construction, and a source's Referer is per-stream.
+    // The player outlives a change of stream. Headers are read per request from
+    // this holder, so switching quality - or a source handing back a freshly
+    // signed credential - no longer needs a new ExoPlayer, and a short-lived
+    // token cannot go stale inside the data source.
     val streamHeaders = state.selectedStream?.headers.orEmpty()
-    val exoPlayer = remember(streamHeaders) { PlayerFactory.create(context, streamHeaders) }
+    val headerHolder = remember { mutableStateOf(streamHeaders) }
+    headerHolder.value = streamHeaders
+    val exoPlayer = remember { PlayerFactory.create(context) { headerHolder.value } }
 
     val castState by castManager.state.collectAsStateWithLifecycle()
 
@@ -255,6 +261,14 @@ fun PlayerScreen(
     var playHasFocus by remember { mutableStateOf(false) }
 
     /**
+     * The last error the player reported, or null once it recovers.
+     *
+     * Declared up here because the focus effect below reads it: the transport row
+     * is not composed while an error is showing, so focus must not be sent to it.
+     */
+    var playbackError by remember { mutableStateOf<PlaybackException?>(null) }
+
+    /**
      * Whether the on-screen controls are the D-pad's target.
      *
      * Also gates the video surface's focusability. The surface fills the window, so
@@ -301,12 +315,19 @@ fun PlayerScreen(
         state.locked,
         state.isResolving,
         skipButtonOwnsFocus,
+        playbackError,
     ) {
         if (!metricsForFocus.isFocusDriven) return@LaunchedEffect
 
         if (openPanel != PlayerPanel.NONE) return@LaunchedEffect
 
         if (skipButtonOwnsFocus) return@LaunchedEffect
+
+        // The play button is not composed while an error is showing, so asking for
+        // its focus would burn every attempt on a node that does not exist and
+        // leave the remote with nothing selected. The error card carries its own
+        // retry button, which is the useful target then.
+        if (playbackError != null) return@LaunchedEffect
 
         if (!controlsOwnFocus) {
             runCatching { playerFocusRequester.requestFocus() }
@@ -485,7 +506,6 @@ fun PlayerScreen(
     val volume = remember { VolumeController(context) }
     var activeGesture by remember { mutableStateOf(VerticalGesture.NONE) }
     var gestureLevel by remember { mutableFloatStateOf(0f) }
-    var playbackError by remember { mutableStateOf<String?>(null) }
 
     // Clears the indicator once tapping stops. Keyed on the bump so each tap restarts the wait.
     LaunchedEffect(seekTapBump) {
@@ -497,6 +517,26 @@ fun PlayerScreen(
     // The player's current track list, mirrored into state so the subtitle-selection effect
     // re-runs when a sideloaded track finishes parsing.
     var tracks by remember { mutableStateOf<androidx.media3.common.Tracks?>(null) }
+
+    /**
+     * Text tracks belonging to the stream itself, as opposed to ours.
+     *
+     * The stream's own tracks come first in Media3's list and the sideloaded ones
+     * are appended, so the leading slice is the embedded set. Labelled by language
+     * where the container names one, since that is all an MKV usually carries.
+     */
+    val embeddedTextGroups = remember(tracks, state.subtitles.size) {
+        val textGroups = tracks?.groups.orEmpty()
+            .filter { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT }
+        textGroups.take((textGroups.size - state.subtitles.size).coerceAtLeast(0))
+    }
+
+    /** Which embedded track the viewer chose, or -1 for none. */
+    var selectedEmbeddedIndex by remember { mutableIntStateOf(-1) }
+
+    // Reset when the stream changes: track groups belong to the media that was
+    // playing, so an index kept across a switch would point at a different track.
+    LaunchedEffect(state.selectedStream?.url) { selectedEmbeddedIndex = -1 }
 
     // --- player listener
     DisposableEffect(exoPlayer) {
@@ -517,7 +557,7 @@ fun PlayerScreen(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                playbackError = error.errorCodeName
+                playbackError = error
                 android.util.Log.e(TAG, "playback error: ${error.errorCodeName}", error)
             }
 
@@ -553,9 +593,8 @@ fun PlayerScreen(
     // --- pause on background, flush progress
     //
     // Re-keyed on the player and the setting, not just the owner. The observer closes over both,
-    // and an ExoPlayer instance is replaced whenever the stream's headers change - so an effect
-    // keyed on the owner alone would keep pausing the discarded player, and would ignore the
-    // setting being toggled mid-session. Same class of bug as the tap detector below.
+    // so an effect keyed on the owner alone would ignore the setting being toggled mid-session.
+    // Same class of bug as the tap detector below.
     DisposableEffect(lifecycleOwner, exoPlayer, state.backgroundPlayback) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -586,6 +625,11 @@ fun PlayerScreen(
     LaunchedEffect(state.selectedStream?.url, state.subtitles.map { it.url }) {
         val stream = state.selectedStream ?: return@LaunchedEffect
         val resumeFrom = if (positionMs > 0) positionMs else state.resumeMs
+
+        // Cleared before preparing: the error belongs to the stream that failed,
+        // and leaving it up would cover the new one's first frame and make a
+        // working server look broken.
+        playbackError = null
 
         exoPlayer.setMediaItem(
             PlayerFactory.buildMediaItem(
@@ -669,6 +713,7 @@ fun PlayerScreen(
         state.selectedStream?.url,
         tracks,
         rendersOwnCues,
+        selectedEmbeddedIndex,
     ) {
         val wanted = state.selectedSubtitleIndex.takeIf { it >= 0 }
 
@@ -679,11 +724,24 @@ fun PlayerScreen(
             .clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_TEXT)
             .setTrackTypeDisabled(
                 androidx.media3.common.C.TRACK_TYPE_TEXT,
-                wanted == null || rendersOwnCues,
+                wanted == null && selectedEmbeddedIndex < 0 || rendersOwnCues,
             )
 
         // Nothing further to select when the app is drawing the cues itself.
         if (rendersOwnCues) {
+            exoPlayer.trackSelectionParameters = builder.build()
+            return@LaunchedEffect
+        }
+
+        // An embedded track is chosen from the leading slice of the same list, so
+        // its index needs no offset. Handled before ours because the two are
+        // mutually exclusive and the panel clears whichever is not in use.
+        if (selectedEmbeddedIndex >= 0) {
+            textGroups.getOrNull(selectedEmbeddedIndex)?.let { group ->
+                builder.addOverride(
+                    androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0),
+                )
+            }
             exoPlayer.trackSelectionParameters = builder.build()
             return@LaunchedEffect
         }
@@ -866,13 +924,9 @@ fun PlayerScreen(
                 // inside its bounds - see controlsOwnFocus.
                 .focusRequester(playerFocusRequester)
                 .focusable(enabled = !controlsOwnFocus)
-                // Re-keyed on the player instance, not just the lock.
-                //
-                // PlayerFactory builds a new ExoPlayer whenever the stream's headers change, and
-                // an episode switch brings freshly signed URLs - so the instance is replaced. A
-                // detector keyed only on `locked` kept its original closure and went on seeking
-                // the discarded player, which is why double-tap stopped working after changing
-                // episode from the player's own episode list.
+                // Re-keyed on the player instance, not just the lock. The instance is stable
+                // now, but keeping it in the key list costs nothing and keeps the detector
+                // correct if the player is ever rebuilt again.
                 //
                 // durationMs is included for the same reason as the drag detector below: the
                 // clamp inside transportSeekTo reads it.
@@ -1044,13 +1098,41 @@ fun PlayerScreen(
 
         // --- states
         when {
-            state.isResolving -> WbLoading()
+            // A bare spinner said nothing about whether anything was happening.
+            // The source resolves every server inside one call and reports no
+            // progress, so rather than inventing per-server steps this says what
+            // is true: it is searching, and for how long.
+            state.isResolving -> WbLoadingStatus(
+                label = stringResource(R.string.player_resolving),
+                seconds = state.resolveSeconds,
+                slowLabel = stringResource(
+                    R.string.player_resolving_slow,
+                    state.resolveSeconds,
+                ),
+            )
 
             state.errorMessage != null && state.selectedStream == null -> WbEmptyState(
                 title = stringResource(R.string.error_no_source),
                 body = state.errorMessage,
                 actionLabel = stringResource(R.string.action_retry),
                 onAction = viewModel::retry,
+                modifier = Modifier.align(Alignment.Center),
+            )
+
+            // A failed stream otherwise sat behind the buffering spinner with no
+            // way to tell it apart from a slow one, so the user waited on
+            // something that was never going to start. Retry re-prepares the
+            // same stream, which is worth offering because an expired
+            // credential is re-signed on the next attempt.
+            playbackError != null -> WbEmptyState(
+                title = stringResource(R.string.player_error_title),
+                body = stringResource(playerErrorMessage(playbackError!!)),
+                actionLabel = stringResource(R.string.player_error_retry),
+                onAction = {
+                    playbackError = null
+                    exoPlayer.prepare()
+                    exoPlayer.play()
+                },
                 modifier = Modifier.align(Alignment.Center),
             )
         }
@@ -1132,8 +1214,11 @@ fun PlayerScreen(
                 // the icon promised.
                 isPlaying = transportIsPlaying(),
                 // Nothing buffers locally while casting, and a spinner over a picture that is
-                // playing elsewhere reads as a fault.
-                isBuffering = isBuffering && !castState.isCasting,
+                // playing elsewhere reads as a fault. A failed stream stops buffering too, so
+                // the spinner gives way to the error rather than sitting on top of it.
+                isBuffering = isBuffering && !castState.isCasting && playbackError == null,
+                // The error message is centred, and so is the transport row.
+                hideTransport = playbackError != null,
                 positionMs = positionMs,
                 durationMs = durationMs,
                 bufferedMs = bufferedMs,
@@ -1232,6 +1317,17 @@ fun PlayerScreen(
         PlayerPanels(
             panel = openPanel,
             state = state,
+            embeddedSubtitles = embeddedTextGroups.mapIndexed { index, group ->
+                val format = group.mediaTrackGroup.getFormat(0)
+                format.label
+                    ?: format.language?.takeIf { it.isNotBlank() && it != "und" }
+                    ?: "${stringResource(R.string.player_subtitle_track)} ${index + 1}"
+            },
+            selectedEmbeddedIndex = selectedEmbeddedIndex,
+            onSelectEmbedded = { index ->
+                selectedEmbeddedIndex = index
+                openPanel = PlayerPanel.NONE
+            },
             onDismiss = { openPanel = PlayerPanel.NONE },
             onSelectStream = { stream: StreamOption ->
                 viewModel.selectStream(stream)
@@ -1380,6 +1476,54 @@ private fun PlayerUiState.toCastMedia(
 
 /** Which axis a drag was locked to, decided once per gesture. */
 private enum class DragAxis { UNDECIDED, HORIZONTAL, VERTICAL, IGNORED }
+
+/**
+ * Turns a [PlaybackException] into something worth showing a user.
+ *
+ * The error code is the only reliable signal here - the exception message is
+ * usually an internal detail, and often absent - so each cause the sources
+ * actually hit is mapped to a sentence that says what to do next. Nearly every
+ * one of these is a dead or expired link rather than anything the user can fix,
+ * so the advice is to try another server.
+ */
+@StringRes
+private fun playerErrorMessage(error: PlaybackException): Int = when (error.errorCode) {
+    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+    PlaybackException.ERROR_CODE_IO_NO_PERMISSION,
+    PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+    -> R.string.player_error_network
+
+    PlaybackException.ERROR_CODE_IO_INVALID_HTTP_CONTENT_TYPE,
+    PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+    PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+    PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
+    PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED,
+    -> R.string.player_error_container
+
+    PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+    PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
+    PlaybackException.ERROR_CODE_DECODING_FAILED,
+    PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+    PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+    -> R.string.player_error_decoder
+
+    PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
+    PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED,
+    -> R.string.player_error_audio
+
+    else -> when (val cause = error.cause) {
+        // The HTTP status is the useful part and it is only on the cause, so a
+        // 403 can be told apart from a 404 rather than both reading as "network".
+        is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException ->
+            when (cause.responseCode) {
+                401, 403 -> R.string.player_error_denied
+                404, 410 -> R.string.player_error_missing
+                else -> R.string.player_error_network
+            }
+        else -> R.string.player_error_network
+    }
+}
 
 /**
  * Height at each end of the screen where vertical drags are left to the system.
