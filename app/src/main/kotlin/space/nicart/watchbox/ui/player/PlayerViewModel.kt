@@ -71,6 +71,16 @@ enum class AspectMode(val label: String) {
 
 data class PlayerUiState(
     val isResolving: Boolean = true,
+    /**
+     * How long the current resolve has been running, in seconds.
+     *
+     * Drives the wording under the spinner. The source resolves every server
+     * inside one opaque call - the extension API exposes no per-server progress -
+     * so this cannot claim to know which server is being tried. What it can
+     * honestly say is that the work is still going and roughly how long for,
+     * which is what a bare spinner fails to convey.
+     */
+    val resolveSeconds: Int = 0,
     val detail: AnimeDetail? = null,
     val episode: EpisodeEntry? = null,
     val streams: List<StreamOption> = emptyList(),
@@ -184,6 +194,9 @@ class PlayerViewModel(
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
     private var resolveJob: Job? = null
+
+    /** Elapsed-time ticker for the resolve, cancelled with it. */
+    private var resolveTicker: Job? = null
     private var cuesJob: Job? = null
 
     /**
@@ -246,13 +259,26 @@ class PlayerViewModel(
 
     private fun resolve(episode: EpisodeEntry) {
         resolveJob?.cancel()
+        resolveTicker?.cancel()
 
         _uiState.value = _uiState.value.copy(
             isResolving = true,
+            resolveSeconds = 0,
             errorMessage = null,
             streams = emptyList(),
             selectedStream = null,
         )
+
+        // Counts while the single resolve call runs. Separate job so it can be
+        // cancelled with the resolve rather than racing it.
+        resolveTicker = viewModelScope.launch {
+            var elapsed = 0
+            while (true) {
+                delay(1_000)
+                elapsed++
+                _uiState.value = _uiState.value.copy(resolveSeconds = elapsed)
+            }
+        }
 
         resolveJob = viewModelScope.launch {
             val preferredHeight = store.currentSettings()
@@ -261,11 +287,12 @@ class PlayerViewModel(
                 .toIntOrNull()
 
             repository.streams(sourceId, episode.url)
+                .also { resolveTicker?.cancel() }
                 .onSuccess { streams ->
-                    // Honour the saved quality when that height exists, else take
-                    // the best available.
-                    val chosen = streams.firstOrNull { it.resolution == preferredHeight }
-                        ?: streams.firstOrNull()
+                    // Nearest at or below the setting - see defaultStream for why
+                    // an exact match was wrong, and why no setting means the
+                    // source's own order is kept.
+                    val chosen = defaultStream(streams, preferredHeight)
 
                     val subtitleLang = store.currentSettings().subtitleLanguage
                     val subtitleIndex = chosen?.subtitles

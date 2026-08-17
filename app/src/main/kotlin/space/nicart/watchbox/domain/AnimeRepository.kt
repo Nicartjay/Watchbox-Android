@@ -734,8 +734,12 @@ class AnimeRepository(
     /**
      * Resolves streams for an episode.
      *
-     * Highest resolution first, so the player's default pick is the best
-     * available rather than whatever the source happened to list first.
+     * The source's own ordering is kept. Extensions sort to put their configured
+     * preference first - Rentaro, for one, promotes whatever its quality setting
+     * names - and re-sorting by height here discarded that, so a source set to
+     * 1080p still had 2160p chosen for it. Which stream actually plays is decided
+     * from the viewer's setting in [space.nicart.watchbox.ui.player.PlayerViewModel],
+     * and the picker shows the list as the source ordered it.
      */
     suspend fun streams(
         sourceId: Long,
@@ -748,7 +752,6 @@ class AnimeRepository(
             source.getVideoList(stub)
                 .map { it.toStreamOption() }
                 .filter { it.url.isNotBlank() }
-                .sortedByDescending { it.resolution }
                 .ifEmpty { error("This source returned no playable streams.") }
         }
     }
