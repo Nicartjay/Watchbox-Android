@@ -100,7 +100,15 @@ object PlayerFactory {
         return MediaItem.Builder()
             .setUri(stream.url)
             .setMimeType(
-                if (stream.isHls) MimeTypes.APPLICATION_M3U8 else MimeTypes.VIDEO_MP4,
+                when {
+                    stream.isHls -> MimeTypes.APPLICATION_M3U8
+                    // Without this a manifest is handed to the progressive
+                    // extractor as MP4, which cannot parse XML and fails before
+                    // a single request is made. DASH is checked first because
+                    // isHls is a substring test.
+                    stream.isDash -> MimeTypes.APPLICATION_MPD
+                    else -> MimeTypes.VIDEO_MP4
+                },
             )
             .setSubtitleConfigurations(subtitleConfigs)
             .setMediaMetadata(

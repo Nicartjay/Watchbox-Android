@@ -1320,10 +1320,11 @@ internal fun castStreamFor(
     if (!preferProgressive) return selected
 
     // Keeps the current stream when it already is progressive, so the quality the user chose
-    // is not swapped for a different one unnecessarily.
-    if (selected != null && !selected.isHls) return selected
+    // is not swapped for a different one unnecessarily. A DASH manifest counts as adaptive
+    // here: renderers that reject HLS reject an .mpd for the same reason.
+    if (selected != null && !selected.isHls && !selected.isDash) return selected
 
-    return streams.firstOrNull { !it.isHls } ?: selected
+    return streams.firstOrNull { !it.isHls && !it.isDash } ?: selected
 }
 
 /**
@@ -1349,6 +1350,7 @@ private fun PlayerUiState.toCastMedia(
         headers = stream?.headers.orEmpty(),
         mimeType = when {
             stream?.isHls == true -> "application/vnd.apple.mpegurl"
+            stream?.isDash == true -> "application/dash+xml"
             else -> "video/mp4"
         },
         title = title,

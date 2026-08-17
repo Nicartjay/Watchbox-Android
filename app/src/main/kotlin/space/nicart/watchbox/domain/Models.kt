@@ -316,7 +316,16 @@ data class StreamOption(
     val audioTracks: List<SubtitleOption>,
     val resolution: Int,
 ) {
-    val isHls: Boolean get() = url.contains(".m3u8", ignoreCase = true)
+    /**
+     * A DASH manifest, matched on the path only.
+     *
+     * Checked before [isHls] everywhere, because that one is a substring test
+     * and a signed manifest URL can carry an unrelated `.m3u8` in its query.
+     */
+    val isDash: Boolean
+        get() = url.substringBefore('?').endsWith(".mpd", ignoreCase = true)
+
+    val isHls: Boolean get() = !isDash && url.contains(".m3u8", ignoreCase = true)
 }
 
 data class SubtitleOption(
