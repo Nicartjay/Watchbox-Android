@@ -680,7 +680,11 @@ private fun ProgressControls(
                     // no audio has no dub pill.
                     val facets = state.selectedStream?.facets
                     val servers = state.streams.serverOptions()
-                    val qualities = state.streams.qualityOptions(facets?.server)
+                    // Counted as rows, not as distinct resolutions: a server
+                    // offering several releases at one height has a row for each,
+                    // and hiding the pill because they agree on the number left
+                    // all but the first unreachable.
+                    val qualities = state.streams.qualityChoices(facets?.server, facets?.dub)
                     val dubs = state.streams.dubOptions(facets?.server)
 
                     if (servers.size > 1) {

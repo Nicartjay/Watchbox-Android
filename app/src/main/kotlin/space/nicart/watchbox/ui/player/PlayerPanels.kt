@@ -213,32 +213,30 @@ fun PlayerPanels(
                                 },
                             )
                         } else {
+                            val requiresDub =
+                                stringResource(R.string.player_quality_requires_dub_short)
                             PanelList(
                                 title = stringResource(R.string.player_quality),
-                                entries = choices.map { it.quality },
-                                // Only a row playable on the current track can be the
-                                // selected one, so an annotated row never shows a tick.
+                                entries = choices.map { it.label },
+                                // Matched by URL: a resolution is not unique, so
+                                // comparing heights would tick the wrong row when
+                                // a server offers the same one twice.
                                 selectedIndex = choices.indexOfFirst {
-                                    it.quality == current?.quality && it.requiresDub == null
+                                    it.stream.url == state.selectedStream?.url
                                 },
+                                // Size, source and codec, since two rows at one
+                                // resolution are otherwise indistinguishable.
                                 secondary = choices.map { choice ->
-                                    choice.requiresDub?.let {
-                                        stringResource(R.string.player_quality_requires_dub, it)
-                                    }
+                                    listOfNotNull(
+                                        choice.requiresDub?.let { "$it $requiresDub" },
+                                        choice.detail,
+                                    ).joinToString(" · ").takeIf { it.isNotBlank() }
                                 },
+                                // The stream itself, not a height to resolve
+                                // again - that is what made duplicate rows all
+                                // land on the same file.
                                 onSelect = { index ->
-                                    choices.getOrNull(index)?.let { choice ->
-                                        pickStream(
-                                            streams = state.streams,
-                                            server = current?.server,
-                                            quality = choice.quality,
-                                            // Follows the row: a resolution carried only
-                                            // by another track has to move the audio too,
-                                            // or the pick resolves back to what is already
-                                            // playing and the tap does nothing.
-                                            dub = choice.requiresDub ?: current?.dub,
-                                        )?.let(onSelectStream)
-                                    }
+                                    choices.getOrNull(index)?.let { onSelectStream(it.stream) }
                                 },
                             )
                         }

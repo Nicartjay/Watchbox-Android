@@ -165,7 +165,7 @@
     <string name="player_quality">Quality</string>
     <string name="player_server">Server</string>
     <string name="player_dub">Audio</string>
-    <string name="player_quality_requires_dub">%1$s only</string>
+    <string name="player_quality_requires_dub_short">only</string>
     <string name="player_server_up_to">Up to %1$s</string>
     <string name="player_subtitle_embedded">In this file</string>
     <string name="player_subtitle_track">Track</string>

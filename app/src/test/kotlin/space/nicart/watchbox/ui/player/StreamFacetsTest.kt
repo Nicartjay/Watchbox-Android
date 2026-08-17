@@ -126,7 +126,52 @@ class StreamFacetsTest {
 
     @Test
     fun `lists a server's qualities highest first`() {
-        assertEquals(listOf("1080p", "720p", "480p"), streams.qualityOptions("Art/MbPly"))
+        assertEquals(
+            listOf("1080p", "720p", "480p"),
+            streams.qualityChoices("Art/MbPly", dub = null).map { it.label },
+        )
+    }
+
+    // ------------------------------------------------- every stream is reachable
+
+    /**
+     * Art/4k-Hub offers four different 2160p releases. Collapsing them to one row
+     * per resolution hid three, and because that left a single distinct quality
+     * the panel's own button was hidden as well - so none of them could be reached.
+     */
+    private val sameHeight = listOf(
+        stream("Art/4k-Hub · 2160p · BluRay · HEVC · 66.39 GB · MKV", 2160),
+        stream("Art/4k-Hub · 2160p · BluRay · HEVC · 41.84 GB · MKV", 2160),
+        stream("Art/4k-Hub · 2160p · BluRay · HEVC · 19.11 GB · MKV", 2160),
+    )
+
+    @Test
+    fun `keeps a row for every stream at the same resolution`() {
+        val choices = sameHeight.qualityChoices("Art/4k-Hub", dub = null)
+        assertEquals(3, choices.size)
+        assertEquals(listOf("2160p-1", "2160p-2", "2160p-3"), choices.map { it.label })
+    }
+
+    /** Each row must resolve to its own file, not all to the first. */
+    @Test
+    fun `each numbered row carries its own stream`() {
+        val urls = sameHeight.qualityChoices("Art/4k-Hub", dub = null).map { it.stream.url }
+        assertEquals(urls.size, urls.distinct().size)
+    }
+
+    /** The number alone says nothing; the size and source are what distinguish them. */
+    @Test
+    fun `numbered rows carry the detail that tells them apart`() {
+        val choices = sameHeight.qualityChoices("Art/4k-Hub", dub = null)
+        assertTrue(choices[0].detail!!.contains("66.39 GB"))
+        assertTrue(choices[1].detail!!.contains("41.84 GB"))
+    }
+
+    /** A resolution appearing once is not numbered - "1080p-1" alone reads oddly. */
+    @Test
+    fun `leaves a unique resolution unnumbered`() {
+        val choices = streams.qualityChoices("Art/4k-Hub", dub = null)
+        assertEquals(listOf("2160p"), choices.map { it.label })
     }
 
     // ------------------------------------------------- quality vs audio track
@@ -148,23 +193,22 @@ class StreamFacetsTest {
     @Test
     fun `marks a quality that only exists on another audio track`() {
         val choices = mixed.qualityChoices("Art/MbPly", dub = "Original Audio")
-        assertEquals(listOf("1080p", "720p", "480p", "360p"), choices.map { it.quality })
-        assertEquals("Hindi dub", choices.first { it.quality == "1080p" }.requiresDub)
+        assertEquals("Hindi dub", choices.first { it.label == "1080p" }.requiresDub)
     }
 
     @Test
     fun `leaves qualities on the current track unmarked`() {
         val choices = mixed.qualityChoices("Art/MbPly", dub = "Original Audio")
-        assertNull(choices.first { it.quality == "720p" }.requiresDub)
-        // 480p exists on both tracks, so it must not be attributed to the other one.
-        assertNull(choices.first { it.quality == "480p" }.requiresDub)
+        assertNull(choices.first { it.label == "720p" }.requiresDub)
+        // 480p exists on both tracks, so neither copy is attributed to the other.
+        assertTrue(choices.filter { it.label.startsWith("480p") }.all { it.requiresDub == null })
     }
 
     @Test
     fun `marks nothing when every quality is on the current track`() {
         val choices = mixed.qualityChoices("Art/MbPly", dub = "Hindi dub")
-        assertNull(choices.first { it.quality == "1080p" }.requiresDub)
-        assertEquals("Original Audio", choices.first { it.quality == "720p" }.requiresDub)
+        assertNull(choices.first { it.label == "1080p" }.requiresDub)
+        assertEquals("Original Audio", choices.first { it.label == "720p" }.requiresDub)
     }
 
     /** The fix for the dead tap: choosing 1080p must move the audio track with it. */

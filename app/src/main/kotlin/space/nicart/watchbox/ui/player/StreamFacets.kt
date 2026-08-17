@@ -30,6 +30,15 @@ internal data class StreamFacets(
     val quality: String?,
     /** Audio descriptor, e.g. `Hindi dub`, or null when the server offers one track. */
     val dub: String?,
+    /**
+     * What is left of the label once server, resolution and audio are taken out.
+     *
+     * This is what separates releases that agree on all three - `BluRay · HEVC ·
+     * 66.39 GB · MKV` against the same at 41.84 GB - so it is kept rather than
+     * discarded, and shown under a row whose title would otherwise be a
+     * duplicate.
+     */
+    val detail: String?,
 ) {
     companion object {
         private const val SEPARATOR = '·'
@@ -62,7 +71,7 @@ internal data class StreamFacets(
 
         fun parse(label: String): StreamFacets {
             val parts = label.split(SEPARATOR).map { it.trim() }.filter { it.isNotEmpty() }
-            if (parts.isEmpty()) return StreamFacets(label.trim(), null, null)
+            if (parts.isEmpty()) return StreamFacets(label.trim(), null, null, null)
 
             val server = parts.first()
             val rest = parts.drop(1)
@@ -76,7 +85,13 @@ internal data class StreamFacets(
                     AUDIO.containsMatchIn(part)
             }
 
-            return StreamFacets(server, quality, dub)
+            // Whatever is left tells two same-resolution releases apart.
+            val detail = rest
+                .filter { it != quality && it != dub }
+                .joinToString(" · ")
+                .takeIf { it.isNotBlank() }
+
+            return StreamFacets(server, quality, dub, detail)
         }
     }
 }
@@ -182,64 +197,68 @@ internal fun List<StreamOption>.serverBestQuality(): Map<String, String> =
         .toMap()
 
 /**
- * Resolutions available on [server], highest first.
+ * A row in the quality panel: one stream, titled by its resolution.
  *
- * Ordered by actual height rather than by name so `720p` cannot sort above
- * `1080p`, and de-duplicated because mirrors of one release repeat it.
- */
-internal fun List<StreamOption>.qualityOptions(server: String?): List<String> =
-    filter { server == null || it.facets.server == server }
-        .mapNotNull { stream -> stream.facets.quality?.let { it to stream.resolution } }
-        .distinctBy { it.first }
-        .sortedByDescending { it.second }
-        .map { it.first }
-
-/**
- * A resolution offered by a server, and which audio track it needs.
+ * Carries the [stream] rather than just a height, because a resolution is not a
+ * unique key - a server routinely offers the same one several times over, as
+ * different releases or as mirrors of one file - and picking by height alone made
+ * every copy but the first unreachable.
  *
- * Servers routinely carry a resolution on one audio track only - a 1080p Hindi
- * dub beside a 720p original. Listing the heights alone made those look
- * interchangeable, and choosing one while on the other track resolved straight
- * back to the stream already playing, so the row appeared to do nothing.
- *
- * [requiresDub] names the track a row would move to, or is null when the row is
- * available on the current one. The panel uses it to say so, and to switch both
- * axes together when the row is chosen.
+ * [requiresDub] names the audio track a row would move to, or is null when the
+ * row plays on the current one.
  */
 internal data class QualityChoice(
-    val quality: String,
+    val stream: StreamOption,
+    /** Row title: the resolution, suffixed `-1`, `-2` … where it repeats. */
+    val label: String,
+    /** What distinguishes this row from others at the same resolution. */
+    val detail: String?,
     val requiresDub: String?,
 )
 
 /**
- * Resolutions available on [server], highest first, each marked with the audio
- * track it needs when that is not [dub].
+ * Every stream on [server], as rows titled by resolution, highest first.
  *
- * Rows on the current track keep a null [QualityChoice.requiresDub]; the rest
- * name the track they would switch to. Nothing is dropped: a resolution reachable
- * only by changing track is still worth offering, as long as the switch is stated
- * rather than silent.
+ * Nothing is collapsed. Streams sharing a resolution are numbered `1080p-1`,
+ * `1080p-2` and carry their remaining label detail - size, source, codec - so the
+ * rows can be told apart. Deduplicating by height previously hid real
+ * alternatives: a server offering four different 2160p releases showed one row,
+ * and because that left a single distinct quality the panel's own button was
+ * hidden too, making all four unreachable.
+ *
+ * Rows only playable by changing audio track are marked rather than dropped.
  */
 internal fun List<StreamOption>.qualityChoices(
     server: String?,
     dub: String?,
 ): List<QualityChoice> {
     val onServer = filter { server == null || it.facets.server == server }
+        .filter { it.facets.quality != null }
+
+    // Which resolutions repeat, so only those are numbered.
+    val counts = onServer.groupingBy { it.facets.quality }.eachCount()
+    val seen = mutableMapOf<String, Int>()
+
+    // Grouped so a row is marked only when its resolution is genuinely absent
+    // from the current audio track.
+    val availableOnCurrent = onServer
+        .filter { dub == null || it.facets.dub == dub }
+        .mapNotNull { it.facets.quality }
+        .toSet()
 
     return onServer
-        .mapNotNull { stream -> stream.facets.quality?.let { Triple(it, stream.resolution, stream.facets.dub) } }
-        .groupBy { it.first }
-        .entries
-        // Prefer the current track where a resolution exists on several, so a row
-        // is only annotated when it genuinely is not available here.
-        .map { (quality, group) ->
-            val height = group.first().second
-            val onCurrent = dub == null || group.any { it.third == dub }
-            val requires = if (onCurrent) null else group.first().third
-            Triple(quality, height, requires)
+        .sortedByDescending { it.resolution }
+        .map { stream ->
+            val quality = stream.facets.quality!!
+            val nth = seen.merge(quality, 1, Int::plus)!!
+            QualityChoice(
+                stream = stream,
+                label = if ((counts[quality] ?: 0) > 1) "$quality-$nth" else quality,
+                detail = stream.facets.detail,
+                requiresDub = stream.facets.dub
+                    ?.takeIf { dub != null && it != dub && quality !in availableOnCurrent },
+            )
         }
-        .sortedByDescending { it.second }
-        .map { QualityChoice(it.first, it.third) }
 }
 
 /**
