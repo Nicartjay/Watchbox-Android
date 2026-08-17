@@ -5,6 +5,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.MimeTypes
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -20,8 +21,14 @@ import java.util.concurrent.TimeUnit
  *
  * Streams come straight from an extension, which means the per-request headers
  * it supplied (usually a Referer the CDN checks) have to be applied on the media
- * requests too — without them most sources return 403. Those headers travel with
- * the [StreamOption] and are attached in [buildMediaItem].
+ * requests too — without them most sources return 403.
+ *
+ * Those headers are read through [headerProvider] on every request rather than
+ * baked into the data source at construction. Some sources sign their URLs and
+ * hand back a short-lived credential — a CloudFront cookie valid for about two
+ * minutes is typical — so a value captured once goes stale within the session
+ * and every later request 403s. Reading them per request also means a quality
+ * switch no longer has to rebuild the player just to change a header.
  */
 @UnstableApi
 object PlayerFactory {
@@ -39,17 +46,33 @@ object PlayerFactory {
             .build()
     }
 
-    fun create(context: Context, headers: Map<String, String> = emptyMap()): ExoPlayer {
+    /**
+     * Builds a player whose media requests carry whatever [headerProvider]
+     * returns at the moment each request is made.
+     */
+    fun create(
+        context: Context,
+        headerProvider: () -> Map<String, String> = ::emptyMap,
+    ): ExoPlayer {
         val httpFactory = OkHttpDataSource.Factory { request -> okHttp.newCall(request) }
-            .setUserAgent(headers["User-Agent"] ?: DEFAULT_USER_AGENT)
-            .apply {
-                // Referer and friends are what most source CDNs gate on.
-                headers.filterKeys { !it.equals("User-Agent", true) }
-                    .takeIf { it.isNotEmpty() }
-                    ?.let(::setDefaultRequestProperties)
-            }
+            .setUserAgent(DEFAULT_USER_AGENT)
 
-        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
+        // Applied per request. The User-Agent is set through the factory above,
+        // so it is dropped here to avoid sending the header twice, and a source
+        // that specifies its own still wins because the resolver runs last.
+        val resolver = ResolvingDataSource.Resolver { dataSpec ->
+            val headers = headerProvider()
+            if (headers.isEmpty()) {
+                dataSpec
+            } else {
+                dataSpec.withRequestHeaders(headers)
+            }
+        }
+
+        val dataSourceFactory = ResolvingDataSource.Factory(
+            DefaultDataSource.Factory(context, httpFactory),
+            resolver,
+        )
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
@@ -107,7 +130,11 @@ object PlayerFactory {
                     // a single request is made. DASH is checked first because
                     // isHls is a substring test.
                     stream.isDash -> MimeTypes.APPLICATION_MPD
-                    else -> MimeTypes.VIDEO_MP4
+                    // Anything else is a plain file, and the container is the
+                    // extractor's business. Declaring a type here overrides
+                    // ExoPlayer's own sniffing, which previously sent every
+                    // .mkv to the MP4 extractor and failed before playback.
+                    else -> null
                 },
             )
             .setSubtitleConfigurations(subtitleConfigs)
