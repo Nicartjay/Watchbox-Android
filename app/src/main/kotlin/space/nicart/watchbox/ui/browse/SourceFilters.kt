@@ -21,6 +21,25 @@ data class FilterEntry(
     val filter: AnimeFilter<*>,
     /** Nesting level, used only to indent group members. */
     val depth: Int,
+    /**
+     * The filter's state, copied at flatten time.
+     *
+     * This is what makes a change observable, and it is the whole reason the field
+     * exists. [filter] is the source's own object and is mutated in place, so it is
+     * the *same instance* before and after an edit - and [AnimeFilter.equals]
+     * compares name and state, both read live. A descriptor holding only [filter]
+     * therefore compares equal to its own post-edit self, `StateFlow` treats the new
+     * value as a duplicate and drops it, and the UI never hears about the change.
+     *
+     * Copying the value here breaks that aliasing: the snapshot is taken at a point
+     * in time and cannot be mutated afterwards, so two flattenings of the same list
+     * differ exactly when something actually changed.
+     *
+     * Groups contribute no state of their own - their children are flattened into
+     * sibling entries and carry their own snapshots - so a group records `null`
+     * rather than its live child list, which would alias in the same way.
+     */
+    val state: Any?,
 )
 
 /** Flattens a filter list, inlining group children. */
@@ -30,7 +49,12 @@ fun AnimeFilterList.flattenForDisplay(): List<FilterEntry> {
     fun walk(filters: List<AnimeFilter<*>>, prefix: List<Int>, depth: Int) {
         filters.forEachIndexed { index, filter ->
             val path = prefix + index
-            out += FilterEntry(path = path, filter = filter, depth = depth)
+            out += FilterEntry(
+                path = path,
+                filter = filter,
+                depth = depth,
+                state = filter.snapshotState(),
+            )
 
             // Group state holds the child filters themselves.
             if (filter is AnimeFilter.Group<*>) {
@@ -42,6 +66,20 @@ fun AnimeFilterList.flattenForDisplay(): List<FilterEntry> {
 
     walk(this.toList(), emptyList(), 0)
     return out
+}
+
+/**
+ * The filter's state as a value that cannot change underneath the caller.
+ *
+ * Every editable state in the ABI is already immutable (`Boolean`, `Int`, `String`,
+ * or the `Sort.Selection` data class), so returning it directly is enough. Groups
+ * and the stateless decorations return `null`; a group's state is a live list of
+ * child filters, which would alias exactly like the objects it contains.
+ */
+private fun AnimeFilter<*>.snapshotState(): Any? = when (this) {
+    is AnimeFilter.Group<*> -> null
+    is AnimeFilter.Header, is AnimeFilter.Separator -> null
+    else -> state
 }
 
 /** Resolves an index path back to the live filter object. */
@@ -95,7 +133,7 @@ fun AnimeFilterList.hasActiveFilters(defaults: AnimeFilterList): Boolean {
     if (size != defaults.size) return true
 
     return flattenForDisplay().zip(defaults.flattenForDisplay()).any { (current, default) ->
-        current.filter.state != default.filter.state
+        current.state != default.state
     }
 }
 

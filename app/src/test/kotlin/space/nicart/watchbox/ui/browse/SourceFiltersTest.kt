@@ -37,6 +37,99 @@ class SourceFiltersTest {
         ),
     )
 
+    // ------------------------------------------- state-change observability
+
+    @Test
+    fun `a re-flattened entry is unequal to the previous one after a change`() {
+        // The bug this guards: FilterEntry is a data class holding the live AnimeFilter,
+        // and AnimeFilter.equals compares name and state. The filter is mutated in place,
+        // so the *same* instance is on both sides of the comparison - meaning a snapshot
+        // taken before the change reports equal to one taken after, and any consumer that
+        // skips equal values drops the update.
+        val filters = buildFilters()
+        val before = filters.flattenForDisplay()
+
+        filters.applyFilterChange(listOf(3), 2)
+        val after = filters.flattenForDisplay()
+
+        assertTrue(
+            before != after,
+            "a snapshot taken before the change must not compare equal to one taken after",
+        )
+    }
+
+    @Test
+    fun `consecutive different selections are each observable`() {
+        // The reported bug, as the user hit it: a Cineby-style type filter defaulting to
+        // "All", then TV, then Movie. The second change appeared to do nothing, and only
+        // taking the value back to the default made the next pick register.
+        val filters = AnimeFilterList(
+            AnimeFilter.Select("Type", arrayOf("All", "TV Shows", "Movies")),
+        )
+
+        val seen = mutableListOf<List<FilterEntry>>()
+        seen += filters.flattenForDisplay()
+
+        // All -> TV Shows
+        filters.applyFilterChange(listOf(0), 1)
+        seen += filters.flattenForDisplay()
+
+        // TV Shows -> Movies, with no return to the default in between.
+        filters.applyFilterChange(listOf(0), 2)
+        seen += filters.flattenForDisplay()
+
+        // Every step has to be distinguishable, or a StateFlow drops it as a duplicate.
+        assertEquals(3, seen.distinct().size, "each selection must produce a distinct value")
+        assertEquals(0, seen[0].single().state)
+        assertEquals(1, seen[1].single().state)
+        assertEquals(2, seen[2].single().state)
+    }
+
+    @Test
+    fun `a snapshot keeps the value it was taken with`() {
+        // The core defect: the descriptor used to hold only the live filter, so a
+        // snapshot's state changed retroactively when the filter was mutated. It has to
+        // report what was true when it was taken.
+        val filters = AnimeFilterList(
+            AnimeFilter.Select("Type", arrayOf("All", "TV Shows", "Movies")),
+        )
+        val before = filters.flattenForDisplay().single()
+
+        filters.applyFilterChange(listOf(0), 2)
+
+        assertEquals(0, before.state, "an old snapshot must not report the new value")
+        assertEquals(2, filters.flattenForDisplay().single().state)
+    }
+
+    @Test
+    fun `every editable filter type is snapshotted`() {
+        // Guards the same bug in the types the reported one did not happen to use.
+        val filters = buildFilters()
+        val before = filters.flattenForDisplay()
+
+        filters.applyFilterChange(listOf(1), true)                                  // CheckBox
+        filters.applyFilterChange(listOf(2), AnimeFilter.TriState.STATE_EXCLUDE)    // TriState
+        filters.applyFilterChange(listOf(3), 2)                                     // Select
+        filters.applyFilterChange(listOf(4), AnimeFilter.Sort.Selection(1, true))   // Sort
+        filters.applyFilterChange(listOf(5), "Ito")                                 // Text
+        filters.applyFilterChange(listOf(6, 0), true)                               // grouped CheckBox
+
+        val after = filters.flattenForDisplay()
+        listOf(1, 2, 3, 4, 5).forEach { index ->
+            assertTrue(before[index] != after[index], "entry $index did not change")
+        }
+        // The group's own entry carries no state; its child is a sibling entry that does.
+        assertTrue(before[7] != after[7], "grouped child did not change")
+    }
+
+    @Test
+    fun `a group entry holds no aliasing state`() {
+        // A group's live state is its list of child filters, which would alias exactly
+        // like the objects inside it, so the entry records null instead.
+        val group = buildFilters().flattenForDisplay().first { it.filter is AnimeFilter.Group<*> }
+        assertEquals(null, group.state)
+    }
+
     // ------------------------------------------------------------- flattening
 
     @Test

@@ -295,36 +295,49 @@ private fun FilterRow(
                     .background(tokens.colors.borderSubtle),
             )
 
-            is AnimeFilter.CheckBox -> ToggleRow(
-                label = filter.name,
-                selected = filter.state,
-                onClick = { onChange(entry.path, !filter.state) },
-            )
+            // Rendered from the entry's snapshot rather than `filter.state`, which is
+            // live and mutated in place: reading it here would make the drawn state
+            // depend on when Compose happened to read it rather than on the value this
+            // entry represents. The write still targets the live object by path.
+            is AnimeFilter.CheckBox -> {
+                val checked = entry.state as? Boolean ?: filter.state
+                ToggleRow(
+                    label = filter.name,
+                    selected = checked,
+                    onClick = { onChange(entry.path, !checked) },
+                )
+            }
 
             // Tri-state cycles rather than offering three controls: the ABI's
             // include/exclude pair is one value, and two checkboxes could express
             // the impossible "included and excluded".
-            is AnimeFilter.TriState -> TriStateRow(
-                label = filter.name,
-                state = filter.state,
-                onClick = { onChange(entry.path, nextTriState(filter.state)) },
-            )
+            is AnimeFilter.TriState -> {
+                val triState = entry.state as? Int ?: filter.state
+                TriStateRow(
+                    label = filter.name,
+                    state = triState,
+                    onClick = { onChange(entry.path, nextTriState(triState)) },
+                )
+            }
 
             is AnimeFilter.Select<*> -> SelectRow(
                 label = filter.name,
                 entries = filter.values.map { it.toString() },
-                selectedIndex = filter.state,
+                selectedIndex = entry.state as? Int ?: filter.state,
                 onSelect = { onChange(entry.path, it) },
             )
 
-            is AnimeFilter.Sort -> SortRow(
-                label = filter.name,
-                columns = filter.values.toList(),
-                selection = filter.state,
-                onSelect = { index ->
-                    onChange(entry.path, nextSortSelection(filter.state, index))
-                },
-            )
+            is AnimeFilter.Sort -> {
+                val selection = entry.state as? AnimeFilter.Sort.Selection ?: filter.state
+                SortRow(
+                    label = filter.name,
+                    columns = filter.values.toList(),
+                    selection = selection,
+                    onSelect = { index ->
+                        onChange(entry.path, nextSortSelection(selection, index))
+                    },
+                )
+            }
 
             is AnimeFilter.Text -> Column(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -336,7 +349,7 @@ private fun FilterRow(
                     color = tokens.colors.textMuted,
                 )
                 WbSearchField(
-                    value = filter.state,
+                    value = entry.state as? String ?: filter.state,
                     onValueChange = { onChange(entry.path, it) },
                     placeholder = filter.name,
                     showSearchIcon = false,
