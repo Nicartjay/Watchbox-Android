@@ -24,6 +24,8 @@ import space.nicart.watchbox.extension.ExtensionRepoApi
 import space.nicart.watchbox.data.remote.AniSkipApi
 import space.nicart.watchbox.data.remote.ArmApi
 import space.nicart.watchbox.data.remote.SubtitleApi
+import space.nicart.watchbox.data.remote.ChainedRatingApi
+import space.nicart.watchbox.data.remote.SheguRatingApi
 import space.nicart.watchbox.data.remote.SheguTrailerApi
 import space.nicart.watchbox.data.remote.WikidataRatingApi
 import space.nicart.watchbox.domain.AnimeRepository
@@ -147,7 +149,13 @@ class AppContainer(
         tmdb = tmdbApi,
         // Keyless, on the plain client: Wikidata is not a content source, so it
         // wants none of the extensions' cookies or Referer.
-        ratingProvider = WikidataRatingApi(plainClient),
+        // The richer source first, the keyless one behind it. The primary answers an
+        // audience score and live figures but fails often; the fallback is dependable
+        // for well-known films and silent on most television.
+        ratingProvider = ChainedRatingApi(
+            primary = SheguRatingApi(plainClient),
+            fallback = WikidataRatingApi(plainClient),
+        ),
         // Also on the plain client, and for the same reason: a trailer host is not a
         // content source and wants none of the extensions' cookies or Referer.
         trailerProvider = SheguTrailerApi(plainClient),

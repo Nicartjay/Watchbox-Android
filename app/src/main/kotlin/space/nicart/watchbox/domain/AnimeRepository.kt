@@ -13,6 +13,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
 import kotlinx.coroutines.withTimeout
+import space.nicart.watchbox.data.remote.ChainedRatingApi
 import space.nicart.watchbox.data.remote.NoRatings
 import space.nicart.watchbox.data.remote.NoTrailers
 import space.nicart.watchbox.data.remote.RatingProvider
@@ -398,11 +399,37 @@ class AnimeRepository(
      * and are the reason the page waits at all. Guarded like every other network
      * read: an absent score is decoration, never an error worth surfacing.
      */
-    suspend fun withRatings(extras: TmdbExtras): TmdbExtras {
-        val qid = extras.wikidataId ?: return extras
+    /**
+     * External scores for [extras], or the same object unchanged.
+     *
+     * A second call rather than part of [extras] so a slow or unreachable lookup
+     * cannot hold back the trailers and provider list, which come from TMDB itself
+     * and are the reason the page waits at all. Guarded like every other network
+     * read: an absent score is decoration, never an error worth surfacing.
+     *
+     * Takes the TMDB id as well as the entity id because the two sources are keyed
+     * differently - the primary service answers on a TMDB id, the fallback needs a
+     * Wikidata entity - and either may be the one that answers.
+     */
+    suspend fun withRatings(
+        extras: TmdbExtras,
+        tmdbId: Int?,
+        isMovie: Boolean,
+    ): TmdbExtras {
+        val qid = extras.wikidataId
+        if (tmdbId == null && qid == null) return extras
         return withContext(Dispatchers.IO) {
-            val ratings = guarded("ratings($qid)") {
-                ratingProvider.ratings(wikidataId = qid, imdbId = null)
+            val ratings = guarded("ratings($tmdbId/$qid)") {
+                when (val provider = ratingProvider) {
+                    // Prefers the richer source and falls through when it fails, which
+                    // it does often - see SheguRatingApi.
+                    is ChainedRatingApi -> provider.ratingsFor(
+                        tmdbId = tmdbId ?: 0,
+                        isMovie = isMovie,
+                        wikidataId = qid,
+                    )
+                    else -> provider.ratings(wikidataId = qid, imdbId = null)
+                }
             }.orEmpty()
             if (ratings.isEmpty()) extras else extras.copy(ratings = ratings)
         }

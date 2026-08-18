@@ -17,21 +17,71 @@ import java.util.concurrent.ConcurrentHashMap
 /** Who published a score. */
 enum class RatingSource(val label: String) {
     IMDB("IMDb"),
-    ROTTEN_TOMATOES("RT"),
+    /** Critic score - the Tomatometer. */
+    ROTTEN_TOMATOES("Tomatometer"),
+    /** Audience score - the Popcornmeter. */
+    POPCORNMETER("Popcornmeter"),
     METACRITIC("Metacritic"),
+}
+
+/**
+ * Which mark a Rotten Tomatoes score is shown with.
+ *
+ * The two meters each have their own set, and the thresholds are theirs, not ours:
+ * a critic score at or above 60% is Fresh and shown as a tomato, below that it is
+ * Rotten and shown as a splat, and a score that has not populated is a faded
+ * tomato. The audience meter divides at the same 60% between a full and a tipped
+ * bucket. Certified Fresh is a separate award with its own criteria, so it is only
+ * ever taken from the service rather than inferred from the number.
+ */
+enum class TomatoState {
+    /** Critic score at or above the fresh threshold. */
+    FRESH,
+
+    /** Critic score below it. */
+    ROTTEN,
+
+    /** The best-reviewed titles; awarded, not calculated from the score alone. */
+    CERTIFIED_FRESH,
+
+    /** Audience score at or above the threshold. */
+    AUDIENCE_FRESH,
+
+    /** Audience score below it. */
+    AUDIENCE_SPILLED,
+
+    /** Not enough reviews for a score to populate, or not yet released. */
+    NONE,
 }
 
 /**
  * One external score, already formatted for display.
  *
  * [display] carries the units the source is read in rather than a bare number,
- * because they are not interchangeable: IMDb is out of ten, the Tomatometer is a
- * percentage of favourable reviews, and Metacritic is a weighted 0-100. Rendering
- * all three as "8.2" would invite comparison between scales that do not compare.
+ * because they are not interchangeable: IMDb is out of ten, the two Rotten Tomatoes
+ * meters are percentages of favourable reviews and ratings, and Metacritic is a
+ * weighted 0-100. Rendering them all as "8.2" would invite comparison between
+ * scales that do not compare.
  */
 data class ExternalRating(
     val source: RatingSource,
     val display: String,
+    /**
+     * Which mark to draw, for the two Rotten Tomatoes meters.
+     *
+     * Null for every other publisher: a score out of ten or out of a hundred has no
+     * state, only a number.
+     */
+    val state: TomatoState? = null,
+    /**
+     * How many reviews or ratings the score rests on, when reported.
+     *
+     * Null rather than zero where the service does not say. It returns 0 for
+     * television even on a successful answer, which is absence rather than a count
+     * of none, and printing "0 reviews" beside a score would be worse than printing
+     * nothing.
+     */
+    val voteCount: Int? = null,
 )
 
 /**

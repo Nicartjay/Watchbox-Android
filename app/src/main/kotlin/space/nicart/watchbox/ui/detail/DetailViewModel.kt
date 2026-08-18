@@ -217,7 +217,11 @@ class DetailViewModel(
             // scores come from a different service than everything above, and most
             // titles have none, so the sections that did arrive are shown first
             // rather than made to wait on a lookup that often adds nothing.
-            val withRatings = repository.withRatings(extras)
+            val withRatings = repository.withRatings(
+                extras = extras,
+                tmdbId = tmdbId,
+                isMovie = detail.isMovie,
+            )
             if (withRatings.ratings.isEmpty()) return@launch
             if (_uiState.value.detail?.key != detail.key) return@launch
             _uiState.value = _uiState.value.copy(

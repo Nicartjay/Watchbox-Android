@@ -2,6 +2,7 @@ package space.nicart.watchbox.ui.detail
 
 import android.graphics.drawable.Drawable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -292,16 +294,27 @@ private fun MetaRow(detail: AnimeDetail) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Icon(
-                    imageVector = rating.source.icon,
-                    // Named, because the glyph does not say which publisher it is -
-                    // the colour does, and that is invisible to a screen reader.
-                    contentDescription = rating.source.label,
-                    tint = rating.source.brandColor,
-                    // Larger than the phone's, for the same reason the rest of this
-                    // line is: it is read from across a room.
-                    modifier = Modifier.size(18.dp),
-                )
+                val stateDrawable = rating.state?.tomatoDrawable()
+                if (stateDrawable != null) {
+                    // Their own artwork, drawn untinted: the mark carries its colour,
+                    // and recolouring it would misstate the score's state.
+                    Image(
+                        painter = painterResource(stateDrawable),
+                        contentDescription = rating.source.label,
+                        modifier = Modifier.size(18.dp),
+                    )
+                } else {
+                    Icon(
+                        imageVector = rating.source.icon,
+                        // Named, because the glyph does not say which publisher it is -
+                        // the colour does, and that is invisible to a screen reader.
+                        contentDescription = rating.source.label,
+                        tint = rating.source.brandColor,
+                        // Larger than the phone's, for the same reason the rest of this
+                        // line is: it is read from across a room.
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
                 Text(
                     text = rating.display,
                     style = MaterialTheme.typography.titleMedium,

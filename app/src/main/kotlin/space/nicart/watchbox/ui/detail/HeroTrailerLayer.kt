@@ -80,7 +80,12 @@ fun HeroTrailerLayer(
             // Muted before anything is prepared, so no frame of audio can escape
             // between preparation and the first mute call.
             volume = 0f
-            repeatMode = Player.REPEAT_MODE_OFF
+            // Loops. A trailer is shorter than the time spent reading a synopsis, and
+            // ending on a frozen last frame reads as a stall rather than as a finish.
+            //
+            // It does mean a codec and a stream stay live for as long as the page is
+            // open, which is why the setting to turn this off exists.
+            repeatMode = Player.REPEAT_MODE_ONE
             playWhenReady = false
         }
     }

@@ -5,6 +5,7 @@ import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.LocalIndication
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.LocalMovies
 import androidx.compose.material.icons.rounded.Reviews
 import androidx.compose.material.icons.rounded.StarRate
@@ -59,6 +61,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -70,6 +73,7 @@ import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.data.remote.ExternalRating
 import space.nicart.watchbox.data.remote.RatingSource
+import space.nicart.watchbox.data.remote.TomatoState
 import space.nicart.watchbox.data.remote.Trailer
 import space.nicart.watchbox.domain.Studio
 import space.nicart.watchbox.ui.extensions.ExtensionIcon
@@ -946,14 +950,25 @@ private fun ExternalRatingChip(rating: ExternalRating) {
         // it wraps a three-character number onto three lines.
         modifier = Modifier.width(IntrinsicSize.Max),
     ) {
-        Icon(
-            imageVector = rating.source.icon,
-            // Named, because the glyph alone does not say which publisher it is -
-            // the colour does, and a screen reader cannot see colour.
-            contentDescription = rating.source.label,
-            tint = rating.source.brandColor,
-            modifier = Modifier.size(RATING_ICON_SIZE),
-        )
+        val stateDrawable = rating.state?.tomatoDrawable()
+        if (stateDrawable != null) {
+            // Their own artwork, so it is drawn untinted - the mark carries its
+            // colour, and recolouring it would misstate the score's state.
+            Image(
+                painter = painterResource(stateDrawable),
+                contentDescription = rating.source.label,
+                modifier = Modifier.size(RATING_ICON_SIZE),
+            )
+        } else {
+            Icon(
+                imageVector = rating.source.icon,
+                // Named, because the glyph alone does not say which publisher it is -
+                // the colour does, and a screen reader cannot see colour.
+                contentDescription = rating.source.label,
+                tint = rating.source.brandColor,
+                modifier = Modifier.size(RATING_ICON_SIZE),
+            )
+        }
         Text(
             text = rating.display,
             style = MaterialTheme.typography.titleSmall,
@@ -965,13 +980,23 @@ private fun ExternalRatingChip(rating: ExternalRating) {
     }
 }
 
-/** Publisher mark. See [ExternalRatingChip] for why these are generic glyphs. */
+/**
+ * Publisher mark.
+ *
+ * Falls back to a generic Material glyph per publisher. The Rotten Tomatoes meters
+ * are drawn from their own artwork instead where it is present - see
+ * [tomatoDrawable] - because a tomato, a splat and a popcorn bucket carry meaning
+ * their own set has and a generic icon cannot.
+ */
 internal val RatingSource.icon: ImageVector
     get() = when (this) {
         // A star: IMDb's score is a user rating out of ten.
         RatingSource.IMDB -> Icons.Rounded.StarRate
-        // Rotten Tomatoes' Tomatometer is the share of favourable *critic* reviews.
+        // Critic share of favourable reviews.
         RatingSource.ROTTEN_TOMATOES -> Icons.Rounded.LocalMovies
+        // Audience share. A distinct glyph from the critic meter, since the whole
+        // point of showing both is that they disagree.
+        RatingSource.POPCORNMETER -> Icons.Rounded.Groups
         // Metacritic is a weighted aggregate of published reviews.
         RatingSource.METACRITIC -> Icons.Rounded.Reviews
     }
@@ -981,8 +1006,26 @@ internal val RatingSource.brandColor: Color
     get() = when (this) {
         RatingSource.IMDB -> IMDB_YELLOW
         RatingSource.ROTTEN_TOMATOES -> RT_RED
+        RatingSource.POPCORNMETER -> RT_POPCORN
         RatingSource.METACRITIC -> METACRITIC_GREEN
     }
+
+/**
+ * Rotten Tomatoes' own mark for a score's state, or null to use [icon].
+ *
+ * Null throughout at present: their marks are artwork, and an approximation drawn
+ * from a description would be a poor imitation of a trademark rather than the
+ * thing itself. The states are modelled and carried through so that adding the
+ * real assets is a change to this one function.
+ *
+ * To wire them up, drop the six SVGs into `res/drawable` as vector drawables and
+ * return them here. Which state maps to which mark follows their published
+ * definitions: at or above 60% of favourable critic reviews is a tomato, below it a
+ * splat, an unpopulated score a faded tomato, and Certified Fresh has its own
+ * badge; the audience meter takes a full bucket above the same threshold and a
+ * tipped one below.
+ */
+internal fun TomatoState.tomatoDrawable(): Int? = null
 
 /** Slightly larger than the text cap height, so the mark reads as an icon not a bullet. */
 private val RATING_ICON_SIZE = 16.dp
@@ -990,8 +1033,11 @@ private val RATING_ICON_SIZE = 16.dp
 /** IMDb's brand yellow. */
 private val IMDB_YELLOW = Color(0xFFF5C518)
 
-/** Rotten Tomatoes' brand red. */
+/** Rotten Tomatoes' brand red, for the critic meter. */
 private val RT_RED = Color(0xFFFA320A)
+
+/** The audience meter's own colour, so the two meters are not one indistinct pair. */
+private val RT_POPCORN = Color(0xFFFFC94D)
 
 /** Metacritic's brand green. */
 private val METACRITIC_GREEN = Color(0xFF66CC33)
