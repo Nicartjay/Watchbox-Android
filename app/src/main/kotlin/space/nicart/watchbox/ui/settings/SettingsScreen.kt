@@ -217,6 +217,15 @@ fun SettingsScreen(
                 )
             }
 
+            item(key = "autoplay-trailers") {
+                SettingsToggleRow(
+                    title = stringResource(R.string.settings_autoplay_trailers),
+                    checked = settings.autoplayTrailers,
+                    onCheckedChange = viewModel::setAutoplayTrailers,
+                    summary = stringResource(R.string.settings_autoplay_trailers_summary),
+                )
+            }
+
             item(key = "nsfw") {
                 SettingsToggleRow(
                     title = stringResource(R.string.settings_nsfw),

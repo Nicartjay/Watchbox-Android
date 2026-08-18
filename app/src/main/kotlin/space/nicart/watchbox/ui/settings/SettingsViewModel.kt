@@ -146,6 +146,10 @@ class SettingsViewModel(
         viewModelScope.launch { store.setBackgroundPlayback(enabled) }
     }
 
+    fun setAutoplayTrailers(enabled: Boolean) {
+        viewModelScope.launch { store.setAutoplayTrailers(enabled) }
+    }
+
     fun setAutoPlayNext(enabled: Boolean) {
         viewModelScope.launch { store.setAutoPlayNext(enabled) }
     }

@@ -14,6 +14,7 @@ import space.nicart.watchbox.data.local.WatchlistEntry
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.domain.AnimeDetail
 import space.nicart.watchbox.data.remote.CountryResolver
+import space.nicart.watchbox.data.remote.Trailer
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.domain.friendlyMessage
@@ -28,6 +29,14 @@ data class DetailUiState(
     val errorMessage: String? = null,
     /** This title's page on the source's site, when it has one. */
     val webUrl: String? = null,
+    /**
+     * Hero trailer, once resolved and only when the setting allows it.
+     *
+     * Null covers every reason there is no video - setting off, no TMDB match,
+     * nothing published, service unreachable - because the hero does the same thing
+     * in all of them: shows its backdrop.
+     */
+    val trailer: Trailer? = null,
 ) {
     /** The episode the play button should open, and where to resume from. */
     val resumeTarget: Pair<EpisodeEntry, Long>?
@@ -71,6 +80,7 @@ class DetailViewModel(
 
     private var suggestionsJob: Job? = null
     private var extrasJob: Job? = null
+    private var trailerJob: Job? = null
 
     private val _uiState = MutableStateFlow(DetailUiState())
     val uiState: StateFlow<DetailUiState> = _uiState.asStateFlow()
@@ -99,6 +109,7 @@ class DetailViewModel(
                     // a section the user may never scroll to.
                     loadSuggestions(detail)
                     loadExtras(detail)
+                    loadTrailer(detail)
                 }
                 .onFailure { error ->
                     _uiState.value = _uiState.value.copy(
@@ -212,6 +223,34 @@ class DetailViewModel(
             _uiState.value = _uiState.value.copy(
                 detail = _uiState.value.detail?.copy(extras = withRatings),
             )
+        }
+    }
+
+    /**
+     * Resolves the hero trailer, when the setting allows one.
+     *
+     * Read once here rather than collected: the hero is built when the page opens,
+     * and a trailer appearing because a setting changed in another screen mid-visit
+     * would be a surprise rather than a feature.
+     *
+     * Its own job so it cancels with navigation, and separate from [loadExtras]
+     * because it is a different service - a slow trailer lookup must not delay the
+     * provider list, and a slow extras call must not delay the hero.
+     */
+    private fun loadTrailer(detail: AnimeDetail) {
+        trailerJob?.cancel()
+        val tmdbId = detail.tmdbId ?: return
+
+        trailerJob = viewModelScope.launch {
+            if (!store.currentSettings().autoplayTrailers) return@launch
+
+            val trailer = repository.trailer(tmdbId = tmdbId, isMovie = detail.isMovie)
+                ?: return@launch
+
+            // Guarded like the others: the user may have navigated on, or a reload
+            // replaced the detail with a different title, while this was in flight.
+            if (_uiState.value.detail?.key != detail.key) return@launch
+            _uiState.value = _uiState.value.copy(trailer = trailer)
         }
     }
 

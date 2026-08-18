@@ -26,9 +26,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.media3.common.util.UnstableApi
 import androidx.compose.ui.unit.sp
 import space.nicart.watchbox.core.ui.wb
-import space.nicart.watchbox.data.remote.RatingSource
+import space.nicart.watchbox.data.remote.Trailer
 import space.nicart.watchbox.domain.AnimeDetail
 import space.nicart.watchbox.ui.components.WbAsyncImage
 import space.nicart.watchbox.ui.extensions.ExtensionIconSlot
@@ -54,6 +55,7 @@ import androidx.compose.material3.Icon
  * anime, where many titles have no official wordmark, so the text form is the default
  * path rather than an edge case.
  */
+@UnstableApi
 @Composable
 fun NetflixDetailHero(
     detail: AnimeDetail,
@@ -62,6 +64,8 @@ fun NetflixDetailHero(
     modifier: Modifier = Modifier,
     /** Left inset. On TV this has to clear the navigation rail. */
     contentPadding: Dp = 48.dp,
+    /** Hero trailer, when one resolved and the setting allows it. */
+    trailer: Trailer? = null,
 ) {
     val tokens = MaterialTheme.wb
 
@@ -74,6 +78,15 @@ fun NetflixDetailHero(
             url = detail.heroImage,
             contentDescription = detail.title,
             contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+
+        // Over the backdrop, under both scrims. Above the image so it can cover it
+        // once playing; below the scrims so the copy on the left stays readable
+        // against whatever the video is showing at the time.
+        HeroTrailerLayer(
+            trailer = trailer,
+            enabled = true,
             modifier = Modifier.fillMaxSize(),
         )
 
@@ -279,17 +292,15 @@ private fun MetaRow(detail: AnimeDetail) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(
-                    text = rating.source.label,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = when (rating.source) {
-                        RatingSource.IMDB -> IMDB_YELLOW
-                        RatingSource.ROTTEN_TOMATOES -> RT_RED
-                        RatingSource.METACRITIC -> METACRITIC_GREEN
-                    },
-                    maxLines = 1,
-                    softWrap = false,
+                Icon(
+                    imageVector = rating.source.icon,
+                    // Named, because the glyph does not say which publisher it is -
+                    // the colour does, and that is invisible to a screen reader.
+                    contentDescription = rating.source.label,
+                    tint = rating.source.brandColor,
+                    // Larger than the phone's, for the same reason the rest of this
+                    // line is: it is read from across a room.
+                    modifier = Modifier.size(18.dp),
                 )
                 Text(
                     text = rating.display,
@@ -335,14 +346,3 @@ private fun String.firstParagraph(): String =
 private val TEXT_COLUMN_WIDTH = 620.dp
 private val LOGO_HEIGHT = 120.dp
 private val BADGE_ICON_SIZE = 30.dp
-
-/**
- * Publisher brand colours, matching the phone layout's chips.
- *
- * Duplicated rather than shared because the two layouts are otherwise independent
- * files, and a shared constants file for three colours would be indirection for
- * its own sake. If a fourth publisher is added, hoist them.
- */
-private val IMDB_YELLOW = Color(0xFFF5C518)
-private val RT_RED = Color(0xFFFA320A)
-private val METACRITIC_GREEN = Color(0xFF66CC33)

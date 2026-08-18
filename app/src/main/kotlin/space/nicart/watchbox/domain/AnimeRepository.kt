@@ -14,7 +14,10 @@ import kotlinx.coroutines.withContext
 import kotlin.random.Random
 import kotlinx.coroutines.withTimeout
 import space.nicart.watchbox.data.remote.NoRatings
+import space.nicart.watchbox.data.remote.NoTrailers
 import space.nicart.watchbox.data.remote.RatingProvider
+import space.nicart.watchbox.data.remote.Trailer
+import space.nicart.watchbox.data.remote.TrailerProvider
 import space.nicart.watchbox.data.remote.TmdbApi
 import space.nicart.watchbox.data.remote.TmdbArtwork
 import space.nicart.watchbox.data.remote.TmdbExtras
@@ -43,6 +46,14 @@ class AnimeRepository(
      * single call on an IMDb id - without this class or the UI changing.
      */
     private val ratingProvider: RatingProvider = NoRatings,
+    /**
+     * Where hero trailers come from.
+     *
+     * Injected for the same reason as [ratingProvider], and more pressingly: the
+     * implementation is a third party's private endpoint, so the day it stops
+     * answering only that class changes.
+     */
+    private val trailerProvider: TrailerProvider = NoTrailers,
 ) {
 
     // ------------------------------------------------------------------ home
@@ -394,6 +405,22 @@ class AnimeRepository(
                 ratingProvider.ratings(wikidataId = qid, imdbId = null)
             }.orEmpty()
             if (ratings.isEmpty()) extras else extras.copy(ratings = ratings)
+        }
+    }
+
+    /**
+     * A hero trailer for a title, or null.
+     *
+     * Null is the ordinary answer for a title the service has nothing for, and for
+     * one with no TMDB match at all - the caller shows the backdrop either way, so
+     * there is nothing to distinguish.
+     */
+    suspend fun trailer(tmdbId: Int?, isMovie: Boolean): Trailer? {
+        if (tmdbId == null) return null
+        return withContext(Dispatchers.IO) {
+            guarded("trailer($tmdbId)") {
+                trailerProvider.trailer(tmdbId = tmdbId, isMovie = isMovie)
+            }
         }
     }
 

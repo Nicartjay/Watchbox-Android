@@ -24,6 +24,7 @@ import space.nicart.watchbox.extension.ExtensionRepoApi
 import space.nicart.watchbox.data.remote.AniSkipApi
 import space.nicart.watchbox.data.remote.ArmApi
 import space.nicart.watchbox.data.remote.SubtitleApi
+import space.nicart.watchbox.data.remote.SheguTrailerApi
 import space.nicart.watchbox.data.remote.WikidataRatingApi
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.SkipRepository
@@ -147,6 +148,9 @@ class AppContainer(
         // Keyless, on the plain client: Wikidata is not a content source, so it
         // wants none of the extensions' cookies or Referer.
         ratingProvider = WikidataRatingApi(plainClient),
+        // Also on the plain client, and for the same reason: a trailer host is not a
+        // content source and wants none of the extensions' cookies or Referer.
+        trailerProvider = SheguTrailerApi(plainClient),
     )
 
     /**

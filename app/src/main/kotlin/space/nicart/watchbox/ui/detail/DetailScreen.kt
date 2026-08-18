@@ -242,6 +242,7 @@ fun DetailScreen(
                                 extensionIcon = extensionIcon,
                                 heroHeight = heroHeight,
                                 contentPadding = contentPadding,
+                                trailer = state.trailer,
                             )
                         } else {
                             DetailHero(
@@ -250,6 +251,7 @@ fun DetailScreen(
                                 scrollOffset = scrollOffset,
                                 isTablet = isTablet,
                                 contentMaxWidth = contentMaxWidth,
+                                trailer = state.trailer,
                             )
                         }
                     }

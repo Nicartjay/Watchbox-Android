@@ -38,6 +38,9 @@ import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.LocalMovies
+import androidx.compose.material.icons.rounded.Reviews
+import androidx.compose.material.icons.rounded.StarRate
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -62,10 +65,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.media3.common.util.UnstableApi
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.data.remote.ExternalRating
 import space.nicart.watchbox.data.remote.RatingSource
+import space.nicart.watchbox.data.remote.Trailer
 import space.nicart.watchbox.domain.Studio
 import space.nicart.watchbox.ui.extensions.ExtensionIcon
 import space.nicart.watchbox.domain.AnimeDetail
@@ -93,6 +98,7 @@ fun detailHeroHeight(maxWidth: Dp, isTablet: Boolean): Dp = if (isTablet) {
  * Hero: full-bleed backdrop with a 7-stop scrim, then the logo/title and genre
  * line bottom-centred inside it (`DetailHero.kt`).
  */
+@UnstableApi
 @Composable
 fun DetailHero(
     detail: AnimeDetail,
@@ -101,6 +107,8 @@ fun DetailHero(
     isTablet: Boolean,
     contentMaxWidth: Dp,
     modifier: Modifier = Modifier,
+    /** Hero trailer, when one resolved and the setting allows it. */
+    trailer: Trailer? = null,
 ) {
     val tokens = MaterialTheme.wb
     val background = MaterialTheme.colorScheme.background
@@ -125,6 +133,24 @@ fun DetailHero(
                     scaleX = 1.08f
                     scaleY = 1.08f
                     // Parallax at half scroll speed.
+                    translationY = scrollOffset * 0.5f
+                },
+        )
+
+        // Over the backdrop, under the scrim. Above the image so it can cover it once
+        // playing; below the scrim so the title and buttons stay legible against
+        // whatever the video happens to be showing.
+        //
+        // Parallaxed with the same transform as the backdrop, or the two would
+        // separate as the page scrolls.
+        HeroTrailerLayer(
+            trailer = trailer,
+            enabled = true,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = 1.08f
+                    scaleY = 1.08f
                     translationY = scrollOffset * 0.5f
                 },
         )
@@ -894,11 +920,16 @@ private const val MAX_INFO_FIELDS = 5
 private val TMDB_BLUE = Color(0xFF01B4E4)
 
 /**
- * One external score: the publisher's name, then the figure.
+ * One external score: a mark for the publisher, then the figure.
  *
- * Follows the TMDB score above it - the label carries the publisher's own colour
- * and the number is gold - so a score reads the same way wherever it came from,
- * and the colour is what attributes it rather than the app appearing to author it.
+ * The publisher is shown as an icon rather than its name. Three names plus three
+ * numbers plus a source row is a lot of text for one line on a phone, and the
+ * icons carry the publisher's own colour, which is what actually distinguishes
+ * them at a glance.
+ *
+ * Generic Material glyphs, deliberately, not the publishers' logos: those are
+ * trademarks with their own usage terms, and bundling them in a released APK is a
+ * licensing question rather than a design one. The colour does the attributing.
  *
  * The value keeps its units (`81%`, `8.8/10`, `67/100`) rather than being
  * normalised to one scale. A Tomatometer percentage and an IMDb mean out of ten
@@ -915,17 +946,13 @@ private fun ExternalRatingChip(rating: ExternalRating) {
         // it wraps a three-character number onto three lines.
         modifier = Modifier.width(IntrinsicSize.Max),
     ) {
-        Text(
-            text = rating.source.label,
-            style = MaterialTheme.typography.labelMedium,
-            color = when (rating.source) {
-                RatingSource.IMDB -> IMDB_YELLOW
-                RatingSource.ROTTEN_TOMATOES -> RT_RED
-                RatingSource.METACRITIC -> METACRITIC_GREEN
-            },
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            softWrap = false,
+        Icon(
+            imageVector = rating.source.icon,
+            // Named, because the glyph alone does not say which publisher it is -
+            // the colour does, and a screen reader cannot see colour.
+            contentDescription = rating.source.label,
+            tint = rating.source.brandColor,
+            modifier = Modifier.size(RATING_ICON_SIZE),
         )
         Text(
             text = rating.display,
@@ -937,6 +964,28 @@ private fun ExternalRatingChip(rating: ExternalRating) {
         )
     }
 }
+
+/** Publisher mark. See [ExternalRatingChip] for why these are generic glyphs. */
+internal val RatingSource.icon: ImageVector
+    get() = when (this) {
+        // A star: IMDb's score is a user rating out of ten.
+        RatingSource.IMDB -> Icons.Rounded.StarRate
+        // Rotten Tomatoes' Tomatometer is the share of favourable *critic* reviews.
+        RatingSource.ROTTEN_TOMATOES -> Icons.Rounded.LocalMovies
+        // Metacritic is a weighted aggregate of published reviews.
+        RatingSource.METACRITIC -> Icons.Rounded.Reviews
+    }
+
+/** Publisher colour, which is what identifies the score now the name is gone. */
+internal val RatingSource.brandColor: Color
+    get() = when (this) {
+        RatingSource.IMDB -> IMDB_YELLOW
+        RatingSource.ROTTEN_TOMATOES -> RT_RED
+        RatingSource.METACRITIC -> METACRITIC_GREEN
+    }
+
+/** Slightly larger than the text cap height, so the mark reads as an icon not a bullet. */
+private val RATING_ICON_SIZE = 16.dp
 
 /** IMDb's brand yellow. */
 private val IMDB_YELLOW = Color(0xFFF5C518)

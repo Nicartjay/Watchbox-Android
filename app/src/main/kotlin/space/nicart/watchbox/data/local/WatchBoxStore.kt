@@ -50,6 +50,7 @@ class WatchBoxStore(context: Context) {
                 autoPlayNext = prefs[Keys.AUTO_NEXT] ?: true,
                 backgroundPlayback = prefs[Keys.BACKGROUND_PLAY] ?: false,
                 preferredQuality = prefs[Keys.QUALITY] ?: "1080",
+                autoplayTrailers = prefs[Keys.AUTOPLAY_TRAILERS] ?: true,
                 nsfwSourcesEnabled = prefs[Keys.NSFW] ?: false,
                 autoCheckUpdates = prefs[Keys.AUTO_UPDATE_CHECK] ?: true,
                 lastUpdateCheck = prefs[Keys.LAST_UPDATE_CHECK] ?: 0L,
@@ -153,6 +154,9 @@ class WatchBoxStore(context: Context) {
         it[Keys.BACKGROUND_PLAY] = enabled
     }
     suspend fun setPreferredQuality(quality: String) = store.edit { it[Keys.QUALITY] = quality }
+    suspend fun setAutoplayTrailers(enabled: Boolean) = store.edit {
+        it[Keys.AUTOPLAY_TRAILERS] = enabled
+    }
     suspend fun setNsfwSourcesEnabled(enabled: Boolean) = store.edit { it[Keys.NSFW] = enabled }
 
     suspend fun setAutoCheckUpdates(enabled: Boolean) = store.edit {
@@ -355,6 +359,7 @@ class WatchBoxStore(context: Context) {
         val THEME = stringPreferencesKey("theme")
         val AUTO_NEXT = booleanPreferencesKey("auto_play_next")
         val BACKGROUND_PLAY = booleanPreferencesKey("background_playback")
+        val AUTOPLAY_TRAILERS = booleanPreferencesKey("autoplay_trailers")
         val QUALITY = stringPreferencesKey("preferred_quality")
         val NSFW = booleanPreferencesKey("nsfw_sources")
         val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_check_updates")
@@ -398,6 +403,15 @@ data class AppSettings(
      */
     val backgroundPlayback: Boolean = false,
     val preferredQuality: String = "1080",
+    /**
+     * Plays a muted trailer in the detail page's hero after a short delay.
+     *
+     * On by default: the hero is a large still that reads as a placeholder, and a
+     * trailer is what most catalogues put there. Off is offered because it costs
+     * mobile data on every detail page opened, which is not a trade everyone wants
+     * to make silently.
+     */
+    val autoplayTrailers: Boolean = true,
     val nsfwSourcesEnabled: Boolean = false,
     val autoCheckUpdates: Boolean = true,
     val lastUpdateCheck: Long = 0L,
