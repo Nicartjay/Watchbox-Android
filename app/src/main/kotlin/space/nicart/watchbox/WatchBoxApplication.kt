@@ -24,6 +24,7 @@ import space.nicart.watchbox.extension.ExtensionRepoApi
 import space.nicart.watchbox.data.remote.AniSkipApi
 import space.nicart.watchbox.data.remote.ArmApi
 import space.nicart.watchbox.data.remote.SubtitleApi
+import space.nicart.watchbox.data.remote.WikidataRatingApi
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.SkipRepository
 import space.nicart.watchbox.domain.SubtitleRepository
@@ -140,7 +141,13 @@ class AppContainer(
         installer = installer,
     )
 
-    val repository = AnimeRepository(extensionManager, tmdbApi)
+    val repository = AnimeRepository(
+        extensions = extensionManager,
+        tmdb = tmdbApi,
+        // Keyless, on the plain client: Wikidata is not a content source, so it
+        // wants none of the extensions' cookies or Referer.
+        ratingProvider = WikidataRatingApi(plainClient),
+    )
 
     /**
      * Applies the artwork-language preference.

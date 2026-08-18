@@ -13,6 +13,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
 import kotlinx.coroutines.withTimeout
+import space.nicart.watchbox.data.remote.NoRatings
+import space.nicart.watchbox.data.remote.RatingProvider
 import space.nicart.watchbox.data.remote.TmdbApi
 import space.nicart.watchbox.data.remote.TmdbArtwork
 import space.nicart.watchbox.data.remote.TmdbExtras
@@ -33,6 +35,14 @@ import space.nicart.watchbox.extension.ExtensionManager
 class AnimeRepository(
     private val extensions: ExtensionManager,
     private val tmdb: TmdbApi,
+    /**
+     * Where external scores come from.
+     *
+     * Injected rather than constructed here so the keyless provider can be swapped
+     * for a keyed one - OMDb returns IMDb, Rotten Tomatoes and Metacritic from a
+     * single call on an IMDb id - without this class or the UI changing.
+     */
+    private val ratingProvider: RatingProvider = NoRatings,
 ) {
 
     // ------------------------------------------------------------------ home
@@ -366,6 +376,24 @@ class AnimeRepository(
                     country = country,
                 )
             } ?: TmdbExtras()
+        }
+    }
+
+    /**
+     * External scores for [extras], or the same object unchanged.
+     *
+     * A second call rather than part of [extras] so a slow or unreachable lookup
+     * cannot hold back the trailers and provider list, which come from TMDB itself
+     * and are the reason the page waits at all. Guarded like every other network
+     * read: an absent score is decoration, never an error worth surfacing.
+     */
+    suspend fun withRatings(extras: TmdbExtras): TmdbExtras {
+        val qid = extras.wikidataId ?: return extras
+        return withContext(Dispatchers.IO) {
+            val ratings = guarded("ratings($qid)") {
+                ratingProvider.ratings(wikidataId = qid, imdbId = null)
+            }.orEmpty()
+            if (ratings.isEmpty()) extras else extras.copy(ratings = ratings)
         }
     }
 

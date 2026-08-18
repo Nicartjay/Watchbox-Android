@@ -201,6 +201,17 @@ class DetailViewModel(
             _uiState.value = _uiState.value.copy(
                 detail = _uiState.value.detail?.copy(extras = extras),
             )
+
+            // Second pass, on the same job so navigating away cancels it. External
+            // scores come from a different service than everything above, and most
+            // titles have none, so the sections that did arrive are shown first
+            // rather than made to wait on a lookup that often adds nothing.
+            val withRatings = repository.withRatings(extras)
+            if (withRatings.ratings.isEmpty()) return@launch
+            if (_uiState.value.detail?.key != detail.key) return@launch
+            _uiState.value = _uiState.value.copy(
+                detail = _uiState.value.detail?.copy(extras = withRatings),
+            )
         }
     }
 

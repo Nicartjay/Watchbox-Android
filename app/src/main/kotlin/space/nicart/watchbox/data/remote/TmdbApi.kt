@@ -390,6 +390,7 @@ class TmdbApi(private val client: HttpClient, private val apiKey: String) {
                 .mapNotNull { it.title.takeIf { t -> t.isNotBlank() } }
                 .distinct(),
             tvdbId = externalIds?.tvdbId,
+            wikidataId = externalIds?.wikidataId?.takeIf { it.isNotBlank() },
             nextEpisodeAirDate = nextEpisodeToAir?.airDate.orEmpty(),
             nextEpisodeNumber = nextEpisodeToAir?.episodeNumber ?: 0,
         )
@@ -965,7 +966,10 @@ private data class AltTitleList(val results: List<AltTitleEntry>? = null)
 private data class AltTitleEntry(val title: String = "")
 
 @Serializable
-private data class ExtrasExternalIds(@SerialName("tvdb_id") val tvdbId: Int? = null)
+private data class ExtrasExternalIds(
+    @SerialName("tvdb_id") val tvdbId: Int? = null,
+    @SerialName("wikidata_id") val wikidataId: String? = null,
+)
 
 @Serializable
 private data class NextEpisode(

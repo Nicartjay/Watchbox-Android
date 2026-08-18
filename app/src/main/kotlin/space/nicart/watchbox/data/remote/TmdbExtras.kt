@@ -88,6 +88,22 @@ data class TmdbExtras(
     val alternativeTitles: List<String> = emptyList(),
     /** TheTVDB id, a second mapping route where the primary one has no match. */
     val tvdbId: Int? = null,
+    /**
+     * Wikidata entity id, e.g. `Q190050`.
+     *
+     * Carried because it is the key external scores are looked up by, and it rides
+     * along on the `external_ids` this request already asks for - so it costs
+     * nothing to keep. Null for titles Wikidata has no entry for.
+     */
+    val wikidataId: String? = null,
+    /**
+     * External scores, filled in after the rest of the extras.
+     *
+     * Empty is ordinary rather than a failure: the keyless source behind these has
+     * no entry for most television. Fetched separately so a slow or unavailable
+     * lookup cannot hold up the sections that came from TMDB itself.
+     */
+    val ratings: List<ExternalRating> = emptyList(),
     /** Air date of the next episode, ISO. Blank when nothing is scheduled. */
     val nextEpisodeAirDate: String = "",
     /** Episode number of the next airing, 0 when unknown. */

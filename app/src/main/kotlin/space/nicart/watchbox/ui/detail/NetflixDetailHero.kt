@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import space.nicart.watchbox.core.ui.wb
+import space.nicart.watchbox.data.remote.RatingSource
 import space.nicart.watchbox.domain.AnimeDetail
 import space.nicart.watchbox.ui.components.WbAsyncImage
 import space.nicart.watchbox.ui.extensions.ExtensionIconSlot
@@ -234,7 +235,7 @@ private fun MetaRow(detail: AnimeDetail) {
         detail.genres.take(3).takeIf { it.isNotEmpty() }?.let { add(it.joinToString(" · ")) }
     }
 
-    if (parts.isEmpty() && detail.rating <= 0.0) return
+    if (parts.isEmpty() && detail.rating <= 0.0 && detail.extras.ratings.isEmpty()) return
 
     // The rating is drawn separately from the rest of the line so it can be gold.
     //
@@ -258,6 +259,40 @@ private fun MetaRow(detail: AnimeDetail) {
                 )
                 Text(
                     text = "%.1f".format(detail.rating),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = tokens.colors.warning,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            }
+        }
+
+        // External scores sit with the other factual attributes rather than beside the
+        // source mark as they do on a phone. At viewing distance a row of small marks
+        // lower down is hard to read, and this line is already where a value belongs.
+        //
+        // Placed before the dot-separated facts because that text ellipsises: put after,
+        // a long genre list would push the scores off the end of the line instead.
+        detail.extras.ratings.forEach { rating ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = rating.source.label,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = when (rating.source) {
+                        RatingSource.IMDB -> IMDB_YELLOW
+                        RatingSource.ROTTEN_TOMATOES -> RT_RED
+                        RatingSource.METACRITIC -> METACRITIC_GREEN
+                    },
+                    maxLines = 1,
+                    softWrap = false,
+                )
+                Text(
+                    text = rating.display,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = tokens.colors.warning,
@@ -300,3 +335,14 @@ private fun String.firstParagraph(): String =
 private val TEXT_COLUMN_WIDTH = 620.dp
 private val LOGO_HEIGHT = 120.dp
 private val BADGE_ICON_SIZE = 30.dp
+
+/**
+ * Publisher brand colours, matching the phone layout's chips.
+ *
+ * Duplicated rather than shared because the two layouts are otherwise independent
+ * files, and a shared constants file for three colours would be indirection for
+ * its own sake. If a fourth publisher is added, hoist them.
+ */
+private val IMDB_YELLOW = Color(0xFFF5C518)
+private val RT_RED = Color(0xFFFA320A)
+private val METACRITIC_GREEN = Color(0xFF66CC33)

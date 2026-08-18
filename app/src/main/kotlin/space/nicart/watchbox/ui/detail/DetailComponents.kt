@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -63,6 +64,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.wb
+import space.nicart.watchbox.data.remote.ExternalRating
+import space.nicart.watchbox.data.remote.RatingSource
 import space.nicart.watchbox.domain.Studio
 import space.nicart.watchbox.ui.extensions.ExtensionIcon
 import space.nicart.watchbox.domain.AnimeDetail
@@ -609,32 +612,49 @@ fun DetailMetaInfo(
             }
         }
 
-        if (detail.sourceName.isNotBlank()) {
+        if (detail.sourceName.isNotBlank() || detail.extras.ratings.isNotEmpty()) {
             // The icon earns its place here: with several extensions installed the name
             // alone is a word the user has to read and match, while the icon is the same
             // mark they picked in the extension list.
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            //
+            // External scores share the row rather than taking one of their own: they are
+            // attribution, the same kind of thing as the source mark, and a row of their
+            // own would push the synopsis further down for two short numbers. The row
+            // wraps because three scores plus a source name overruns a narrow phone.
+            FlowRow(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                itemVerticalAlignment = Alignment.CenterVertically,
             ) {
-                // Reuses the extension list's own icon composable, which caches the
-                // drawable's rasterisation - adaptive-icon conversion is not free, and
-                // this sits in a list that recomposes on scroll.
-                if (sourceIcon != null) {
-                    ExtensionIcon(
-                        drawable = sourceIcon,
-                        iconUrl = null,
-                        modifier = Modifier
-                            .size(SOURCE_ICON_SIZE)
-                            .clip(RoundedCornerShape(5.dp)),
-                    )
+                if (detail.sourceName.isNotBlank()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        // Reuses the extension list's own icon composable, which caches the
+                        // drawable's rasterisation - adaptive-icon conversion is not free, and
+                        // this sits in a list that recomposes on scroll.
+                        if (sourceIcon != null) {
+                            ExtensionIcon(
+                                drawable = sourceIcon,
+                                iconUrl = null,
+                                modifier = Modifier
+                                    .size(SOURCE_ICON_SIZE)
+                                    .clip(RoundedCornerShape(5.dp)),
+                            )
+                        }
+
+                        Text(
+                            text = detail.sourceName,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = tokens.colors.textMuted,
+                        )
+                    }
                 }
 
-                Text(
-                    text = detail.sourceName,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = tokens.colors.textMuted,
-                )
+                detail.extras.ratings.forEach { rating ->
+                    ExternalRatingChip(rating)
+                }
             }
         }
 
@@ -872,6 +892,60 @@ private const val MAX_INFO_FIELDS = 5
 
 /** TMDB's brand blue, for the label that attributes a score to them. */
 private val TMDB_BLUE = Color(0xFF01B4E4)
+
+/**
+ * One external score: the publisher's name, then the figure.
+ *
+ * Follows the TMDB score above it - the label carries the publisher's own colour
+ * and the number is gold - so a score reads the same way wherever it came from,
+ * and the colour is what attributes it rather than the app appearing to author it.
+ *
+ * The value keeps its units (`81%`, `8.8/10`, `67/100`) rather than being
+ * normalised to one scale. A Tomatometer percentage and an IMDb mean out of ten
+ * measure different things, and rendering both as a bare number would invite a
+ * comparison that does not hold.
+ */
+@Composable
+private fun ExternalRatingChip(rating: ExternalRating) {
+    val tokens = MaterialTheme.wb
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        // Never shrink: the same reason the TMDB score above sets this - squeezing
+        // it wraps a three-character number onto three lines.
+        modifier = Modifier.width(IntrinsicSize.Max),
+    ) {
+        Text(
+            text = rating.source.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = when (rating.source) {
+                RatingSource.IMDB -> IMDB_YELLOW
+                RatingSource.ROTTEN_TOMATOES -> RT_RED
+                RatingSource.METACRITIC -> METACRITIC_GREEN
+            },
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false,
+        )
+        Text(
+            text = rating.display,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = tokens.colors.warning,
+            maxLines = 1,
+            softWrap = false,
+        )
+    }
+}
+
+/** IMDb's brand yellow. */
+private val IMDB_YELLOW = Color(0xFFF5C518)
+
+/** Rotten Tomatoes' brand red. */
+private val RT_RED = Color(0xFFFA320A)
+
+/** Metacritic's brand green. */
+private val METACRITIC_GREEN = Color(0xFF66CC33)
 
 /** Section title: 20sp SemiBold on phones (`DetailSection.kt`). */
 @Composable
