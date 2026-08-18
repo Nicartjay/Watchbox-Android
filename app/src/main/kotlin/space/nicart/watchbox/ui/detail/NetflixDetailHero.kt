@@ -294,27 +294,18 @@ private fun MetaRow(detail: AnimeDetail) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                val stateDrawable = rating.state?.tomatoDrawable()
-                if (stateDrawable != null) {
-                    // Their own artwork, drawn untinted: the mark carries its colour,
-                    // and recolouring it would misstate the score's state.
-                    Image(
-                        painter = painterResource(stateDrawable),
-                        contentDescription = rating.source.label,
-                        modifier = Modifier.size(18.dp),
-                    )
-                } else {
-                    Icon(
-                        imageVector = rating.source.icon,
-                        // Named, because the glyph does not say which publisher it is -
-                        // the colour does, and that is invisible to a screen reader.
-                        contentDescription = rating.source.label,
-                        tint = rating.source.brandColor,
-                        // Larger than the phone's, for the same reason the rest of this
-                        // line is: it is read from across a room.
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
+                // Drawn untinted: each mark carries its own colour, and the faded
+                // state is a greyed variant of the same artwork rather than a
+                // recolour applied here.
+                Image(
+                    painter = painterResource(rating.state.tomatoDrawable()),
+                    // Named, because the mark alone does not say which meter it is,
+                    // and a screen reader cannot tell a tomato from a bucket.
+                    contentDescription = rating.source.label,
+                    // Larger than the phone's, for the same reason the rest of this
+                    // line is: it is read from across a room.
+                    modifier = Modifier.size(20.dp),
+                )
                 Text(
                     text = rating.display,
                     style = MaterialTheme.typography.titleMedium,

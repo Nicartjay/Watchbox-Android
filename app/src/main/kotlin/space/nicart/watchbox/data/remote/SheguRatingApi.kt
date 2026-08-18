@@ -110,12 +110,9 @@ class SheguRatingApi(private val client: HttpClient) : RatingProvider {
                 ?: return emptyList()
 
             return buildList {
-                // Reported as a string, e.g. "8.8". Kept as given rather than parsed and
-                // reformatted, so a whole number stays "9" as the service wrote it.
-                dto.imdbRating?.trim()?.takeIf { it.isNotBlank() && it != "0" }?.let {
-                    add(ExternalRating(RatingSource.IMDB, "$it/10"))
-                }
-
+                // No IMDb score, though the service reports one: TMDB's own is already
+                // on the page, and a second figure out of ten beside it reads as a
+                // duplicate rather than as a second opinion.
                 dto.tomatoMeter?.takeIf { it > 0 }?.let { score ->
                     add(
                         ExternalRating(

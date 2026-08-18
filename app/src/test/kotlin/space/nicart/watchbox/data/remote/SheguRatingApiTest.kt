@@ -26,19 +26,28 @@ class SheguRatingApiTest {
     """.trimIndent()
 
     @Test
-    fun `reads all three scores from a live payload`() {
+    fun `reads both meters from a live payload`() {
         val ratings = parse(fightClub)
         assertEquals(
-            listOf(RatingSource.IMDB, RatingSource.ROTTEN_TOMATOES, RatingSource.POPCORNMETER),
+            listOf(RatingSource.ROTTEN_TOMATOES, RatingSource.POPCORNMETER),
             ratings.map { it.source },
         )
     }
 
-    /** Units are kept, because a score out of ten and a percentage do not compare. */
+    /**
+     * The service also reports an IMDb figure, which is deliberately dropped: TMDB's
+     * own score is already on the page, and a second number out of ten beside it
+     * reads as a duplicate rather than as a second opinion.
+     */
     @Test
-    fun `formats each score in its own units`() {
+    fun `ignores the imdb score the service reports`() {
+        assertTrue(parse(fightClub).none { it.display.endsWith("/10") })
+    }
+
+    /** Both meters are shares of favourable reviews, so the percent sign is kept. */
+    @Test
+    fun `formats each score as a percentage`() {
         val bySource = parse(fightClub).associate { it.source to it.display }
-        assertEquals("8.8/10", bySource[RatingSource.IMDB])
         assertEquals("81%", bySource[RatingSource.ROTTEN_TOMATOES])
         assertEquals("96%", bySource[RatingSource.POPCORNMETER])
     }
@@ -126,17 +135,22 @@ class SheguRatingApiTest {
         assertTrue(parse(body).isEmpty())
     }
 
+    /** Either meter may be absent; whichever is present still shows. */
     @Test
-    fun `keeps whichever scores are present`() {
-        val ratings = parse("""{"imdb_rating":"9.5"}""")
-        assertEquals(1, ratings.size)
-        assertEquals(RatingSource.IMDB, ratings.single().source)
+    fun `keeps whichever meter is present`() {
+        val critic = parse("""{"tomato_meter":74}""")
+        assertEquals(1, critic.size)
+        assertEquals(RatingSource.ROTTEN_TOMATOES, critic.single().source)
+
+        val audience = parse("""{"audience_score":88}""")
+        assertEquals(1, audience.size)
+        assertEquals(RatingSource.POPCORNMETER, audience.single().source)
     }
 
-    /** No state on anything but the two Rotten Tomatoes meters. */
+    /** An IMDb figure alone leaves nothing to show, since it is not rendered. */
     @Test
-    fun `leaves imdb without a state`() {
-        assertNull(parse("""{"imdb_rating":"8.1"}""").single().state)
+    fun `returns nothing when only an imdb score is reported`() {
+        assertTrue(parse("""{"imdb_rating":"8.1"}""").isEmpty())
     }
 
     // --------------------------------------------------------- malformed input
@@ -159,7 +173,7 @@ class SheguRatingApiTest {
     /** The service may add fields; unknown ones must not break the parse. */
     @Test
     fun `ignores fields it does not know`() {
-        val body = """{"imdb_rating":"7.7","mbp_id":4061,"quality_tag_new":"4k","cats":"drama"}"""
-        assertEquals("7.7/10", parse(body).single().display)
+        val body = """{"tomato_meter":77,"mbp_id":4061,"quality_tag_new":"4k","cats":"drama"}"""
+        assertEquals("77%", parse(body).single().display)
     }
 }

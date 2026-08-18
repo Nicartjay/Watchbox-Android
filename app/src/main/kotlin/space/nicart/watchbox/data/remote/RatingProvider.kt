@@ -14,25 +14,32 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.ConcurrentHashMap
 
-/** Who published a score. */
+/**
+ * Who published a score.
+ *
+ * The two Rotten Tomatoes meters and nothing else. IMDb and Metacritic were dropped
+ * because TMDB's own score is already on the page and a second number out of ten
+ * beside it reads as a duplicate rather than as a second opinion. These two earn
+ * their place by measuring something it does not: critics and audiences separately.
+ */
 enum class RatingSource(val label: String) {
-    IMDB("IMDb"),
     /** Critic score - the Tomatometer. */
     ROTTEN_TOMATOES("Tomatometer"),
+
     /** Audience score - the Popcornmeter. */
     POPCORNMETER("Popcornmeter"),
-    METACRITIC("Metacritic"),
 }
 
 /**
- * Which mark a Rotten Tomatoes score is shown with.
+ * Which mark a score is shown with.
  *
  * The two meters each have their own set, and the thresholds are theirs, not ours:
- * a critic score at or above 60% is Fresh and shown as a tomato, below that it is
- * Rotten and shown as a splat, and a score that has not populated is a faded
- * tomato. The audience meter divides at the same 60% between a full and a tipped
- * bucket. Certified Fresh is a separate award with its own criteria, so it is only
- * ever taken from the service rather than inferred from the number.
+ * a critic score at or above [FRESH_THRESHOLD] is Fresh and shown as a tomato,
+ * below that it is Rotten and shown as a splat, and a score that has not populated
+ * is a faded tomato. The audience meter divides at the same point between a full and
+ * a tipped bucket. Certified Fresh is a separate award with its own criteria, so it
+ * is only ever taken from a service that reports it rather than inferred from the
+ * number.
  */
 enum class TomatoState {
     /** Critic score at or above the fresh threshold. */
@@ -55,24 +62,30 @@ enum class TomatoState {
 }
 
 /**
+ * Rotten Tomatoes' own threshold, from their published definition: at or above 60%
+ * of favourable reviews is Fresh, below it is Rotten. The audience meter divides at
+ * the same point between a full and a tipped bucket.
+ */
+internal const val FRESH_THRESHOLD = 60
+
+/**
  * One external score, already formatted for display.
  *
- * [display] carries the units the source is read in rather than a bare number,
- * because they are not interchangeable: IMDb is out of ten, the two Rotten Tomatoes
- * meters are percentages of favourable reviews and ratings, and Metacritic is a
- * weighted 0-100. Rendering them all as "8.2" would invite comparison between
- * scales that do not compare.
+ * [display] keeps the percent sign rather than a bare number, because both meters
+ * are shares of favourable reviews and dropping the unit would leave them looking
+ * like scores out of a hundred.
  */
 data class ExternalRating(
     val source: RatingSource,
     val display: String,
     /**
-     * Which mark to draw, for the two Rotten Tomatoes meters.
+     * Which mark to draw.
      *
-     * Null for every other publisher: a score out of ten or out of a hundred has no
-     * state, only a number.
+     * Always present: every score here is one of the two meters, and each has a mark
+     * for its state. Where a source reports only a percentage the state is derived
+     * from [FRESH_THRESHOLD], which is the same rule the number is read by.
      */
-    val state: TomatoState? = null,
+    val state: TomatoState,
     /**
      * How many reviews or ratings the score rests on, when reported.
      *
@@ -178,23 +191,22 @@ class WikidataRatingApi(private val client: HttpClient) : RatingProvider {
         const val SCORE_BY = "P447"
 
         /**
-         * Publisher entity ids.
+         * Publisher entity id for the critic meter.
          *
-         * Verified against the live API rather than taken from documentation: an
-         * earlier reading of these had IMDb and Rotten Tomatoes transposed, which
-         * mislabelled every score. Metacritic (Q150248) has no English label, so
-         * it cannot be resolved by name and has to be pinned by id.
+         * Only Rotten Tomatoes is read now. This source also carries IMDb and
+         * Metacritic figures, but neither is shown any more, and it has no audience
+         * score at all - so the Tomatometer is the whole of what it can contribute.
+         *
+         * Pinned by id rather than resolved by name, and verified against the live
+         * API: an earlier reading had this transposed with IMDb's id, which
+         * mislabelled every score while looking entirely correct on screen.
          */
-        val SOURCES = mapOf(
-            37312 to RatingSource.IMDB,
-            105584 to RatingSource.ROTTEN_TOMATOES,
-            150248 to RatingSource.METACRITIC,
-        )
+        const val ROTTEN_TOMATOES_ID = 105584
 
         val json = Json { ignoreUnknownKeys = true }
 
         /**
-         * Pulls `(source, value)` pairs out of a claim list response.
+         * Pulls the critic score out of a claim list response.
          *
          * Hand-walked rather than modelled as data classes: the statement shape
          * nests five levels deep through `qualifiers` and varies by datatype, while
@@ -202,8 +214,7 @@ class WikidataRatingApi(private val client: HttpClient) : RatingProvider {
          * declarations that exist only to be ignored.
          *
          * Internal so the parsing can be tested against captured payloads without a
-         * network call - the ordering and the Rotten Tomatoes rule are the parts
-         * that are wrong silently.
+         * network call - the percentage rule is the part that is wrong silently.
          */
         internal fun parse(body: String): List<ExternalRating> {
             val claims = json.parseToJsonElement(body)
@@ -211,28 +222,40 @@ class WikidataRatingApi(private val client: HttpClient) : RatingProvider {
                 ?.get(REVIEW_SCORE) as? JsonArray
                 ?: return emptyList()
 
-            val found = LinkedHashMap<RatingSource, String>()
-
             for (claim in claims) {
                 val statement = claim as? JsonObject ?: continue
                 val value = statement.scoreValue() ?: continue
-                val source = statement.scoreSource() ?: continue
+                if (!statement.isRottenTomatoes()) continue
 
                 // Rotten Tomatoes publishes a percentage and a mean out of ten under
-                // the same qualifier; only the percentage carries the brand's meaning.
-                if (source == RatingSource.ROTTEN_TOMATOES && !value.endsWith("%")) continue
+                // the same qualifier; only the percentage carries the brand's meaning,
+                // and only it maps onto a Fresh or Rotten mark.
+                if (!value.endsWith("%")) continue
 
-                // First wins. Where a source has several statements - a re-scored
-                // release, or a duplicate entry - later ones are not more current,
-                // since these are hand-edited and unordered.
-                found.putIfAbsent(source, value)
+                val score = value.removeSuffix("%").trim().toIntOrNull() ?: continue
+
+                // First wins. Where there are several statements - a re-scored release,
+                // or a duplicate entry - later ones are not more current, since these
+                // are hand-edited and unordered.
+                //
+                // No Certified Fresh: that is an award this source does not record, and
+                // inferring it from the score alone would claim something untrue.
+                return listOf(
+                    ExternalRating(
+                        source = RatingSource.ROTTEN_TOMATOES,
+                        display = value,
+                        state = if (score >= FRESH_THRESHOLD) {
+                            TomatoState.FRESH
+                        } else {
+                            TomatoState.ROTTEN
+                        },
+                        // Not recorded here, so left absent rather than guessed at.
+                        voteCount = null,
+                    ),
+                )
             }
 
-            // Fixed order, so the row does not reshuffle between titles according to
-            // however the statements happened to be stored.
-            return RatingSource.entries.mapNotNull { source ->
-                found[source]?.let { ExternalRating(source, it) }
-            }
+            return emptyList()
         }
 
         /** The score itself, e.g. `81%` or `8.8/10`. */
@@ -244,9 +267,10 @@ class WikidataRatingApi(private val client: HttpClient) : RatingProvider {
                 ?.takeIf { it.isNotBlank() }
 
         /** Which publisher the score is attributed to, via the `review score by` qualifier. */
-        private fun JsonObject.scoreSource(): RatingSource? {
+        /** Whether this statement's `review score by` qualifier names Rotten Tomatoes. */
+        private fun JsonObject.isRottenTomatoes(): Boolean {
             val qualifiers = (this["qualifiers"] as? JsonObject)?.get(SCORE_BY)
-                as? JsonArray ?: return null
+                as? JsonArray ?: return false
 
             for (qualifier in qualifiers) {
                 val id = (qualifier as? JsonObject)
@@ -255,9 +279,9 @@ class WikidataRatingApi(private val client: HttpClient) : RatingProvider {
                     ?.get("numeric-id")?.contentOrNull
                     ?.toIntOrNull()
                     ?: continue
-                SOURCES[id]?.let { return it }
+                if (id == ROTTEN_TOMATOES_ID) return true
             }
-            return null
+            return false
         }
 
         /** Primitive content, or null when the node is an object or array. */
