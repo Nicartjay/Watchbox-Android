@@ -226,6 +226,21 @@ fun SettingsScreen(
                 )
             }
 
+            // Directly below the setting that produces the trailer, and only useful when
+            // that one is on: a mute button for a video that never plays controls nothing.
+            if (settings.autoplayTrailers) {
+                item(key = "trailer-mute-button") {
+                    SettingsToggleRow(
+                        title = stringResource(R.string.settings_trailer_mute_button),
+                        checked = settings.trailerMuteButton,
+                        onCheckedChange = viewModel::setTrailerMuteButton,
+                        summary = stringResource(
+                            R.string.settings_trailer_mute_button_summary,
+                        ),
+                    )
+                }
+            }
+
             item(key = "nsfw") {
                 SettingsToggleRow(
                     title = stringResource(R.string.settings_nsfw),

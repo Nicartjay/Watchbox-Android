@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -68,6 +69,8 @@ fun NetflixDetailHero(
     contentPadding: Dp = 48.dp,
     /** Hero trailer, when one resolved and the setting allows it. */
     trailer: Trailer? = null,
+    /** Whether the trailer offers a mute toggle; the setting is off by default. */
+    showTrailerMuteButton: Boolean = false,
     /**
      * The action row, drawn inside the hero beneath the summary.
      *
@@ -99,6 +102,12 @@ fun NetflixDetailHero(
             trailer = trailer,
             enabled = true,
             modifier = Modifier.fillMaxSize(),
+            showMuteButton = showTrailerMuteButton,
+            // Top right. The copy runs down the left and the action row sits at the
+            // bottom of it, so the opposite corner is the only part of a full-height
+            // hero with nothing else in it.
+            muteButtonAlignment = Alignment.TopEnd,
+            muteButtonPadding = PaddingValues(top = 24.dp, end = contentPadding),
         )
 
         // Two gradients. A single diagonal scrim either over-darkens the artwork or

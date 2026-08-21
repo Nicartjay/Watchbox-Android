@@ -37,6 +37,15 @@ data class DetailUiState(
      * in all of them: shows its backdrop.
      */
     val trailer: Trailer? = null,
+    /**
+     * Whether the hero offers a mute toggle over the trailer.
+     *
+     * Read alongside the trailer rather than collected, for the same reason: the hero is
+     * built when the page opens, and a control appearing mid-visit because a setting
+     * changed elsewhere would be a surprise. Only ever true when [trailer] is non-null,
+     * so the hero needs no second condition of its own.
+     */
+    val trailerMuteButton: Boolean = false,
 ) {
     /** The episode the play button should open, and where to resume from. */
     val resumeTarget: Pair<EpisodeEntry, Long>?
@@ -246,7 +255,10 @@ class DetailViewModel(
         val tmdbId = detail.tmdbId ?: return
 
         trailerJob = viewModelScope.launch {
-            if (!store.currentSettings().autoplayTrailers) return@launch
+            // Both read from the same snapshot, so the button flag cannot disagree with
+            // the trailer it belongs to.
+            val settings = store.currentSettings()
+            if (!settings.autoplayTrailers) return@launch
 
             val trailer = repository.trailer(tmdbId = tmdbId, isMovie = detail.isMovie)
                 ?: return@launch
@@ -254,7 +266,10 @@ class DetailViewModel(
             // Guarded like the others: the user may have navigated on, or a reload
             // replaced the detail with a different title, while this was in flight.
             if (_uiState.value.detail?.key != detail.key) return@launch
-            _uiState.value = _uiState.value.copy(trailer = trailer)
+            _uiState.value = _uiState.value.copy(
+                trailer = trailer,
+                trailerMuteButton = settings.trailerMuteButton,
+            )
         }
     }
 

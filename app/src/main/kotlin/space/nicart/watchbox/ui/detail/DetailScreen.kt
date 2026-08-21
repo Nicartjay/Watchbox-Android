@@ -224,13 +224,17 @@ fun DetailScreen(
                         // Returns the hero to view when focus is already on the topmost
                         // focusable item.
                         //
-                        // Nothing above the action buttons is focusable - the hero holds
-                        // only artwork and text, whether the buttons sit inside it or
-                        // below it - so once focus is on them there is nothing above to
-                        // move to: Compose has no reason to scroll, and the top of the
-                        // page becomes unreachable. Handled here rather than by making
-                        // the hero focusable, which would add a stop that does nothing
-                        // when activated.
+                        // The action buttons are that item in the ordinary case - the
+                        // hero above them holds artwork and text, and its one control,
+                        // the trailer's mute toggle, is off by default and absent until a
+                        // frame has played. With nothing above to move to, Compose has no
+                        // reason to scroll and the top of the page becomes unreachable.
+                        // Handled here rather than by making the hero focusable, which
+                        // would add a stop that does nothing when activated.
+                        //
+                        // Only fires while the list is scrolled, so when the hero is
+                        // already in view Up is left to Compose - which is what reaches
+                        // the mute button when it is showing.
                         .onPreviewKeyEvent { event ->
                             if (!isFocusDriven) return@onPreviewKeyEvent false
                             if (event.type != KeyEventType.KeyDown) {
@@ -265,6 +269,7 @@ fun DetailScreen(
                                 heroHeight = heroHeight,
                                 contentPadding = contentPadding,
                                 trailer = state.trailer,
+                                showTrailerMuteButton = state.trailerMuteButton,
                                 // Hosted by the hero rather than placed after it, now
                                 // that the artwork takes the whole viewport: as a
                                 // sibling below it the row would start one screen down,
@@ -292,6 +297,7 @@ fun DetailScreen(
                                 isTablet = isTablet,
                                 contentMaxWidth = contentMaxWidth,
                                 trailer = state.trailer,
+                                showTrailerMuteButton = state.trailerMuteButton,
                             )
                         }
                     }

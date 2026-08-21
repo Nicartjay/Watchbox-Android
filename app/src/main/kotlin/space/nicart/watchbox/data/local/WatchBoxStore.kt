@@ -51,6 +51,7 @@ class WatchBoxStore(context: Context) {
                 backgroundPlayback = prefs[Keys.BACKGROUND_PLAY] ?: false,
                 preferredQuality = prefs[Keys.QUALITY] ?: "1080",
                 autoplayTrailers = prefs[Keys.AUTOPLAY_TRAILERS] ?: true,
+                trailerMuteButton = prefs[Keys.TRAILER_MUTE_BUTTON] ?: false,
                 nsfwSourcesEnabled = prefs[Keys.NSFW] ?: false,
                 autoCheckUpdates = prefs[Keys.AUTO_UPDATE_CHECK] ?: true,
                 lastUpdateCheck = prefs[Keys.LAST_UPDATE_CHECK] ?: 0L,
@@ -156,6 +157,9 @@ class WatchBoxStore(context: Context) {
     suspend fun setPreferredQuality(quality: String) = store.edit { it[Keys.QUALITY] = quality }
     suspend fun setAutoplayTrailers(enabled: Boolean) = store.edit {
         it[Keys.AUTOPLAY_TRAILERS] = enabled
+    }
+    suspend fun setTrailerMuteButton(enabled: Boolean) = store.edit {
+        it[Keys.TRAILER_MUTE_BUTTON] = enabled
     }
     suspend fun setNsfwSourcesEnabled(enabled: Boolean) = store.edit { it[Keys.NSFW] = enabled }
 
@@ -360,6 +364,7 @@ class WatchBoxStore(context: Context) {
         val AUTO_NEXT = booleanPreferencesKey("auto_play_next")
         val BACKGROUND_PLAY = booleanPreferencesKey("background_playback")
         val AUTOPLAY_TRAILERS = booleanPreferencesKey("autoplay_trailers")
+        val TRAILER_MUTE_BUTTON = booleanPreferencesKey("trailer_mute_button")
         val QUALITY = stringPreferencesKey("preferred_quality")
         val NSFW = booleanPreferencesKey("nsfw_sources")
         val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_check_updates")
@@ -412,6 +417,19 @@ data class AppSettings(
      * to make silently.
      */
     val autoplayTrailers: Boolean = true,
+    /**
+     * Shows a mute toggle over the hero trailer, so its sound can be turned on.
+     *
+     * Hidden by default, which keeps the trailer as the decoration it was built to be:
+     * the hero already carries a title, metadata, a summary and the play button, and a
+     * control that exists to unmute something the viewer did not ask to hear does not
+     * earn a place among them. Someone who wants the audio can turn the button on and
+     * keep it.
+     *
+     * Only governs the button. The trailer still starts muted whatever this is set to,
+     * so enabling it cannot cause sound to play unprompted.
+     */
+    val trailerMuteButton: Boolean = false,
     val nsfwSourcesEnabled: Boolean = false,
     val autoCheckUpdates: Boolean = true,
     val lastUpdateCheck: Long = 0L,

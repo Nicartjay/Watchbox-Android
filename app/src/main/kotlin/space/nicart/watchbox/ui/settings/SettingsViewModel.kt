@@ -150,6 +150,10 @@ class SettingsViewModel(
         viewModelScope.launch { store.setAutoplayTrailers(enabled) }
     }
 
+    fun setTrailerMuteButton(enabled: Boolean) {
+        viewModelScope.launch { store.setTrailerMuteButton(enabled) }
+    }
+
     fun setAutoPlayNext(enabled: Boolean) {
         viewModelScope.launch { store.setAutoPlayNext(enabled) }
     }

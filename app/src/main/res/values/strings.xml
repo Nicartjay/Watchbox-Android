@@ -212,6 +212,10 @@
     <string name="settings_background_play_summary">Keep playing when you leave the app. There is no notification to control playback while it runs.</string>
     <string name="settings_autoplay_trailers">Autoplay trailers</string>
     <string name="settings_autoplay_trailers_summary">Play a muted trailer behind the title on a detail page. Uses mobile data each time a page is opened.</string>
+    <string name="settings_trailer_mute_button">Show trailer sound button</string>
+    <string name="settings_trailer_mute_button_summary">Adds a control over the hero trailer to turn its sound on. The trailer still starts muted.</string>
+    <string name="detail_trailer_unmute">Unmute trailer</string>
+    <string name="detail_trailer_mute">Mute trailer</string>
 
     <string name="settings_data">Data</string>
     <string name="settings_clear_history">Clear watch history</string>

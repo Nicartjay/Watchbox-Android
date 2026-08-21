@@ -16,6 +16,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -110,6 +111,8 @@ fun DetailHero(
     modifier: Modifier = Modifier,
     /** Hero trailer, when one resolved and the setting allows it. */
     trailer: Trailer? = null,
+    /** Whether the trailer offers a mute toggle; the setting is off by default. */
+    showTrailerMuteButton: Boolean = false,
 ) {
     val tokens = MaterialTheme.wb
     val background = MaterialTheme.colorScheme.background
@@ -142,18 +145,25 @@ fun DetailHero(
         // playing; below the scrim so the title and buttons stay legible against
         // whatever the video happens to be showing.
         //
-        // Parallaxed with the same transform as the backdrop, or the two would
-        // separate as the page scrolls.
+        // The picture is parallaxed with the same transform as the backdrop, or the two
+        // would separate as the page scrolls. It goes to videoModifier rather than
+        // modifier so the mute button is left out of it - scaled and slid with the
+        // artwork, a control would grow and drift away from where it was tapped.
         HeroTrailerLayer(
             trailer = trailer,
             enabled = true,
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    scaleX = 1.08f
-                    scaleY = 1.08f
-                    translationY = scrollOffset * 0.5f
-                },
+            modifier = Modifier.fillMaxSize(),
+            videoModifier = Modifier.graphicsLayer {
+                scaleX = 1.08f
+                scaleY = 1.08f
+                translationY = scrollOffset * 0.5f
+            },
+            showMuteButton = showTrailerMuteButton,
+            // Top right, clear of the bottom-centred title block and of the back button
+            // the screen overlays at the top left.
+            muteButtonAlignment = Alignment.TopEnd,
+            // Clears the status bar, which this hero draws underneath.
+            muteButtonPadding = PaddingValues(top = 56.dp, end = 16.dp),
         )
 
         // 7-stop scrim, 320dp tall on phones (`DetailHero.kt:207-225`).
