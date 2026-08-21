@@ -52,7 +52,7 @@ val tmdbApiKey = secret("TMDB_API_KEY", "d8cd4489c203c5e8c8efb70aa8e33565")
 
 // Version. `appVersionName` is the source of truth; CI may override both so a
 // tag push (v1.2.3) produces a matching APK without editing this file.
-val appVersionName = secret("WATCHBOX_VERSION_NAME", "4.8.1")
+val appVersionName = secret("WATCHBOX_VERSION_NAME", "4.8.2")
 val appVersionCode = secret("WATCHBOX_VERSION_CODE", "1").toIntOrNull() ?: 1
 
 android {
