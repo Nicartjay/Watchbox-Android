@@ -48,6 +48,7 @@ import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.WbBackButton
 import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
+import space.nicart.watchbox.ui.components.WbOverlayButtonSize
 import space.nicart.watchbox.ui.components.WbPosterCard
 import space.nicart.watchbox.ui.components.WbShelfSection
 import android.widget.Toast
@@ -114,6 +115,19 @@ fun DetailScreen(
 
     /** True while focus is on the action buttons, the first focusable item. */
     var atTopFocusable by remember { mutableStateOf(false) }
+
+    // Owned here rather than by the hero, because the toggle for it sits in the top
+    // overlay and the video it applies to sits in the list - two subtrees with only this
+    // screen in common.
+    //
+    // Keyed on the trailer so a new title starts silent again: carrying the choice over
+    // would mean navigating from an unmuted page to another one plays sound without it
+    // having been asked for there.
+    var trailerMuted by remember(state.trailer?.url) { mutableStateOf(true) }
+
+    // The toggle waits on this. Before a frame has rendered there is no video to silence,
+    // and the trailer may yet fail outright and never appear at all.
+    var trailerPlaying by remember(state.trailer?.url) { mutableStateOf(false) }
 
     // Draws its own background rather than relying on the window's. The screen had none, so
     // whatever was behind it showed through - and a navigation transition or a translucent
@@ -269,7 +283,8 @@ fun DetailScreen(
                                 heroHeight = heroHeight,
                                 contentPadding = contentPadding,
                                 trailer = state.trailer,
-                                showTrailerMuteButton = state.trailerMuteButton,
+                                trailerMuted = trailerMuted,
+                                onTrailerFirstFrame = { trailerPlaying = true },
                                 // Hosted by the hero rather than placed after it, now
                                 // that the artwork takes the whole viewport: as a
                                 // sibling below it the row would start one screen down,
@@ -297,7 +312,8 @@ fun DetailScreen(
                                 isTablet = isTablet,
                                 contentMaxWidth = contentMaxWidth,
                                 trailer = state.trailer,
-                                showTrailerMuteButton = state.trailerMuteButton,
+                                trailerMuted = trailerMuted,
+                                onTrailerFirstFrame = { trailerPlaying = true },
                             )
                         }
                     }
@@ -528,6 +544,37 @@ fun DetailScreen(
                                 .align(Alignment.TopStart)
                                 .statusBarsPadding()
                                 .padding(start = 12.dp, top = 8.dp),
+                        )
+                    }
+                }
+
+                // The mute toggle, in the back button's row but not in its overlay.
+                //
+                // Its own layer because the overlay above refuses focus to everything
+                // inside it, and this is the one control up here that has no other way to
+                // be reached: Back has the hardware key and the watchlist has the action
+                // row, but a trailer's sound can only be turned on from this button. So
+                // it sits alongside rather than within, which leaves that guard - and the
+                // "stuck on Back" trap it prevents - exactly as it was.
+                //
+                // Shown on the same terms as the back button beside it, and only once the
+                // setting is on and a frame has actually played.
+                if (state.trailerMuteButton && trailerPlaying && headerProgress <= 0.05f) {
+                    Box(modifier = Modifier.fillMaxSize().zIndex(2f)) {
+                        TrailerMuteButton(
+                            muted = trailerMuted,
+                            onToggle = { trailerMuted = !trailerMuted },
+                            background = Color.Black.copy(alpha = 0.35f),
+                            // Placed by stepping over the back button rather than by
+                            // sharing a Row with it, because the two are in different
+                            // layers: the same top inset, then its width and a gap.
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .statusBarsPadding()
+                                .padding(
+                                    start = 12.dp + WbOverlayButtonSize + 8.dp,
+                                    top = 8.dp,
+                                ),
                         )
                     }
                 }

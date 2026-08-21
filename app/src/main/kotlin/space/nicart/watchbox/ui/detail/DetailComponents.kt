@@ -16,7 +16,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -78,6 +77,7 @@ import space.nicart.watchbox.ui.extensions.ExtensionIcon
 import space.nicart.watchbox.domain.AnimeDetail
 import space.nicart.watchbox.ui.components.WbAsyncImage
 import space.nicart.watchbox.ui.components.WbBackButton
+import space.nicart.watchbox.ui.components.WbOverlayButtonSize
 import android.widget.Toast
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Link
@@ -111,8 +111,10 @@ fun DetailHero(
     modifier: Modifier = Modifier,
     /** Hero trailer, when one resolved and the setting allows it. */
     trailer: Trailer? = null,
-    /** Whether the trailer offers a mute toggle; the setting is off by default. */
-    showTrailerMuteButton: Boolean = false,
+    /** Whether the trailer's audio is silenced; the toggle lives in the screen overlay. */
+    trailerMuted: Boolean = true,
+    /** Reports the trailer's first rendered frame, which reveals the mute toggle. */
+    onTrailerFirstFrame: () -> Unit = {},
 ) {
     val tokens = MaterialTheme.wb
     val background = MaterialTheme.colorScheme.background
@@ -145,10 +147,8 @@ fun DetailHero(
         // playing; below the scrim so the title and buttons stay legible against
         // whatever the video happens to be showing.
         //
-        // The picture is parallaxed with the same transform as the backdrop, or the two
-        // would separate as the page scrolls. It goes to videoModifier rather than
-        // modifier so the mute button is left out of it - scaled and slid with the
-        // artwork, a control would grow and drift away from where it was tapped.
+        // Parallaxed with the same transform as the backdrop, or the two would
+        // separate as the page scrolls.
         HeroTrailerLayer(
             trailer = trailer,
             enabled = true,
@@ -158,12 +158,8 @@ fun DetailHero(
                 scaleY = 1.08f
                 translationY = scrollOffset * 0.5f
             },
-            showMuteButton = showTrailerMuteButton,
-            // Top right, clear of the bottom-centred title block and of the back button
-            // the screen overlays at the top left.
-            muteButtonAlignment = Alignment.TopEnd,
-            // Clears the status bar, which this hero draws underneath.
-            muteButtonPadding = PaddingValues(top = 56.dp, end = 16.dp),
+            muted = trailerMuted,
+            onFirstFrame = onTrailerFirstFrame,
         )
 
         // 7-stop scrim, 320dp tall on phones (`DetailHero.kt:207-225`).
@@ -274,7 +270,7 @@ fun DetailFloatingHeader(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        WbBackButton(onClick = onBack, size = 40.dp)
+        WbBackButton(onClick = onBack, size = WbOverlayButtonSize)
 
         if (detail.logoUrl != null) {
             WbAsyncImage(

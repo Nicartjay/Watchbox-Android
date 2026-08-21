@@ -6,9 +6,7 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -27,9 +25,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -47,6 +47,7 @@ import space.nicart.watchbox.core.ui.adaptiveFocus
 import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.data.remote.Trailer
+import space.nicart.watchbox.ui.components.WbOverlayButtonSize
 
 /**
  * A muted trailer that fades in over the hero backdrop.
@@ -57,11 +58,11 @@ import space.nicart.watchbox.data.remote.Trailer
  * (no trailer, an expired URL, a codec the device lacks) resolves to the still
  * image with nothing flashing black in between.
  *
- * Starts muted always. Sound is only reachable when the viewer has asked for the
- * control by turning the setting on, and even then it starts silent - this is
- * decoration behind a title, and audio from a page opened to read a synopsis is
- * intrusive. Beyond that toggle there are no controls: a tappable surface across the
- * whole hero would compete with the buttons over it.
+ * Silent unless told otherwise, and with no controls of its own. This is decoration
+ * behind a title, and audio from a page opened to read a synopsis is intrusive. The
+ * mute toggle lives in the screen's top overlay beside the back button - it cannot be
+ * drawn here, because the heroes layer their scrims *over* this and a control under a
+ * scrim is dimmed by it.
  *
  * The player is torn down whenever the composable leaves, the screen is
  * backgrounded, or [enabled] goes false. A detail page is transient - it is
@@ -82,30 +83,27 @@ fun HeroTrailerLayer(
     enabled: Boolean,
     modifier: Modifier = Modifier,
     /**
-     * Transform applied to the video alone.
+     * Transform applied to the video.
      *
-     * Separate from [modifier] so a caller can parallax the picture without dragging the
-     * mute button along with it: the phone hero scales its backdrop and slides it with
-     * the scroll, and a control that did the same would grow, drift and clip.
+     * Its own parameter rather than folded into [modifier] because the phone hero
+     * parallaxes the picture, and [onFirstFrame] reports upward from a composable whose
+     * bounds the caller may have moved.
      */
     videoModifier: Modifier = Modifier,
     /**
-     * Whether to offer the mute toggle.
+     * Whether the audio track is silenced.
      *
-     * Off by default so every existing caller keeps the silent, control-free trailer;
-     * the setting behind it is opt-in for the same reason.
+     * Hoisted so the toggle can live outside the hero. Defaults to true, so a caller
+     * that does not offer a control gets the silent trailer without opting in.
      */
-    showMuteButton: Boolean = false,
+    muted: Boolean = true,
     /**
-     * Where the toggle sits within the hero.
+     * Reports the first rendered frame.
      *
-     * Passed in because the two heroes put their copy in different places - the wide
-     * one down the left, the phone one across the bottom - so there is no single
-     * corner that is clear of text in both.
+     * The signal the mute button waits on: before a frame exists there is no video to
+     * silence, so a control for it would act on nothing.
      */
-    muteButtonAlignment: Alignment = Alignment.TopEnd,
-    /** Inset from the hero's edges, so the button clears a status bar or a screen edge. */
-    muteButtonPadding: PaddingValues = PaddingValues(16.dp),
+    onFirstFrame: () -> Unit = {},
 ) {
     if (trailer == null || !enabled) return
 
@@ -122,11 +120,6 @@ fun HeroTrailerLayer(
     // decoration, and the backdrop it falls back to is a complete hero on its own.
     var failed by remember(trailer.url) { mutableStateOf(false) }
 
-    // Keyed on the URL so a new trailer starts muted again. Carrying the previous
-    // choice over would mean navigating between two titles plays sound on the second
-    // without it being asked for on that page.
-    var muted by remember(trailer.url) { mutableStateOf(true) }
-
     val player = remember(trailer.url) {
         ExoPlayer.Builder(context).build().apply {
             // Muted before anything is prepared, so no frame of audio can escape
@@ -142,9 +135,9 @@ fun HeroTrailerLayer(
         }
     }
 
-    // Applied as an effect rather than in the click handler so the player is the
-    // follower of this state, not a second copy of it: the instance is keyed on the
-    // URL, and a new one has to arrive already carrying the current choice.
+    // Applied as an effect rather than at the call site so the player follows this
+    // state instead of holding a second copy of it: the instance is keyed on the URL,
+    // and a replacement has to arrive already carrying the current choice.
     LaunchedEffect(player, muted) {
         player.volume = if (muted) 0f else 1f
     }
@@ -153,6 +146,7 @@ fun HeroTrailerLayer(
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() {
                 hasFrame = true
+                onFirstFrame()
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -209,73 +203,61 @@ fun HeroTrailerLayer(
 
     if (failed) return
 
-    Box(modifier = modifier.fillMaxSize()) {
-        // The alpha lives on this inner box, not the outer one: the button below must
-        // not inherit the crossfade, or it would appear from nothing along with the
-        // video and read as part of the artwork rather than as a control.
-        Box(modifier = Modifier.fillMaxSize().alpha(videoAlpha).then(videoModifier)) {
-            AndroidView(
-                factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        useController = false
-                        // Cropped to fill, matching the backdrop it covers. A trailer is
-                        // 16:9 and the phone hero is taller than it is wide, so fitting
-                        // would letterbox a decorative video inside a full-bleed image.
-                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                        // Nothing here is interactive, and leaving it focusable would put
-                        // a stop on the D-pad's way to the action buttons.
-                        isFocusable = false
-                        isClickable = false
-                        setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        this.player = player
-                    }
-                },
-                // Rebound rather than recreated: the view is expensive and the player
-                // instance is keyed on the URL above, so a new trailer brings a new view
-                // through the factory anyway.
-                update = { view -> view.player = player },
-                onRelease = { view -> view.player = null },
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-
-        // Withheld until a frame exists. Before that there is no video to mute, so the
-        // button would be a control over a still image.
-        if (showMuteButton && hasFrame) {
-            TrailerMuteButton(
-                muted = muted,
-                onToggle = { muted = !muted },
-                modifier = Modifier
-                    .align(muteButtonAlignment)
-                    .padding(muteButtonPadding),
-            )
-        }
+    Box(modifier = modifier.fillMaxSize().alpha(videoAlpha).then(videoModifier)) {
+        AndroidView(
+            factory = { ctx ->
+                PlayerView(ctx).apply {
+                    useController = false
+                    // Cropped to fill, matching the backdrop it covers. A trailer is
+                    // 16:9 and the phone hero is taller than it is wide, so fitting
+                    // would letterbox a decorative video inside a full-bleed image.
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    // Nothing here is interactive, and leaving it focusable would put
+                    // a stop on the D-pad's way to the action buttons.
+                    isFocusable = false
+                    isClickable = false
+                    setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    this.player = player
+                }
+            },
+            // Rebound rather than recreated: the view is expensive and the player
+            // instance is keyed on the URL above, so a new trailer brings a new view
+            // through the factory anyway.
+            update = { view -> view.player = player },
+            onRelease = { view -> view.player = null },
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 
 /**
  * Mute toggle for the hero trailer.
  *
- * Deliberately quiet: a translucent circle rather than a filled button, because it sits
- * over artwork and has to be findable without competing with the play button. It carries
- * a content description and no label - the icon is the established one for sound, and a
- * word here would widen it into the title's space.
+ * Lives in the detail screen's top overlay, in the row the back button sits in, rather
+ * than inside the hero. Two reasons: the heroes draw their scrims over the trailer, so a
+ * control placed with the video is dimmed along with it; and the row across the top is
+ * already where this screen puts the actions that apply to the page as a whole.
+ *
+ * Sized and shaped to match [WbBackButton] beside it - same 40dp circle, same translucent
+ * black - so the two read as one set rather than as a control that happens to be nearby.
  */
 @Composable
-private fun TrailerMuteButton(
+fun TrailerMuteButton(
     muted: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
+    size: Dp = WbOverlayButtonSize,
+    background: Color? = null,
 ) {
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
 
     Box(
         modifier = modifier
-            .size(TRAILER_MUTE_BUTTON_SIZE)
+            .size(size)
             .adaptiveFocus(interaction, CircleShape, scale = false)
             .clip(CircleShape)
-            .background(tokens.colors.background.copy(alpha = 0.55f))
+            .then(background?.let { Modifier.background(it) } ?: Modifier)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
@@ -295,7 +277,7 @@ private fun TrailerMuteButton(
                 if (muted) R.string.detail_trailer_unmute else R.string.detail_trailer_mute,
             ),
             tint = tokens.colors.textPrimary,
-            modifier = Modifier.size(22.dp),
+            modifier = Modifier.size(24.dp),
         )
     }
 }
@@ -310,11 +292,3 @@ private const val AUTOPLAY_DELAY_MS = 1_800L
 
 /** Slow enough to read as a dissolve rather than a cut. */
 private const val FADE_IN_MS = 550
-
-/**
- * Touch target for the mute toggle.
- *
- * 48dp is the accessibility minimum for a tap target, and this is the smallest the
- * button can be while still being hit reliably on a phone and visible from a sofa.
- */
-private val TRAILER_MUTE_BUTTON_SIZE = 48.dp

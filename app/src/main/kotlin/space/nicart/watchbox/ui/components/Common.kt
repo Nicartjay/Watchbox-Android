@@ -201,12 +201,20 @@ fun WbAsyncImage(
     )
 }
 
+/**
+ * Diameter of the circular overlay buttons.
+ *
+ * Shared so a control placed beside one of them can offset itself by the right amount
+ * without restating the number - two copies of it drift apart the moment either moves.
+ */
+val WbOverlayButtonSize: Dp = 40.dp
+
 /** Circular translucent back button (`NuvioBackButton`). */
 @Composable
 fun WbBackButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    size: Dp = 40.dp,
+    size: Dp = WbOverlayButtonSize,
     background: Color? = null,
 ) {
     val tokens = MaterialTheme.wb
