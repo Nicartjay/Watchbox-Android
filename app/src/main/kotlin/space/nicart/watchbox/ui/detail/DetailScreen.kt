@@ -145,8 +145,15 @@ fun DetailScreen(
         // The wide hero is the screen, not a banner above it: it carries the badge,
         // title, metadata, summary and actions, and the Netflix layout depends on that
         // vertical room. The stacked phone hero keeps its own proportional sizing.
+        //
+        // The full viewport, not a fraction of it. At 78% the backdrop and trailer
+        // stopped short of the bottom edge with the action row on flat background
+        // beneath, so the cut was on screen - and with it whatever the video happened to
+        // be showing along that line, which for a subtitled trailer is a line of someone
+        // else's captions. Taking the whole height leaves the artwork no visible edge and
+        // puts the copy and actions over it, which is what the hero was imitating.
         val heroHeight = if (usesWideHero) {
-            (maxHeight.value * 0.78f).dp.coerceAtLeast(360.dp)
+            maxHeight.coerceAtLeast(360.dp)
         } else {
             detailHeroHeight(maxWidth, isTablet)
         }
@@ -172,6 +179,20 @@ fun DetailScreen(
         }
 
         val detail = state.detail
+
+        // Hoisted because the action row has two homes: inside the wide hero, overlaid on
+        // the artwork, and as a list item of its own on a phone.
+        val onOpenInBrowser: (() -> Unit)? = state.webUrl?.let { url ->
+            {
+                if (!context.openInBrowser(url)) {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.source_open_site_failed),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
 
         // The extension's icon, which stands in for Netflix's "N". Looked up rather
         // than carried on the model: a source has no icon of its own, it belongs to the
@@ -203,12 +224,13 @@ fun DetailScreen(
                         // Returns the hero to view when focus is already on the topmost
                         // focusable item.
                         //
-                        // The hero holds nothing focusable, so once focus sits on the
-                        // action buttons there is nothing above it to move to: Compose
-                        // has no reason to scroll, and the top of the page becomes
-                        // unreachable. Handled here rather than by making the hero
-                        // focusable, which would add a stop that does nothing when
-                        // activated.
+                        // Nothing above the action buttons is focusable - the hero holds
+                        // only artwork and text, whether the buttons sit inside it or
+                        // below it - so once focus is on them there is nothing above to
+                        // move to: Compose has no reason to scroll, and the top of the
+                        // page becomes unreachable. Handled here rather than by making
+                        // the hero focusable, which would add a stop that does nothing
+                        // when activated.
                         .onPreviewKeyEvent { event ->
                             if (!isFocusDriven) return@onPreviewKeyEvent false
                             if (event.type != KeyEventType.KeyDown) {
@@ -243,6 +265,24 @@ fun DetailScreen(
                                 heroHeight = heroHeight,
                                 contentPadding = contentPadding,
                                 trailer = state.trailer,
+                                // Hosted by the hero rather than placed after it, now
+                                // that the artwork takes the whole viewport: as a
+                                // sibling below it the row would start one screen down,
+                                // leaving Play off screen until the user scrolled for it.
+                                actions = {
+                                    DetailActions(
+                                        state = state,
+                                        isTablet = isTablet,
+                                        compactButtons = true,
+                                        onPlay = onPlay,
+                                        onToggleWatched = viewModel::toggleWatched,
+                                        onToggleWatchlist = viewModel::toggleWatchlist,
+                                        onOpenInBrowser = onOpenInBrowser,
+                                        modifier = Modifier.onFocusChanged {
+                                            atTopFocusable = it.hasFocus
+                                        },
+                                    )
+                                },
                             )
                         } else {
                             DetailHero(
@@ -256,7 +296,9 @@ fun DetailScreen(
                         }
                     }
 
-                    item(key = "actions") {
+                    // Only when the hero is not already carrying it. On a wide screen the
+                    // row lives inside the hero, overlaid on the artwork.
+                    if (!usesWideHero) item(key = "actions") {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -265,48 +307,17 @@ fun DetailScreen(
                                 .onFocusChanged { atTopFocusable = it.hasFocus }
                                 .padding(horizontal = contentPadding)
                                 .padding(bottom = 20.dp),
-                            // Left-aligned under the hero copy on a wide screen, where
-                            // centring would detach the buttons from the title they act
-                            // on. Centred on a phone, where the copy is centred too.
-                            contentAlignment = if (usesWideHero) {
-                                Alignment.CenterStart
-                            } else {
-                                Alignment.Center
-                            },
+                            // Centred, matching the centred copy of the stacked hero above.
+                            contentAlignment = Alignment.Center,
                         ) {
-                            DetailActionButtons(
-                                playLabel = stringResource(
-                                    if (state.isResume) R.string.action_resume
-                                    else R.string.action_play,
-                                ),
-                                enabled = state.startTarget != null,
-                                watched = state.history?.isFinished == true,
-                                inWatchlist = state.inWatchlist,
+                            DetailActions(
+                                state = state,
                                 isTablet = isTablet,
-                                onPlay = {
-                                    val resume = state.resumeTarget
-                                    if (resume != null) {
-                                        onPlay(resume.first, resume.second)
-                                    } else {
-                                        state.startTarget?.let { onPlay(it, 0L) }
-                                    }
-                                },
+                                compactButtons = false,
+                                onPlay = onPlay,
                                 onToggleWatched = viewModel::toggleWatched,
                                 onToggleWatchlist = viewModel::toggleWatchlist,
-                                onOpenInBrowser = state.webUrl?.let { url ->
-                                    {
-                                        if (!context.openInBrowser(url)) {
-                                            Toast.makeText(
-                                                context,
-                                                context.getString(
-                                                    R.string.source_open_site_failed,
-                                                ),
-                                                Toast.LENGTH_SHORT,
-                                            ).show()
-                                        }
-                                    }
-                                },
-                                compactButtons = usesWideHero,
+                                onOpenInBrowser = onOpenInBrowser,
                             )
                         }
                     }
@@ -517,4 +528,45 @@ fun DetailScreen(
             }
         }
     }
+}
+
+/**
+ * The action row, wired to the screen's state.
+ *
+ * Extracted because the row has two homes and the wiring is the bulk of it: the wide
+ * hero draws it over the artwork, a phone places it in the list below the hero.
+ */
+@Composable
+private fun DetailActions(
+    state: DetailUiState,
+    isTablet: Boolean,
+    compactButtons: Boolean,
+    onPlay: (episode: EpisodeEntry, resumeMs: Long) -> Unit,
+    onToggleWatched: () -> Unit,
+    onToggleWatchlist: () -> Unit,
+    onOpenInBrowser: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    DetailActionButtons(
+        playLabel = stringResource(
+            if (state.isResume) R.string.action_resume else R.string.action_play,
+        ),
+        enabled = state.startTarget != null,
+        watched = state.history?.isFinished == true,
+        inWatchlist = state.inWatchlist,
+        isTablet = isTablet,
+        onPlay = {
+            val resume = state.resumeTarget
+            if (resume != null) {
+                onPlay(resume.first, resume.second)
+            } else {
+                state.startTarget?.let { onPlay(it, 0L) }
+            }
+        },
+        onToggleWatched = onToggleWatched,
+        onToggleWatchlist = onToggleWatchlist,
+        onOpenInBrowser = onOpenInBrowser,
+        compactButtons = compactButtons,
+        modifier = modifier,
+    )
 }

@@ -68,6 +68,15 @@ fun NetflixDetailHero(
     contentPadding: Dp = 48.dp,
     /** Hero trailer, when one resolved and the setting allows it. */
     trailer: Trailer? = null,
+    /**
+     * The action row, drawn inside the hero beneath the summary.
+     *
+     * A slot rather than parameters: the row needs the screen's whole state to wire up,
+     * and the hero has no business knowing about watchlists or resume points. It is
+     * placed inside the copy column, so it inherits that column's left inset and needs
+     * no alignment of its own.
+     */
+    actions: (@Composable () -> Unit)? = null,
 ) {
     val tokens = MaterialTheme.wb
 
@@ -106,14 +115,21 @@ fun NetflixDetailHero(
                     ),
                 ),
         )
+        // Weighted to the bottom, where the copy and the action row now sit. The old
+        // stops cleared by 40% and only came back at 82%, which was right for a centred
+        // column over a hero that ended at 78% of the screen; against a full-height one
+        // it left the badge, title and buttons on bare video. Clearing sooner keeps the
+        // top of the frame - the part of the trailer worth watching - and the long ramp
+        // back carries the text without a visible band where it starts.
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
                         0f to tokens.colors.background.copy(alpha = 0.55f),
-                        0.4f to Color.Transparent,
-                        0.82f to tokens.colors.background.copy(alpha = 0.85f),
+                        0.28f to Color.Transparent,
+                        0.58f to tokens.colors.background.copy(alpha = 0.45f),
+                        0.8f to tokens.colors.background.copy(alpha = 0.88f),
                         1f to tokens.colors.background,
                     ),
                 ),
@@ -121,14 +137,20 @@ fun NetflixDetailHero(
 
         Column(
             modifier = Modifier
-                .align(Alignment.CenterStart)
+                .align(Alignment.BottomStart)
                 .fillMaxHeight()
                 // Capped rather than proportional: a line of body text wider than about
                 // 60 characters is measurably harder to read, and on a 1920px panel a
                 // percentage width blows straight past that.
                 .width(TEXT_COLUMN_WIDTH)
-                .padding(start = contentPadding, top = 24.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.Center,
+                .padding(start = contentPadding, top = 24.dp, bottom = CONTENT_BOTTOM_INSET),
+            // Bottom, not centre. The hero is the full height of the screen now, so a
+            // centred column would sit with the trailer playing above *and* below it -
+            // and the band below is where a subtitled trailer burns its captions in,
+            // directly under this page's own summary. Sitting the copy on the bottom
+            // gives the video the top of the frame, which is the part worth seeing, and
+            // leaves the text over the darkest part of the scrim.
+            verticalArrangement = Arrangement.Bottom,
         ) {
             SourceBadge(
                 icon = extensionIcon,
@@ -185,6 +207,11 @@ fun NetflixDetailHero(
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+
+            if (actions != null) {
+                Spacer(Modifier.height(22.dp))
+                actions()
             }
         }
     }
@@ -350,3 +377,12 @@ private fun String.firstParagraph(): String =
 private val TEXT_COLUMN_WIDTH = 620.dp
 private val LOGO_HEIGHT = 120.dp
 private val BADGE_ICON_SIZE = 30.dp
+
+/**
+ * Gap between the action row and the bottom of the hero.
+ *
+ * Keeps the buttons off the screen edge, and off the last slice of the scrim where it
+ * has gone fully opaque - sat in it, the row would read as being on the flat background
+ * below rather than over the artwork.
+ */
+private val CONTENT_BOTTOM_INSET = 96.dp
