@@ -48,7 +48,6 @@ import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.WbBackButton
 import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
-import space.nicart.watchbox.ui.components.WbOverlayButtonSize
 import space.nicart.watchbox.ui.components.WbPosterCard
 import space.nicart.watchbox.ui.components.WbShelfSection
 import android.widget.Toast
@@ -548,7 +547,7 @@ fun DetailScreen(
                     }
                 }
 
-                // The mute toggle, in the back button's row but not in its overlay.
+                // The mute toggle: the back button's row, at the opposite end of it.
                 //
                 // Its own layer because the overlay above refuses focus to everything
                 // inside it, and this is the one control up here that has no other way to
@@ -557,24 +556,20 @@ fun DetailScreen(
                 // it sits alongside rather than within, which leaves that guard - and the
                 // "stuck on Back" trap it prevents - exactly as it was.
                 //
-                // Shown on the same terms as the back button beside it, and only once the
-                // setting is on and a frame has actually played.
+                // Shown on the same terms as the back button, and only once the setting is
+                // on and a frame has actually played.
                 if (state.trailerMuteButton && trailerPlaying && headerProgress <= 0.05f) {
                     Box(modifier = Modifier.fillMaxSize().zIndex(2f)) {
                         TrailerMuteButton(
                             muted = trailerMuted,
                             onToggle = { trailerMuted = !trailerMuted },
                             background = Color.Black.copy(alpha = 0.35f),
-                            // Placed by stepping over the back button rather than by
-                            // sharing a Row with it, because the two are in different
-                            // layers: the same top inset, then its width and a gap.
+                            // Same top inset as the back button so the two sit level, and
+                            // the mirror of its start inset at the other edge.
                             modifier = Modifier
-                                .align(Alignment.TopStart)
+                                .align(Alignment.TopEnd)
                                 .statusBarsPadding()
-                                .padding(
-                                    start = 12.dp + WbOverlayButtonSize + 8.dp,
-                                    top = 8.dp,
-                                ),
+                                .padding(end = 12.dp, top = 8.dp),
                         )
                     }
                 }
