@@ -1,5 +1,7 @@
 package space.nicart.watchbox.ui.detail
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -23,6 +26,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +38,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -165,13 +171,41 @@ fun DetailScreen(
         openScrollCorrected = true
     }
 
+    // Bumped by any input, and used as the idle timer's key so each one restarts it.
+    //
+    // Held out here because the root watches for input, while the timer that consumes it
+    // has to live inside the constraints scope - it depends on whether the hero is still
+    // the thing on screen, which is not known until the viewport is measured.
+    var interactionTick by remember { mutableIntStateOf(0) }
+
     // Draws its own background rather than relying on the window's. The screen had none, so
     // whatever was behind it showed through - and a navigation transition or a translucent
     // parent puts something other than the window there.
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.wb.colors.background),
+            .background(MaterialTheme.wb.colors.background)
+            // Any input revives the faded furniture and restarts its idle timer.
+            //
+            // Watched at the root and never consumed: this only needs to know that
+            // something happened, and swallowing it would cost the press that caused it.
+            // A preview handler rather than a plain one so a key taken by the list below -
+            // Up returning to the hero, for instance - is still seen here.
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown) interactionTick++
+                false
+            }
+            // Touch as well as the remote: a television may be a tablet in a stand, and
+            // the requirement names both. Initial pass, so a tap on a button still
+            // reaches it.
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Initial)
+                        interactionTick++
+                    }
+                }
+            },
     ) {
         val metrics = LocalLayoutMetrics.current
         val isFocusDriven = metrics.isFocusDriven
@@ -232,6 +266,50 @@ fun DetailScreen(
         // that replaces it once scrolled. Read here because the action row's Up edge
         // targets it, and naming a control that is not composed throws when followed.
         val backButtonVisible = headerProgress <= 0.05f
+
+        // Whether the page's furniture may fade out to leave the trailer uncovered.
+        //
+        // Only with the sound on. A muted trailer is decoration behind a synopsis, and
+        // hiding the synopsis to show it better would be backwards; unmuting is the point
+        // at which the viewer has said they are watching the trailer rather than reading
+        // the page.
+        //
+        // Television only, and only while the hero is still what is on screen. Scrolled
+        // down there is no trailer in view to uncover, and on a phone there is no idle
+        // state worth the name - a finger is either on the screen or the page is not in
+        // use.
+        val trailerUncovered = isFocusDriven &&
+            trailerPlaying &&
+            !trailerMuted &&
+            backButtonVisible
+
+        var chromeVisible by remember { mutableStateOf(true) }
+
+        // Restarted by every input, because interactionTick is a key rather than something
+        // the body reads.
+        LaunchedEffect(trailerUncovered, interactionTick) {
+            if (!trailerUncovered) {
+                // Covers re-muting, scrolling away and leaving the page: the furniture
+                // comes straight back rather than staying hidden until something is
+                // pressed.
+                chromeVisible = true
+                return@LaunchedEffect
+            }
+            chromeVisible = true
+            delay(CHROME_IDLE_MS)
+            chromeVisible = false
+        }
+
+        // Out slowly, in quickly. A slow fade out reads as the page settling; a slow fade
+        // in reads as lag, because by then the viewer has already pressed something and is
+        // waiting to see the result.
+        val chromeAlpha by animateFloatAsState(
+            targetValue = if (chromeVisible) 1f else 0f,
+            animationSpec = tween(
+                if (chromeVisible) CHROME_FADE_IN_MS else CHROME_FADE_OUT_MS,
+            ),
+            label = "detailChromeFade",
+        )
 
         val detail = state.detail
 
@@ -326,6 +404,7 @@ fun DetailScreen(
                                 trailer = state.trailer,
                                 trailerMuted = trailerMuted,
                                 onTrailerFirstFrame = { trailerPlaying = true },
+                                chromeAlpha = chromeAlpha,
                                 // Hosted by the hero rather than placed after it, now
                                 // that the artwork takes the whole viewport: as a
                                 // sibling below it the row would start one screen down,
@@ -615,6 +694,11 @@ fun DetailScreen(
                                 .align(Alignment.TopStart)
                                 .statusBarsPadding()
                                 .padding(start = 12.dp, top = 8.dp)
+                                // Fades with the rest of the furniture. Still focusable
+                                // while invisible, but that costs nothing: reaching it
+                                // takes a key press, and any key press brings it back
+                                // before the focus move is drawn.
+                                .alpha(chromeAlpha)
                                 .then(
                                     if (isFocusDriven) {
                                         Modifier
@@ -656,6 +740,7 @@ fun DetailScreen(
                                 .align(Alignment.TopEnd)
                                 .statusBarsPadding()
                                 .padding(end = 12.dp, top = 8.dp)
+                                .alpha(chromeAlpha)
                                 .then(
                                     if (isFocusDriven) {
                                         Modifier
@@ -721,3 +806,22 @@ private fun DetailActions(
         modifier = modifier,
     )
 }
+
+/**
+ * How long the page waits, after the last input, before uncovering an unmuted trailer.
+ *
+ * Long enough to read the summary that is about to disappear, short enough that someone
+ * who unmuted deliberately is not left waiting for the page to get out of the way.
+ */
+private const val CHROME_IDLE_MS = 3_000L
+
+/** Slow enough to read as the page settling rather than as a cut. */
+private const val CHROME_FADE_OUT_MS = 600
+
+/**
+ * Quicker than the fade out.
+ *
+ * By the time this runs the viewer has already pressed something, so anything slower
+ * reads as the remote lagging rather than as an animation.
+ */
+private const val CHROME_FADE_IN_MS = 180

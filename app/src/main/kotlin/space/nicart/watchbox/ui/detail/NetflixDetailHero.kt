@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -73,6 +74,15 @@ fun NetflixDetailHero(
     /** Reports the trailer's first rendered frame, which reveals the mute toggle. */
     onTrailerFirstFrame: () -> Unit = {},
     /**
+     * Opacity of everything drawn over the trailer: both scrims and the copy column.
+     *
+     * Fades to nothing when the trailer has been unmuted and left alone, so what is on
+     * screen is the video rather than a page with a video behind it. The artwork below is
+     * excluded - it is what the trailer is covering, and revealing a still image under a
+     * playing one would be a step backwards, not forwards.
+     */
+    chromeAlpha: Float = 1f,
+    /**
      * The action row, drawn inside the hero beneath the summary.
      *
      * A slot rather than parameters: the row needs the screen's whole state to wire up,
@@ -110,9 +120,13 @@ fun NetflixDetailHero(
         // Two gradients. A single diagonal scrim either over-darkens the artwork or
         // leaves the text unreadable, depending on the image - the horizontal one
         // protects the copy, the vertical one blends into the content below.
+        //
+        // Faded with the copy they exist to protect: a scrim left behind over a bare
+        // trailer is just a dark patch with nothing under it to justify itself.
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .alpha(chromeAlpha)
                 .background(
                     Brush.horizontalGradient(
                         0f to tokens.colors.background.copy(alpha = 0.94f),
@@ -130,6 +144,7 @@ fun NetflixDetailHero(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .alpha(chromeAlpha)
                 .background(
                     Brush.verticalGradient(
                         0f to tokens.colors.background.copy(alpha = 0.55f),
@@ -145,6 +160,7 @@ fun NetflixDetailHero(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxHeight()
+                .alpha(chromeAlpha)
                 // Capped rather than proportional: a line of body text wider than about
                 // 60 characters is measurably harder to read, and on a 1920px panel a
                 // percentage width blows straight past that.
