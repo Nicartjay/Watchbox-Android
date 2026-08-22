@@ -142,6 +142,29 @@ fun DetailScreen(
     val backFocusRequester = remember { FocusRequester() }
     val muteFocusRequester = remember { FocusRequester() }
 
+    // Undoes the scroll that claiming initial focus causes.
+    //
+    // On a television the screen focuses its first focusable so the remote is live on
+    // arrival, and Compose scrolls whatever it focuses into view. That focusable is the
+    // play button, which sits at the foot of a hero as tall as the viewport - so the page
+    // opened already scrolled past its own artwork, with the title and summary above the
+    // top edge.
+    //
+    // Latched, and reset per title. Without the latch this would fire again every time
+    // focus came back to the play button, dragging the page to the top from wherever the
+    // user had scrolled to - so it runs once on arrival and then stays out of the way.
+    //
+    // Waits for focus to land rather than running immediately, because the request is
+    // retried over several frames and a scroll before it arrives would be undone by it.
+    // Snapped, not animated: this corrects a movement the user never asked for, so it
+    // should not be seen happening at all.
+    var openScrollCorrected by remember(state.detail?.key) { mutableStateOf(false) }
+    LaunchedEffect(state.detail?.key, atTopFocusable, openScrollCorrected) {
+        if (!isFocusDriven || openScrollCorrected || !atTopFocusable) return@LaunchedEffect
+        listState.scrollToItem(0)
+        openScrollCorrected = true
+    }
+
     // Draws its own background rather than relying on the window's. The screen had none, so
     // whatever was behind it showed through - and a navigation transition or a translucent
     // parent puts something other than the window there.

@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.core.ui.wbType
 
@@ -218,12 +219,23 @@ fun WbBackButton(
     background: Color? = null,
 ) {
     val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
     Box(
         modifier = modifier
             .size(size)
+            // Before clip, or the stroke is clipped away at the circle's edge. Costs
+            // nothing on a touchscreen, where adaptiveFocus returns the chain untouched -
+            // which is why every caller gets this and none of them had to ask.
+            .adaptiveFocus(interaction, CircleShape, scale = false)
             .clip(CircleShape)
             .then(background?.let { Modifier.background(it) } ?: Modifier)
-            .clickable(onClick = onClick),
+            // The same interaction source the outline watches. A separate one here would
+            // leave the button focusable but undrawn, which is what it was.
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
