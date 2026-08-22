@@ -205,6 +205,11 @@ fun DetailScreen(
             }
         }
 
+        // Whether the bare back button is on screen, as opposed to the floating header
+        // that replaces it once scrolled. Read here because the action row's Up edge
+        // targets it, and naming a control that is not composed throws when followed.
+        val backButtonVisible = headerProgress <= 0.05f
+
         val detail = state.detail
 
         // Hoisted because the action row has two homes: inside the wide hero, overlaid on
@@ -319,12 +324,14 @@ fun DetailScreen(
                                             // Up reaches the back button, which a spatial
                                             // search will not find: it sits in a layer
                                             // stacked over the list rather than beside it.
-                                            // Only once the hero is in view, though - the
-                                            // list's own Up handler runs first and takes
-                                            // the key while there is still scrolling to
-                                            // undo.
+                                            //
+                                            // Only while that button is the one on screen.
+                                            // Once scrolled the floating header takes its
+                                            // place and refuses focus, and by then the
+                                            // list's own Up handler is taking the key
+                                            // anyway to bring the hero back.
                                             .then(
-                                                if (isFocusDriven) {
+                                                if (isFocusDriven && backButtonVisible) {
                                                     Modifier.focusProperties {
                                                         up = backFocusRequester
                                                     }
@@ -534,51 +541,50 @@ fun DetailScreen(
                     }
                 }
 
-                // One condition, read by both layers: the toggle itself, and the back
-                // button's Right redirect to it. They cannot be allowed to disagree - a
-                // redirect to a control that is not composed throws when it is followed.
+                // Both overlay controls are conditional, and both are named as the target
+                // of an explicit focus edge. A redirect to a requester attached to nothing
+                // throws when it is followed, so every edge is gated on the same value
+                // that decides whether its target exists at all.
                 val muteButtonVisible = state.trailerMuteButton &&
                     trailerPlaying &&
-                    headerProgress <= 0.05f
+                    backButtonVisible
 
-                // The overlay is decoration for a remote: it holds a back button and a
-                // watchlist toggle, both duplicated by hardware Back and by the action
-                // row. It is also full-screen, so its focusables sit *above* every row
-                // in the list geometrically.
+                // The overlay across the top. Full-screen, so its controls sit *above*
+                // every row in the list geometrically rather than beside them.
                 //
-                // canFocus is set on the container rather than on each button: it
-                // propagates to every focus target beneath it, so the overlay cannot
-                // reintroduce a trap by gaining a new control later. Touch and mouse are
-                // unaffected - clickable still works without focus.
+                // The refusal of focus that used to sit here, on the container, is now on
+                // the floating header alone. It cannot be applied to the whole overlay: a
+                // parent's canFocus overwrites its children's, so a blanket refusal here
+                // silently defeated the back button's own opt-in - which left the button
+                // unfocusable, the action row's Up pointing at something that could not
+                // take focus, and the remote unable to leave the play button at all.
                 //
-                // The back button opts back in below. Refusing it focus outright did keep
-                // the D-pad out of the "stuck on Back" trap - focus went up into the
-                // overlay and never came back down - but it also left the button
-                // unreachable, so on a television the only way back was the hardware key.
-                // The trap is closed at the exit instead: every control up here names the
-                // action row as its Down, so focus can always get back into the content.
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .then(
-                            if (isFocusDriven) {
-                                Modifier.focusProperties { canFocus = false }
-                            } else {
-                                Modifier
-                            },
-                        )
-                        .zIndex(2f),
-                ) {
+                // What the refusal was for is now done by the explicit edges below: every
+                // control up here names the action row as its Down, so focus can always
+                // get back into the content and the "stuck on Back" trap stays closed.
+                Box(modifier = Modifier.fillMaxSize().zIndex(2f)) {
                     DetailFloatingHeader(
                         detail = detail,
                         progress = headerProgress,
                         inWatchlist = state.inWatchlist,
                         onBack = onBack,
                         onToggleWatchlist = viewModel::toggleWatchlist,
-                        modifier = Modifier.align(Alignment.TopCenter),
+                        // Still refused focus, and this is the part that always needed to
+                        // be: it appears only once scrolled, and both of its controls are
+                        // duplicated - Back by the hardware key, the watchlist by the
+                        // action row - so neither is worth a stop on the way through.
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .then(
+                                if (isFocusDriven) {
+                                    Modifier.focusProperties { canFocus = false }
+                                } else {
+                                    Modifier
+                                },
+                            ),
                     )
 
-                    if (headerProgress <= 0.05f) {
+                    if (backButtonVisible) {
                         WbBackButton(
                             onClick = onBack,
                             background = Color.Black.copy(alpha = 0.35f),
@@ -591,16 +597,9 @@ fun DetailScreen(
                                         Modifier
                                             .focusRequester(backFocusRequester)
                                             .focusProperties {
-                                                // Undoes the container's blanket refusal
-                                                // for this one control.
-                                                canFocus = true
                                                 // The way back into the content, which is
                                                 // what stops this being a dead end.
                                                 down = actionsFocusRequester
-                                                // Only when it is actually on screen: a
-                                                // redirect to a requester attached to
-                                                // nothing throws when it is followed, and
-                                                // the toggle is absent by default.
                                                 if (muteButtonVisible) {
                                                     right = muteFocusRequester
                                                 }
@@ -614,19 +613,16 @@ fun DetailScreen(
                                 ),
                         )
                     }
-                }
 
-                // The mute toggle: the back button's row, at the opposite end of it.
-                //
-                // Its own layer rather than a child of the overlay above, because that one
-                // refuses focus to everything inside it and this control has no other way
-                // to be reached - Back has the hardware key and the watchlist has the
-                // action row, but a trailer's sound can only be turned on from here.
-                //
-                // Shown on the same terms as the back button, and only once the setting is
-                // on and a frame has actually played.
-                if (muteButtonVisible) {
-                    Box(modifier = Modifier.fillMaxSize().zIndex(2f)) {
+                    // The mute toggle: the back button's row, at the opposite end of it.
+                    //
+                    // A sibling of the back button now that the refusal of focus sits on
+                    // the floating header rather than on this container - it needed its own
+                    // layer only to escape that blanket.
+                    //
+                    // Shown on the same terms as the back button, and only once the setting
+                    // is on and a frame has actually played.
+                    if (muteButtonVisible) {
                         TrailerMuteButton(
                             muted = trailerMuted,
                             onToggle = { trailerMuted = !trailerMuted },
@@ -642,10 +638,9 @@ fun DetailScreen(
                                         Modifier
                                             .focusRequester(muteFocusRequester)
                                             .focusProperties {
-                                                // Alone in its layer, so a spatial search
-                                                // from here finds nothing and the remote
-                                                // stops dead - which was the bug. Every
-                                                // direction is named instead.
+                                                // Named rather than left to a spatial
+                                                // search, which cannot cross from this
+                                                // layer into the list below it.
                                                 down = actionsFocusRequester
                                                 left = backFocusRequester
                                                 right = FocusRequester.Cancel
