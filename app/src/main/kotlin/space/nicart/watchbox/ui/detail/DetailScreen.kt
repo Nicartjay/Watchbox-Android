@@ -14,7 +14,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -128,6 +130,18 @@ fun DetailScreen(
     // and the trailer may yet fail outright and never appear at all.
     var trailerPlaying by remember(state.trailer?.url) { mutableStateOf(false) }
 
+    // Where Down from the overlay controls lands.
+    //
+    // The overlay is a separate layer stacked above the list, so the two are siblings
+    // rather than neighbours: Compose's spatial search finds nothing below a control up
+    // there and the remote stops dead. Naming the target explicitly is the same fix the
+    // filter panel uses for its own list.
+    val actionsFocusRequester = remember { FocusRequester() }
+
+    // The two overlay controls, so each can name the other as its neighbour.
+    val backFocusRequester = remember { FocusRequester() }
+    val muteFocusRequester = remember { FocusRequester() }
+
     // Draws its own background rather than relying on the window's. The screen had none, so
     // whatever was behind it showed through - and a navigation transition or a translucent
     // parent puts something other than the window there.
@@ -237,17 +251,17 @@ fun DetailScreen(
                         // Returns the hero to view when focus is already on the topmost
                         // focusable item.
                         //
-                        // The action buttons are that item in the ordinary case - the
-                        // hero above them holds artwork and text, and its one control,
-                        // the trailer's mute toggle, is off by default and absent until a
-                        // frame has played. With nothing above to move to, Compose has no
-                        // reason to scroll and the top of the page becomes unreachable.
-                        // Handled here rather than by making the hero focusable, which
-                        // would add a stop that does nothing when activated.
+                        // The action buttons are that item: everything above them is
+                        // artwork and text, and the two controls in the overlay are
+                        // reachable only by being named, not by a spatial search. With
+                        // nothing above to move to, Compose has no reason to scroll and
+                        // the top of the page becomes unreachable. Handled here rather
+                        // than by making the hero focusable, which would add a stop that
+                        // does nothing when activated.
                         //
-                        // Only fires while the list is scrolled, so when the hero is
-                        // already in view Up is left to Compose - which is what reaches
-                        // the mute button when it is showing.
+                        // Runs before focus search, so while the list is scrolled this
+                        // takes Up. Once the hero is in view it declines, which is what
+                        // lets Up out of the content and up to the back button.
                         .onPreviewKeyEvent { event ->
                             if (!isFocusDriven) return@onPreviewKeyEvent false
                             if (event.type != KeyEventType.KeyDown) {
@@ -297,9 +311,27 @@ fun DetailScreen(
                                         onToggleWatched = viewModel::toggleWatched,
                                         onToggleWatchlist = viewModel::toggleWatchlist,
                                         onOpenInBrowser = onOpenInBrowser,
-                                        modifier = Modifier.onFocusChanged {
-                                            atTopFocusable = it.hasFocus
-                                        },
+                                        modifier = Modifier
+                                            .focusRequester(actionsFocusRequester)
+                                            .onFocusChanged {
+                                                atTopFocusable = it.hasFocus
+                                            }
+                                            // Up reaches the back button, which a spatial
+                                            // search will not find: it sits in a layer
+                                            // stacked over the list rather than beside it.
+                                            // Only once the hero is in view, though - the
+                                            // list's own Up handler runs first and takes
+                                            // the key while there is still scrolling to
+                                            // undo.
+                                            .then(
+                                                if (isFocusDriven) {
+                                                    Modifier.focusProperties {
+                                                        up = backFocusRequester
+                                                    }
+                                                } else {
+                                                    Modifier
+                                                },
+                                            ),
                                     )
                                 },
                             )
@@ -502,18 +534,29 @@ fun DetailScreen(
                     }
                 }
 
+                // One condition, read by both layers: the toggle itself, and the back
+                // button's Right redirect to it. They cannot be allowed to disagree - a
+                // redirect to a control that is not composed throws when it is followed.
+                val muteButtonVisible = state.trailerMuteButton &&
+                    trailerPlaying &&
+                    headerProgress <= 0.05f
+
                 // The overlay is decoration for a remote: it holds a back button and a
                 // watchlist toggle, both duplicated by hardware Back and by the action
                 // row. It is also full-screen, so its focusables sit *above* every row
-                // in the list geometrically. Leaving them focusable makes Up from the
-                // action buttons land on the back button, and from there the list is
-                // below a stack of overlay targets rather than beside them - focus never
-                // returns, which is the "stuck on Back" trap.
+                // in the list geometrically.
                 //
                 // canFocus is set on the container rather than on each button: it
                 // propagates to every focus target beneath it, so the overlay cannot
-                // reintroduce the trap by gaining a new control later. Touch and mouse
-                // are unaffected - clickable still works without focus.
+                // reintroduce a trap by gaining a new control later. Touch and mouse are
+                // unaffected - clickable still works without focus.
+                //
+                // The back button opts back in below. Refusing it focus outright did keep
+                // the D-pad out of the "stuck on Back" trap - focus went up into the
+                // overlay and never came back down - but it also left the button
+                // unreachable, so on a television the only way back was the hardware key.
+                // The trap is closed at the exit instead: every control up here names the
+                // action row as its Down, so focus can always get back into the content.
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -542,23 +585,47 @@ fun DetailScreen(
                             modifier = Modifier
                                 .align(Alignment.TopStart)
                                 .statusBarsPadding()
-                                .padding(start = 12.dp, top = 8.dp),
+                                .padding(start = 12.dp, top = 8.dp)
+                                .then(
+                                    if (isFocusDriven) {
+                                        Modifier
+                                            .focusRequester(backFocusRequester)
+                                            .focusProperties {
+                                                // Undoes the container's blanket refusal
+                                                // for this one control.
+                                                canFocus = true
+                                                // The way back into the content, which is
+                                                // what stops this being a dead end.
+                                                down = actionsFocusRequester
+                                                // Only when it is actually on screen: a
+                                                // redirect to a requester attached to
+                                                // nothing throws when it is followed, and
+                                                // the toggle is absent by default.
+                                                if (muteButtonVisible) {
+                                                    right = muteFocusRequester
+                                                }
+                                                // Nothing sits left of or above this.
+                                                left = FocusRequester.Cancel
+                                                up = FocusRequester.Cancel
+                                            }
+                                    } else {
+                                        Modifier
+                                    },
+                                ),
                         )
                     }
                 }
 
                 // The mute toggle: the back button's row, at the opposite end of it.
                 //
-                // Its own layer because the overlay above refuses focus to everything
-                // inside it, and this is the one control up here that has no other way to
-                // be reached: Back has the hardware key and the watchlist has the action
-                // row, but a trailer's sound can only be turned on from this button. So
-                // it sits alongside rather than within, which leaves that guard - and the
-                // "stuck on Back" trap it prevents - exactly as it was.
+                // Its own layer rather than a child of the overlay above, because that one
+                // refuses focus to everything inside it and this control has no other way
+                // to be reached - Back has the hardware key and the watchlist has the
+                // action row, but a trailer's sound can only be turned on from here.
                 //
                 // Shown on the same terms as the back button, and only once the setting is
                 // on and a frame has actually played.
-                if (state.trailerMuteButton && trailerPlaying && headerProgress <= 0.05f) {
+                if (muteButtonVisible) {
                     Box(modifier = Modifier.fillMaxSize().zIndex(2f)) {
                         TrailerMuteButton(
                             muted = trailerMuted,
@@ -569,7 +636,25 @@ fun DetailScreen(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .statusBarsPadding()
-                                .padding(end = 12.dp, top = 8.dp),
+                                .padding(end = 12.dp, top = 8.dp)
+                                .then(
+                                    if (isFocusDriven) {
+                                        Modifier
+                                            .focusRequester(muteFocusRequester)
+                                            .focusProperties {
+                                                // Alone in its layer, so a spatial search
+                                                // from here finds nothing and the remote
+                                                // stops dead - which was the bug. Every
+                                                // direction is named instead.
+                                                down = actionsFocusRequester
+                                                left = backFocusRequester
+                                                right = FocusRequester.Cancel
+                                                up = FocusRequester.Cancel
+                                            }
+                                    } else {
+                                        Modifier
+                                    },
+                                ),
                         )
                     }
                 }
