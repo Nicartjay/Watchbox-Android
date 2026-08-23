@@ -16,6 +16,8 @@ data class EpisodeDownloadStatus(
     /** 0..1, meaningful only while [state] is downloading. */
     val fraction: Float,
     val sizeBytes: Long,
+    /** Total size where the server declared one, else zero. Segmented formats report none. */
+    val totalBytes: Long = 0L,
     /** True when the file is on a volume that is not currently mounted. */
     val unavailable: Boolean,
 ) {
@@ -46,6 +48,7 @@ internal fun buildStatusMap(
             // reported on it yet, and showing zero would look like it had lost them.
             fraction = ((live?.percent ?: 0f) / 100f).coerceIn(0f, 1f),
             sizeBytes = live?.bytesDownloaded?.takeIf { it > 0 } ?: entry.sizeBytes,
+            totalBytes = live?.totalBytes ?: 0L,
             unavailable = entry.volumeId.isNotBlank() && entry.volumeId !in mountedVolumes,
         )
     }

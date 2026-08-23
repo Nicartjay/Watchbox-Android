@@ -69,6 +69,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.media3.common.util.UnstableApi
+import space.nicart.watchbox.ui.download.DownloadDeleteDialog
+import space.nicart.watchbox.ui.download.DownloadDeleteTarget
 
 /**
  * Title detail page.
@@ -111,6 +113,10 @@ fun DetailScreen(
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { /* Declined is survivable: the download still runs, just quietly. */ }
+
+    // Held at screen level, not in the episode row: a row scrolled out of view is destroyed,
+    // and a dialog owned by one would vanish with it mid-question.
+    var pendingDelete by remember { mutableStateOf<DownloadDeleteTarget?>(null) }
 
     // Which list the tab strip is showing.
     //
@@ -620,7 +626,15 @@ fun DetailScreen(
                                     onDownload = viewModel::requestDownload,
                                     onPauseDownload = { viewModel.pauseDownload(it.url) },
                                     onResumeDownload = { viewModel.resumeDownload(it.url) },
-                                    onDeleteDownload = { viewModel.deleteDownload(it.url) },
+                                    onDeleteDownload = { episode ->
+                                        pendingDelete = DownloadDeleteTarget(
+                                            key = episode.url,
+                                            label = episode.displayName,
+                                            sizeBytes = downloadStatus[episode.url]
+                                                ?.sizeBytes
+                                                ?: 0L,
+                                        )
+                                    },
                                 )
                             }
                         }
@@ -791,6 +805,17 @@ fun DetailScreen(
         // Outside the `when`, so it survives the screen going from loaded to reloading -
         // resolving streams is a network call, and a transient reload must not close a
         // prompt the user is reading.
+        // Keyed by episode URL rather than the registry's composite key, because that is what
+        // the row had in hand; the view model composes the full key itself.
+        DownloadDeleteDialog(
+            target = pendingDelete,
+            onConfirm = {
+                pendingDelete?.let { viewModel.deleteDownload(it.key) }
+                pendingDelete = null
+            },
+            onDismiss = { pendingDelete = null },
+        )
+
         DownloadQualityDialog(
             state = downloadPicker,
             onPick = { stream ->

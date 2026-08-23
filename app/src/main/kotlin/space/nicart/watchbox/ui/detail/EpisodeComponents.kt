@@ -74,6 +74,9 @@ import space.nicart.watchbox.ui.download.EpisodeDownloadStatus
  * the chosen season's episodes are listed - otherwise a multi-season show presents
  * every season's E1 in a single run, which reads as duplicates.
  */
+/** Slightly tighter than the row's, so it does not crowd a 296dp card's corner. */
+private val THUMBNAIL_BUTTON_SIZE = 36.dp
+
 private val CARD_WIDTH = 296.dp
 private val CARD_HEIGHT = 184.dp
 private val CARD_RADIUS = 14.dp
@@ -397,26 +400,28 @@ private fun EpisodeThumbnailCard(
             )
         }
 
-        WbWatchedBadge(
-            visible = watched,
+        // Top right, with the watched badge moved to the left of it rather than displaced:
+        // the two are both status at the top of the card, and the download control is the one
+        // of them that has to be reachable.
+        Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(8.dp),
-        )
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            WbWatchedBadge(visible = watched)
 
-        // Bottom right: the watched badge holds the top right, and the title block runs
-        // along the bottom left, so this is the one free corner of the card.
-        if (onDownload != null) {
-            EpisodeDownloadButton(
-                status = downloadStatus,
-                onDownload = onDownload,
-                onPause = onPauseDownload ?: {},
-                onResume = onResumeDownload ?: {},
-                onDelete = onDeleteDownload ?: {},
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp),
-            )
+            if (onDownload != null) {
+                EpisodeDownloadButton(
+                    status = downloadStatus,
+                    onDownload = onDownload,
+                    onPause = onPauseDownload ?: {},
+                    onResume = onResumeDownload ?: {},
+                    onDelete = onDeleteDownload ?: {},
+                    size = THUMBNAIL_BUTTON_SIZE,
+                )
+            }
         }
 
         Column(

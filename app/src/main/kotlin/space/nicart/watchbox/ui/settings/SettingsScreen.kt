@@ -92,6 +92,8 @@ import kotlinx.coroutines.delay
 import space.nicart.watchbox.data.remote.ReleaseNote
 import space.nicart.watchbox.ui.download.formatBytes
 import androidx.media3.common.util.UnstableApi
+import space.nicart.watchbox.ui.download.DownloadDeleteDialog
+import space.nicart.watchbox.ui.download.DownloadDeleteTarget
 
 /**
  * Settings.
@@ -110,6 +112,7 @@ fun SettingsScreen(
     val metrics = LocalLayoutMetrics.current
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val storageState by viewModel.storage.collectAsStateWithLifecycle()
+    var confirmClearDownloads by remember { mutableStateOf(false) }
 
     // Re-measured on every resume, for the same reason the battery row re-reads its state: a
     // download finishing while this screen is open makes the figure wrong, and walking the
@@ -631,7 +634,10 @@ fun SettingsScreen(
             item(key = "clear-downloads") {
                 SettingsActionRow(
                     title = stringResource(R.string.settings_clear_downloads),
-                    onClick = viewModel::clearDownloads,
+                    // Confirmed, unlike the two rows above it. Clearing history loses a list
+                    // that rebuilds itself by watching things; this deletes gigabytes that
+                    // have to be fetched again.
+                    onClick = { confirmClearDownloads = true },
                 )
             }
 
@@ -717,6 +723,24 @@ fun SettingsScreen(
                 }
             }
         }
+
+        // Outside the list, so it is not disposed when its row scrolls away.
+        DownloadDeleteDialog(
+            target = if (confirmClearDownloads) {
+                DownloadDeleteTarget(
+                    key = "",
+                    label = stringResource(R.string.settings_clear_downloads_target),
+                    sizeBytes = storageState.usedBytes,
+                )
+            } else {
+                null
+            },
+            onConfirm = {
+                viewModel.clearDownloads()
+                confirmClearDownloads = false
+            },
+            onDismiss = { confirmClearDownloads = false },
+        )
     }
 }
 

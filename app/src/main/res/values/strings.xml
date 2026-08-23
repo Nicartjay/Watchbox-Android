@@ -233,10 +233,16 @@
     <string name="download_started">Added to downloads</string>
     <string name="download_resolving">Finding streams…</string>
     <string name="download_state_queued">Queued</string>
-    <string name="download_state_downloading">Downloading %1$d%% · %2$s</string>
+    <string name="download_state_downloading">%1$d%% · %2$s</string>
+    <string name="download_state_downloading_of">%1$d%% · %2$s of %3$s</string>
     <string name="download_state_paused">Paused · %1$s</string>
     <string name="download_state_failed">Failed — press to retry</string>
     <string name="download_state_unavailable">On removed storage</string>
+    <string name="download_delete_title">Delete download?</string>
+    <string name="download_delete_body">%1$s will be removed from this device.</string>
+    <string name="download_delete_body_sized">%1$s will be removed from this device, freeing %2$s.</string>
+    <string name="download_delete_confirm">Delete</string>
+    <string name="download_delete_cancel">Keep</string>
     <string name="library_tab_downloads">Downloads</string>
     <string name="empty_downloads_title">No downloads</string>
     <string name="empty_downloads_body">Download an episode from its detail page to watch it offline.</string>
@@ -251,6 +257,7 @@
     <string name="settings_volume_internal">Internal storage · %1$s free</string>
     <string name="settings_volume_removable">SD card · %1$s free</string>
     <string name="settings_clear_downloads">Delete all downloads</string>
+    <string name="settings_clear_downloads_target">Every downloaded episode</string>
 
     <string name="settings_data">Data</string>
     <string name="settings_clear_history">Clear watch history</string>

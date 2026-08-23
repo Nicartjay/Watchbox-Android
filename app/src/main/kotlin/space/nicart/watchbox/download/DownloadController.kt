@@ -5,11 +5,13 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.offline.Download
+import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.exoplayer.scheduler.Requirements
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,10 +20,10 @@ import kotlinx.coroutines.withContext
 import space.nicart.watchbox.data.local.DownloadEntry
 import space.nicart.watchbox.data.local.DownloadState
 import space.nicart.watchbox.data.local.WatchBoxStore
-import space.nicart.watchbox.domain.EpisodeEntry
-import space.nicart.watchbox.domain.StreamOption
 import space.nicart.watchbox.data.remote.SubtitleQuery
 import space.nicart.watchbox.domain.AnimeRepository
+import space.nicart.watchbox.domain.EpisodeEntry
+import space.nicart.watchbox.domain.StreamOption
 import space.nicart.watchbox.domain.SubtitleRepository
 
 /**
@@ -81,6 +83,46 @@ class DownloadController(
             manager.addListener(listener)
             applyRequirements(settings.downloadWifiOnly)
             reconcile()
+            pollProgress(manager)
+        }
+    }
+
+    /**
+     * Polls the running downloads for their byte counts.
+     *
+     * Necessary because `onDownloadChanged` fires on a *state* transition - queued to
+     * downloading, downloading to complete - and not as bytes arrive. Listening alone
+     * therefore reports 0% and then 100%, which is why the notification appeared to work
+     * while the app's own UI did not: `DownloadNotificationHelper` polls
+     * `getCurrentDownloads()` on its own timer, and nothing here did.
+     *
+     * Runs only while something is actually downloading, and drops to a sleep otherwise, so an
+     * idle app is not waking up twice a second to ask about nothing.
+     */
+    private suspend fun pollProgress(manager: DownloadManager) {
+        while (true) {
+            val active = manager.currentDownloads
+
+            if (active.isEmpty()) {
+                // Clear once rather than every tick, so a finished download's last reading
+                // does not linger and the map does not churn while idle.
+                if (_progress.value.isNotEmpty()) _progress.value = emptyMap()
+                delay(IDLE_POLL_MS)
+                continue
+            }
+
+            _progress.value = active.associate { download ->
+                download.request.id to DownloadProgress(
+                    percent = download.percentDownloaded.takeIf { it >= 0f } ?: 0f,
+                    bytesDownloaded = download.bytesDownloaded,
+                    // Total is only knowable for a progressive file, where the server sends a
+                    // length. A segmented download has no total until it finishes, so this is
+                    // zero there and the UI shows a percentage instead of "x of y".
+                    totalBytes = download.contentLength.takeIf { it > 0 } ?: 0L,
+                )
+            }
+
+            delay(ACTIVE_POLL_MS)
         }
     }
 
@@ -336,15 +378,9 @@ class DownloadController(
             download: Download,
             finalException: Exception?,
         ) {
-            // Progress in memory, state transitions on disk. The two have very different
-            // write costs, and only one of them needs to survive a restart.
-            _progress.value = _progress.value + (
-                download.request.id to DownloadProgress(
-                    percent = download.percentDownloaded.takeIf { it >= 0f } ?: 0f,
-                    bytesDownloaded = download.bytesDownloaded,
-                )
-                )
-
+            // Progress is owned by the poller above; this only records the transition. The
+            // two have very different write costs, and only one of them needs to survive a
+            // restart.
             scope.launch {
                 val entry = entryFor(download.request.id) ?: return@launch
                 val next = download.state.toDownloadState()
@@ -375,6 +411,17 @@ class DownloadController(
     private companion object {
         /** Distinguishes a user pause from the engine stopping for an unmet requirement. */
         const val STOP_REASON_USER = 1
+
+        /**
+         * How often a running download's byte count is re-read.
+         *
+         * Twice a second: fast enough that a progress bar moves rather than steps, slow enough
+         * that it costs nothing next to the transfer itself.
+         */
+        const val ACTIVE_POLL_MS = 500L
+
+        /** Idle interval, so nothing is woken up to ask about an empty queue. */
+        const val IDLE_POLL_MS = 2_000L
     }
 }
 
@@ -382,6 +429,14 @@ class DownloadController(
 data class DownloadProgress(
     val percent: Float,
     val bytesDownloaded: Long,
+    /**
+     * Total size, or zero when it is not knowable.
+     *
+     * Only a progressive file reports a length up front. A segmented download has no total
+     * until its last segment arrives, so the UI falls back to a percentage there rather than
+     * printing "1.2 GB of 0 B".
+     */
+    val totalBytes: Long = 0L,
 )
 
 /** Maps Media3's download state onto the registry's. */

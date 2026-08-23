@@ -44,6 +44,8 @@ import androidx.compose.foundation.lazy.items
 import space.nicart.watchbox.data.local.DownloadEntry
 import space.nicart.watchbox.ui.download.EpisodeDownloadStatus
 import androidx.media3.common.util.UnstableApi
+import space.nicart.watchbox.ui.download.DownloadDeleteDialog
+import space.nicart.watchbox.ui.download.DownloadDeleteTarget
 
 /** Library tabs. */
 private enum class LibraryTab(val label: String) {
@@ -76,6 +78,10 @@ fun LibraryScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var tab by remember { mutableStateOf(LibraryTab.MY_LIST) }
+
+    // Held here rather than inside the row: a dialog owned by a list item is destroyed the
+    // moment that item scrolls out of view, taking the confirmation with it.
+    var pendingDelete by remember { mutableStateOf<DownloadDeleteTarget?>(null) }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val padding = sectionHorizontalPadding(maxWidth)
@@ -113,7 +119,16 @@ fun LibraryScreen(
                     onPlay = onPlayDownload,
                     onPause = viewModel::pauseDownload,
                     onResume = viewModel::resumeDownload,
-                    onDelete = viewModel::deleteDownload,
+                    onDelete = { target -> pendingDelete = target },
+                )
+
+                DownloadDeleteDialog(
+                    target = pendingDelete,
+                    onConfirm = {
+                        pendingDelete?.let { viewModel.deleteDownload(it.key) }
+                        pendingDelete = null
+                    },
+                    onDismiss = { pendingDelete = null },
                 )
                 return@Column
             }
@@ -192,7 +207,7 @@ private fun DownloadsTab(
     onPlay: ((DownloadEntry) -> Unit)?,
     onPause: (String) -> Unit,
     onResume: (String) -> Unit,
-    onDelete: (String) -> Unit,
+    onDelete: (DownloadDeleteTarget) -> Unit,
 ) {
     if (state.downloads.isEmpty()) {
         WbEmptyState(
@@ -221,13 +236,23 @@ private fun DownloadsTab(
                     // The live figure while running, the stored one once finished: a
                     // completed download has no listener reporting on it.
                     sizeBytes = live?.bytesDownloaded?.takeIf { it > 0 } ?: entry.sizeBytes,
+                    totalBytes = live?.totalBytes ?: 0L,
                     unavailable = entry.volumeId.isNotBlank() &&
                         entry.volumeId !in state.mountedVolumes,
                 ),
                 onPlay = { onPlay?.invoke(entry) },
                 onPause = { onPause(entry.key) },
                 onResume = { onResume(entry.key) },
-                onDelete = { onDelete(entry.key) },
+                onDelete = {
+                    onDelete(
+                        DownloadDeleteTarget(
+                            key = entry.key,
+                            label = entry.episodeName.ifBlank { entry.title },
+                            sizeBytes = live?.bytesDownloaded?.takeIf { it > 0 }
+                                ?: entry.sizeBytes,
+                        ),
+                    )
+                },
             )
         }
     }

@@ -125,17 +125,22 @@ internal fun DownloadRow(
                 overflow = TextOverflow.Ellipsis,
             )
 
-            // Only while there is movement to show. A bar sitting at 100% under a finished
-            // download is noise, and one at 0% under a queued item implies a stall.
-            if (status.isActive && status.fraction > 0f) {
-                Spacer(Modifier.height(3.dp))
+            // Shown for anything unfinished, including a paused download: the bar is where
+            // "how far did it get" is read, and that question outlives the transfer stopping.
+            // A finished row has nothing to plot, and a bar pinned at 100% is noise.
+            if (!entry.isComplete && !status.unavailable) {
+                Spacer(Modifier.height(5.dp))
                 LinearProgressIndicator(
                     progress = { status.fraction },
-                    color = tokens.colors.accent,
+                    color = if (entry.state == DownloadState.FAILED) {
+                        tokens.colors.textMuted
+                    } else {
+                        tokens.colors.accent
+                    },
                     trackColor = tokens.colors.surface,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(3.dp)
+                        .height(4.dp)
                         .clip(RoundedCornerShape(2.dp)),
                 )
             }
@@ -153,24 +158,37 @@ internal fun DownloadRow(
     }
 }
 
-/** `Downloading · 1.2 GB`, `Paused`, `On removed storage`, `3.4 GB`. */
+/**
+ * `47% · 1.2 GB of 2.6 GB`, `Paused · 1.2 GB`, `On removed storage`, `3.4 GB`.
+ *
+ * The pair is shown where a total is known and a percentage where it is not, because only a
+ * progressive file declares its length: a segmented download has no total until it finishes,
+ * and "1.2 GB of 0 B" is worse than no denominator at all.
+ */
 @Composable
 private fun statusLine(entry: DownloadEntry, status: EpisodeDownloadStatus): String {
     if (status.unavailable) return stringResource(R.string.download_state_unavailable)
 
-    val size = formatBytes(status.sizeBytes)
+    val done = formatBytes(status.sizeBytes)
+    val percent = (status.fraction * 100).toInt()
 
     return when (entry.state) {
         DownloadState.QUEUED -> stringResource(R.string.download_state_queued)
-        DownloadState.DOWNLOADING -> stringResource(
-            R.string.download_state_downloading,
-            (status.fraction * 100).toInt(),
-            size,
-        )
 
-        DownloadState.PAUSED -> stringResource(R.string.download_state_paused, size)
+        DownloadState.DOWNLOADING -> if (status.totalBytes > 0L) {
+            stringResource(
+                R.string.download_state_downloading_of,
+                percent,
+                done,
+                formatBytes(status.totalBytes),
+            )
+        } else {
+            stringResource(R.string.download_state_downloading, percent, done)
+        }
+
+        DownloadState.PAUSED -> stringResource(R.string.download_state_paused, done)
         DownloadState.FAILED -> stringResource(R.string.download_state_failed)
-        DownloadState.COMPLETED -> size
+        DownloadState.COMPLETED -> done
     }
 }
 
