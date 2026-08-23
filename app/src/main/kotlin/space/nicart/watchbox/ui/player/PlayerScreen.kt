@@ -70,6 +70,7 @@ import space.nicart.watchbox.domain.StreamOption
 import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
 import space.nicart.watchbox.ui.components.WbLoadingStatus
+import space.nicart.watchbox.WatchBoxApplication
 
 /**
  * Full-screen player.
@@ -175,7 +176,19 @@ fun PlayerScreen(
     val streamHeaders = state.selectedStream?.headers.orEmpty()
     val headerHolder = remember { mutableStateOf(streamHeaders) }
     headerHolder.value = streamHeaders
-    val exoPlayer = remember { PlayerFactory.create(context) { headerHolder.value } }
+    // Cache-first, so an episode that was downloaded plays from disk with no extension call
+    // and no network request. Passed as a wrapper rather than the player reaching for the
+    // engine, which keeps playback working unchanged when nothing has been downloaded.
+    val downloadEngine = (context.applicationContext as WatchBoxApplication)
+        .container
+        .downloadEngine
+    val exoPlayer = remember {
+        PlayerFactory.create(
+            context = context,
+            headerProvider = { headerHolder.value },
+            cacheWrapper = { upstream -> downloadEngine.cacheAwareFactory(upstream) },
+        )
+    }
 
     val castState by castManager.state.collectAsStateWithLifecycle()
 

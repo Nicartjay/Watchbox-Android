@@ -356,12 +356,25 @@ private fun TvTabContent(
         AppTab.LIBRARY -> {
             val viewModel: LibraryViewModel = viewModel(
                 key = "library",
-                factory = LibraryViewModel.factory(container.store),
+                factory = LibraryViewModel.factory(
+                    store = container.store,
+                    downloads = container.downloadController,
+                    storage = container.downloadStorage,
+                ),
             )
             LibraryScreen(
                 viewModel = viewModel,
                 onOpenAnime = openAnime,
                 onResume = { entry -> navController.openPlayer(entry) },
+                onPlayDownload = { entry ->
+                    navController.navigate(
+                        Routes.Player(
+                            sourceId = entry.sourceId,
+                            animeUrl = entry.animeUrl,
+                            episodeUrl = entry.episodeUrl,
+                        ),
+                    )
+                },
             )
         }
 

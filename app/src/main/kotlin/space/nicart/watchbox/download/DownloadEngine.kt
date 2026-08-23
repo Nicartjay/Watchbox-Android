@@ -12,6 +12,7 @@ import androidx.media3.exoplayer.offline.DefaultDownloaderFactory
 import androidx.media3.exoplayer.offline.DownloadManager
 import java.io.File
 import java.util.concurrent.Executors
+import androidx.media3.datasource.DataSource
 
 /**
  * The download engine, one per process.
@@ -126,6 +127,39 @@ class DownloadEngine(
         manager = null
         runCatching { cache?.release() }
         cache = null
+    }
+
+    /**
+     * A data source factory that reads a downloaded stream from disk before the network.
+     *
+     * This is how a download is played rather than a `file://` path, and it has to be: a
+     * segmented download is hundreds of files plus an index, not one playable file, so there
+     * is no path to hand the player. Reading through the same cache the downloader wrote to
+     * lets HLS, DASH and progressive all be played back identically, and a partially
+     * downloaded stream plays the part it has and fetches the rest.
+     *
+     * [upstream] is the network factory to fall back to, supplied by the caller so playback
+     * keeps its own header handling rather than inheriting the downloader's.
+     */
+    fun cacheAwareFactory(upstream: DataSource.Factory): DataSource.Factory {
+        // Touches manager() so the cache is opened and its index read. Without that the
+        // cache reports itself empty and every downloaded stream would be re-fetched.
+        manager()
+        val simpleCache = cache ?: return upstream
+
+        return CacheDataSource.Factory()
+            .setCache(simpleCache)
+            .setUpstreamDataSourceFactory(upstream)
+            // Read-only. Playback must not add to the download cache: the evictor is a no-op,
+            // so anything written here would be kept forever and counted as a download the
+            // user never asked for.
+            .setCacheWriteDataSinkFactory(null)
+    }
+
+    /** Whether [key] has a complete download in the cache. */
+    fun isDownloaded(key: String): Boolean {
+        val index = runCatching { manager().downloadIndex.getDownload(key) }.getOrNull()
+        return index?.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED
     }
 
     private companion object {

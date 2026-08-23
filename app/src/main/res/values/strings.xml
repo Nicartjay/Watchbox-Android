@@ -232,6 +232,14 @@
     <string name="download_no_streams">This source returned no downloadable streams.</string>
     <string name="download_started">Added to downloads</string>
     <string name="download_resolving">Finding streams…</string>
+    <string name="download_state_queued">Queued</string>
+    <string name="download_state_downloading">Downloading %1$d%% · %2$s</string>
+    <string name="download_state_paused">Paused · %1$s</string>
+    <string name="download_state_failed">Failed — press to retry</string>
+    <string name="download_state_unavailable">On removed storage</string>
+    <string name="library_tab_downloads">Downloads</string>
+    <string name="empty_downloads_title">No downloads</string>
+    <string name="empty_downloads_body">Download an episode from its detail page to watch it offline.</string>
 
     <string name="settings_data">Data</string>
     <string name="settings_clear_history">Clear watch history</string>

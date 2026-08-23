@@ -67,6 +67,7 @@ import space.nicart.watchbox.ui.settings.SettingsViewModel
 import space.nicart.watchbox.ui.update.UpdatePromptDialog
 import space.nicart.watchbox.ui.update.UpdatePromptState
 import space.nicart.watchbox.ui.update.UpdatePromptViewModel
+import space.nicart.watchbox.data.local.DownloadEntry
 
 /**
  * Root navigation.
@@ -117,6 +118,15 @@ fun WatchBoxApp(
                     onOpenExtensions = { navController.navigate(Routes.Extensions) },
                     onOpenSource = { id, name ->
                         navController.navigate(Routes.SourceBrowse(id, name))
+                    },
+                    onPlayDownload = { entry ->
+                        navController.navigate(
+                            Routes.Player(
+                                sourceId = entry.sourceId,
+                                animeUrl = entry.animeUrl,
+                                episodeUrl = entry.episodeUrl,
+                            ),
+                        )
                     },
                 )
             }
@@ -316,6 +326,7 @@ private fun NavHostController.openPlayer(entry: WatchHistoryEntry) {
  * Tab content is kept alive by a `SaveableStateHolder` keyed on tab name, so
  * scroll position survives switching without giving each tab its own back stack.
  */
+@UnstableApi
 @Composable
 private fun TabShell(
     container: AppContainer,
@@ -325,6 +336,8 @@ private fun TabShell(
     onOpenSource: (sourceId: Long, sourceName: String) -> Unit,
     /** Opens a title and starts it playing, for the home hero's primary action. */
     onPlayAnime: (AnimeCard) -> Unit,
+    /** Opens one downloaded episode, from the Library's Downloads tab. */
+    onPlayDownload: (DownloadEntry) -> Unit,
 ) {
     var selectedTab by remember { mutableStateOf(AppTab.HOME) }
     val stateHolder = rememberSaveableStateHolder()
@@ -407,12 +420,19 @@ private fun TabShell(
                 AppTab.LIBRARY -> {
                     val viewModel: LibraryViewModel = viewModel(
                         key = "library",
-                        factory = LibraryViewModel.factory(container.store),
+                        factory = LibraryViewModel.factory(
+                            store = container.store,
+                            downloads = container.downloadController,
+                            storage = container.downloadStorage,
+                        ),
                     )
                     LibraryScreen(
                         viewModel = viewModel,
                         onOpenAnime = onOpenAnime,
                         onResume = onResume,
+                        // The download's own episode, not the title's resume point: the row
+                        // names one episode and that is what pressing it should open.
+                        onPlayDownload = onPlayDownload,
                     )
                 }
 

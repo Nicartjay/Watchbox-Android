@@ -53,6 +53,13 @@ object PlayerFactory {
     fun create(
         context: Context,
         headerProvider: () -> Map<String, String> = ::emptyMap,
+        /**
+         * Wraps the network chain so a downloaded stream is read from disk first.
+         *
+         * Supplied rather than reached for, so the player has no dependency on the download
+         * engine: given nothing, it behaves exactly as it did before downloads existed.
+         */
+        cacheWrapper: ((androidx.media3.datasource.DataSource.Factory) -> androidx.media3.datasource.DataSource.Factory)? = null,
     ): ExoPlayer {
         val httpFactory = OkHttpDataSource.Factory { request -> okHttp.newCall(request) }
             .setUserAgent(DEFAULT_USER_AGENT)
@@ -69,10 +76,15 @@ object PlayerFactory {
             }
         }
 
-        val dataSourceFactory = ResolvingDataSource.Factory(
+        val networkFactory = ResolvingDataSource.Factory(
             DefaultDataSource.Factory(context, httpFactory),
             resolver,
         )
+
+        // Cache in front of the network where downloads exist. A stream that was downloaded
+        // then plays from disk with no extension call and no request, which is what makes a
+        // download an offline copy rather than a warm cache.
+        val dataSourceFactory = cacheWrapper?.invoke(networkFactory) ?: networkFactory
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
