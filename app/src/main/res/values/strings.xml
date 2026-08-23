@@ -241,6 +241,17 @@
     <string name="empty_downloads_title">No downloads</string>
     <string name="empty_downloads_body">Download an episode from its detail page to watch it offline.</string>
 
+    <string name="settings_storage">Storage</string>
+    <string name="settings_storage_used">Downloads on this device</string>
+    <string name="settings_storage_free">%1$s free</string>
+    <string name="settings_download_wifi_only">Download on Wi\u2011Fi only</string>
+    <string name="settings_download_wifi_only_summary">An episode can run to several gigabytes. Turning this off allows downloads over mobile data.</string>
+    <string name="settings_download_location">Download location</string>
+    <string name="settings_download_location_summary">Applies to new downloads. Existing files stay where they are.</string>
+    <string name="settings_volume_internal">Internal storage · %1$s free</string>
+    <string name="settings_volume_removable">SD card · %1$s free</string>
+    <string name="settings_clear_downloads">Delete all downloads</string>
+
     <string name="settings_data">Data</string>
     <string name="settings_clear_history">Clear watch history</string>
     <string name="settings_clear_list">Clear My List</string>

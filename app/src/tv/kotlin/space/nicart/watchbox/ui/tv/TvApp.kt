@@ -385,6 +385,8 @@ private fun TvTabContent(
                     container.store,
                     container.updateChecker,
                     container.updateInstaller,
+                    container.downloadController,
+                    container.downloadStorage,
                     space.nicart.watchbox.BuildConfig.VERSION_NAME,
                 ),
             )

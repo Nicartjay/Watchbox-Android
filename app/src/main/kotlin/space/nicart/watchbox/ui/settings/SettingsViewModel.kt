@@ -24,6 +24,12 @@ import space.nicart.watchbox.data.remote.UpdateChecker
 import space.nicart.watchbox.data.remote.UpdateDownload
 import space.nicart.watchbox.data.remote.UpdateInstaller
 import space.nicart.watchbox.data.remote.UpdateResult
+import androidx.media3.common.util.UnstableApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import space.nicart.watchbox.download.DownloadController
+import space.nicart.watchbox.download.DownloadStorage
+import space.nicart.watchbox.download.DownloadVolume
 
 /** What the update row is currently showing. */
 sealed interface UpdateUiState {
@@ -36,12 +42,74 @@ sealed interface UpdateUiState {
     data class Failed(val message: String) : UpdateUiState
 }
 
+@UnstableApi
 class SettingsViewModel(
     private val store: WatchBoxStore,
     private val updateChecker: UpdateChecker,
     private val updateInstaller: UpdateInstaller,
+    private val downloads: DownloadController,
+    private val downloadStorage: DownloadStorage,
     val currentVersion: String,
 ) : ViewModel() {
+
+    private val _storage = MutableStateFlow(StorageUiState())
+
+    /** Disk usage, measured rather than totalled from the registry. */
+    val storage: StateFlow<StorageUiState> = _storage.asStateFlow()
+
+    /**
+     * Re-measures disk usage.
+     *
+     * Walked from the filesystem, not summed from the registry: a partial download, an orphan
+     * left by a crash and a file deleted by hand all make the registry's own figures a claim
+     * rather than a measurement. Called on every screen resume for the same reason the battery
+     * row re-reads its state - the number goes stale the moment a download finishes.
+     */
+    fun refreshStorage() {
+        viewModelScope.launch {
+            val used = withContext(Dispatchers.IO) { downloadStorage.usedBytes() }
+            val volumeId = store.currentSettings().downloadVolume
+            val volumes = withContext(Dispatchers.IO) { downloadStorage.volumes() }
+            _storage.value = StorageUiState(
+                usedBytes = used,
+                freeBytes = volumes.firstOrNull { it.id == volumeId }?.freeBytes
+                    ?: volumes.firstOrNull()?.freeBytes
+                    ?: 0L,
+                volumes = volumes,
+                selectedVolume = volumeId ?: volumes.firstOrNull()?.id,
+            )
+        }
+    }
+
+    fun setDownloadWifiOnly(enabled: Boolean) {
+        viewModelScope.launch {
+            store.setDownloadWifiOnly(enabled)
+            // Applied to the running queue as well as stored, or an item already waiting
+            // would keep waiting on the old rule until something else restarted it.
+            downloads.applyRequirements(enabled)
+        }
+    }
+
+    fun setDownloadVolume(volumeId: String) {
+        viewModelScope.launch {
+            store.setDownloadVolume(volumeId)
+            refreshStorage()
+        }
+    }
+
+    /**
+     * Deletes every download.
+     *
+     * Both halves, in that order: the engine owns the bytes and the registry only indexes
+     * them, so clearing the index first would leave files with nothing pointing at them.
+     */
+    fun clearDownloads() {
+        viewModelScope.launch {
+            downloads.removeAll()
+            store.clearDownloads()
+            refreshStorage()
+        }
+    }
 
     private val _updateState = MutableStateFlow<UpdateUiState>(UpdateUiState.Idle)
     val updateState: StateFlow<UpdateUiState> = _updateState.asStateFlow()
@@ -244,6 +312,8 @@ class SettingsViewModel(
             store: WatchBoxStore,
             updateChecker: UpdateChecker,
             updateInstaller: UpdateInstaller,
+            downloads: DownloadController,
+            downloadStorage: DownloadStorage,
             currentVersion: String,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -251,8 +321,18 @@ class SettingsViewModel(
                 store = store,
                 updateChecker = updateChecker,
                 updateInstaller = updateInstaller,
+                downloads = downloads,
+                downloadStorage = downloadStorage,
                 currentVersion = currentVersion,
             ) as T
         }
     }
 }
+
+/** Disk usage for the Settings storage group. */
+data class StorageUiState(
+    val usedBytes: Long = 0L,
+    val freeBytes: Long = 0L,
+    val volumes: List<DownloadVolume> = emptyList(),
+    val selectedVolume: String? = null,
+)

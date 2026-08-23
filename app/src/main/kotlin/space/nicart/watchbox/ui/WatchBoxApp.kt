@@ -443,6 +443,8 @@ private fun TabShell(
                             store = container.store,
                             updateChecker = container.updateChecker,
                             updateInstaller = container.updateInstaller,
+                            downloads = container.downloadController,
+                            downloadStorage = container.downloadStorage,
                             currentVersion = space.nicart.watchbox.BuildConfig.VERSION_NAME,
                         ),
                     )

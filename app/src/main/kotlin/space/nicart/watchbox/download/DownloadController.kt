@@ -181,6 +181,19 @@ class DownloadController(
         }
     }
 
+    /** Cancels every download and deletes what they had written. */
+    fun removeAll() {
+        scope.launch {
+            withContext(Dispatchers.Main) {
+                DownloadService.sendRemoveAllDownloads(
+                    context,
+                    MediaDownloadService::class.java,
+                    /* foreground = */ false,
+                )
+            }
+        }
+    }
+
     /** Applies the Wi-Fi-only preference to the running queue. */
     fun applyRequirements(wifiOnly: Boolean) {
         val requirements = if (wifiOnly) {

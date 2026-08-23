@@ -90,6 +90,8 @@ import space.nicart.watchbox.ui.components.sectionHorizontalPadding
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.delay
 import space.nicart.watchbox.data.remote.ReleaseNote
+import space.nicart.watchbox.ui.download.formatBytes
+import androidx.media3.common.util.UnstableApi
 
 /**
  * Settings.
@@ -98,6 +100,7 @@ import space.nicart.watchbox.data.remote.ReleaseNote
  * repository URL is editable here because the app has no content of its own until
  * an extension is installed, and the default repo may not be the one you want.
  */
+@UnstableApi
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
@@ -106,6 +109,19 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val metrics = LocalLayoutMetrics.current
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
+    val storageState by viewModel.storage.collectAsStateWithLifecycle()
+
+    // Re-measured on every resume, for the same reason the battery row re-reads its state: a
+    // download finishing while this screen is open makes the figure wrong, and walking the
+    // directory is far too slow to do per recomposition.
+    val storageLifecycle = LocalLifecycleOwner.current
+    DisposableEffect(storageLifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshStorage()
+        }
+        storageLifecycle.lifecycle.addObserver(observer)
+        onDispose { storageLifecycle.lifecycle.removeObserver(observer) }
+    }
     val changelog by viewModel.changelog.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
 
@@ -583,7 +599,42 @@ fun SettingsScreen(
                 )
             }
 
-            // ------------------------------------------------------- about
+            // ------------------------------------------------------ storage
+            item(key = "storage-label") {
+                SettingsGroupLabel(stringResource(R.string.settings_storage))
+            }
+
+            item(key = "storage-usage") {
+                StorageUsageCard(state = storageState)
+            }
+
+            item(key = "download-wifi-only") {
+                SettingsToggleRow(
+                    title = stringResource(R.string.settings_download_wifi_only),
+                    checked = settings.downloadWifiOnly,
+                    onCheckedChange = viewModel::setDownloadWifiOnly,
+                    summary = stringResource(R.string.settings_download_wifi_only_summary),
+                )
+            }
+
+            // Only where there is a choice to make. A device with one volume needs no
+            // picker, and most phones have exactly one.
+            if (storageState.volumes.size > 1) {
+                item(key = "download-volume") {
+                    DownloadVolumeCard(
+                        state = storageState,
+                        onSelect = viewModel::setDownloadVolume,
+                    )
+                }
+            }
+
+            item(key = "clear-downloads") {
+                SettingsActionRow(
+                    title = stringResource(R.string.settings_clear_downloads),
+                    onClick = viewModel::clearDownloads,
+                )
+            }
+
             // ------------------------------------------------------ updates
             item(key = "updates-label") {
                 SettingsGroupLabel(stringResource(R.string.settings_updates))
@@ -1206,3 +1257,89 @@ private fun String.looksLikeHttpUrl(): Boolean {
 /** Matches the focus retries elsewhere: requestFocus succeeds before a node exists. */
 private const val UPDATE_FOCUS_ATTEMPTS = 12
 private const val UPDATE_FOCUS_RETRY_MS = 60L
+
+/**
+ * Disk usage for downloads.
+ *
+ * A card rather than a value row, following the battery row's pattern: the figures are
+ * measured from the filesystem rather than stored, so this reports a fact about the device
+ * instead of a preference, and that reads better as a statement than as a settable row.
+ */
+@Composable
+private fun StorageUsageCard(state: StorageUiState) {
+    val tokens = MaterialTheme.wb
+
+    SettingsCard {
+        Text(
+            text = stringResource(R.string.settings_storage_used),
+            style = MaterialTheme.typography.titleMedium,
+            color = tokens.colors.textPrimary,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = formatBytes(state.usedBytes),
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = tokens.colors.accent,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = stringResource(
+                R.string.settings_storage_free,
+                formatBytes(state.freeBytes),
+            ),
+            style = MaterialTheme.typography.labelSmall,
+            color = tokens.colors.textMuted,
+        )
+    }
+}
+
+/**
+ * Which volume downloads are written to.
+ *
+ * Shown only where the device has more than one. Changing it does not move what is already
+ * downloaded: moving gigabytes silently would be worse than leaving them, and a download on
+ * the other volume is still listed and still plays as long as that volume is mounted.
+ */
+@Composable
+private fun DownloadVolumeCard(
+    state: StorageUiState,
+    onSelect: (String) -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+
+    SettingsCard {
+        Text(
+            text = stringResource(R.string.settings_download_location),
+            style = MaterialTheme.typography.titleMedium,
+            color = tokens.colors.textPrimary,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = stringResource(R.string.settings_download_location_summary),
+            style = MaterialTheme.typography.labelSmall,
+            color = tokens.colors.textMuted,
+        )
+        Spacer(Modifier.height(10.dp))
+
+        state.volumes.forEach { volume ->
+            val name = stringResource(
+                if (volume.isRemovable) {
+                    R.string.settings_volume_removable
+                } else {
+                    R.string.settings_volume_internal
+                },
+                formatBytes(volume.freeBytes),
+            )
+
+            // The tick marks the current choice in the label rather than through a variant of
+            // the button: SettingsTextAction has one appearance, and giving it a selected
+            // state for this one caller would change every other use of it.
+            SettingsTextAction(
+                label = if (volume.id == state.selectedVolume) "✓  $name" else name,
+                onClick = { onSelect(volume.id) },
+            )
+            Spacer(Modifier.height(6.dp))
+        }
+    }
+}
