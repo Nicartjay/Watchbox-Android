@@ -37,6 +37,23 @@ data class DownloadEntry(
      * source may reorder or re-word its list between calls.
      */
     val streamLabel: String = "",
+    /**
+     * True for HLS or DASH.
+     *
+     * The two are played back differently offline. A progressive file is one cache entry under
+     * the download's own key; an adaptive stream is a manifest plus hundreds of segments, each
+     * keyed by its own URL, so it is reopened at [downloadUri] and the cached manifest names
+     * the rest. Media3 also refuses a custom cache key on an adaptive download outright.
+     */
+    val isAdaptive: Boolean = false,
+    /**
+     * The URI the download was fetched from.
+     *
+     * Kept only for adaptive streams, where it is the cache key for the manifest itself. Its
+     * signature has long expired, so it is never fetched again - it is an index lookup, and the
+     * request is served from the cache. A progressive download does not need it.
+     */
+    val downloadUri: String = "",
     /** Which volume the file was written to, so a pulled SD card can be reported. */
     val volumeId: String = "",
     val state: DownloadState = DownloadState.QUEUED,

@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -155,7 +155,17 @@ fun DownloadQualityDialog(
                         modifier = Modifier.heightIn(max = LIST_MAX_HEIGHT),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(state.streams, key = { it.url }) { stream ->
+                        // Keyed by position, not by URL.
+                        //
+                        // A URL is not unique here: sources routinely list the same file
+                        // several times over as different releases or as mirrors, and Compose
+                        // throws outright on a repeated key - which crashed the app the moment
+                        // this dialog opened on such a source. The list is fixed for as long as
+                        // the dialog is up, so the index is both stable and unique.
+                        itemsIndexed(
+                            items = state.streams,
+                            key = { index, _ -> index },
+                        ) { _, stream ->
                             StreamRow(stream = stream, onClick = { onPick(stream) })
                         }
                     }

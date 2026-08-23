@@ -324,7 +324,12 @@ class PlayerViewModel(
 
         val stream = StreamOption(
             label = entry.streamLabel.ifBlank { OFFLINE_STREAM_LABEL },
-            url = entry.episodeUrl,
+            // The manifest URI for an adaptive stream, because that is what its cache entry is
+            // keyed by and what names the segments inside it. Its signature expired long ago,
+            // but it is never fetched: the request is served from the cache. A progressive
+            // download is found by its key instead, so any URI would do and the episode URL is
+            // used to keep isHls and isDash false for it.
+            url = if (entry.isAdaptive) entry.downloadUri else entry.episodeUrl,
             headers = emptyMap(),
             subtitles = entry.subtitlePaths.map { path ->
                 SubtitleOption(
@@ -343,7 +348,10 @@ class PlayerViewModel(
             episode = _uiState.value.episode ?: episode,
             streams = listOf(stream),
             selectedStream = stream,
-            offlineCacheKey = entry.key,
+            // Progressive only. An adaptive stream is matched through its manifest URI, and
+            // handing a custom key to a media item Media3 treats as adaptive would put the
+            // cache lookup back on a key nothing was written under.
+            offlineCacheKey = entry.key.takeUnless { entry.isAdaptive },
             errorMessage = null,
         )
     }

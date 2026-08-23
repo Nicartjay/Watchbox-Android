@@ -157,6 +157,12 @@ class DownloadController(
                 posterUrl = posterUrl,
                 sourceName = sourceName,
                 streamLabel = stream.label,
+                // Both needed to play it back offline. An adaptive stream is reopened at the
+                // manifest URI it was downloaded from - its segments are keyed individually
+                // and listed inside that cached manifest - while a progressive file is found
+                // by the download's own key.
+                isAdaptive = stream.isHls || stream.isDash,
+                downloadUri = stream.url,
                 volumeId = settings.downloadVolume ?: VOLUME_INTERNAL,
                 state = DownloadState.QUEUED,
                 createdAt = System.currentTimeMillis(),
@@ -179,14 +185,18 @@ class DownloadController(
                         else -> null
                     },
                 )
-                // The download's own key, not the URL.
+                // Progressive only, because Media3 rejects a custom key on anything adaptive -
+                // "customCacheKey must be null for type: 2" and the download crashes.
                 //
-                // This is what makes a download findable again. Cache entries are keyed by URL
-                // by default, and these URLs are signed and expire in about two minutes - so
-                // the key a download was written under could never be recomputed, and playback
-                // looked straight past a file that was sitting on disk. Keyed by episode
-                // instead, which is stable for as long as the download is.
-                .setCustomCacheKey(entry.key)
+                // The two need different treatment anyway. A progressive file is one cache
+                // entry keyed by its URL, and since these URLs are signed and expire it needs a
+                // stable key or the bytes become unfindable. An adaptive stream is a manifest
+                // plus hundreds of segments, each already keyed by its own URL and listed
+                // inside the cached manifest - so it is found by reopening the same manifest
+                // URI, which Media3 records in its own index and playback reads back.
+                .apply {
+                    if (!stream.isHls && !stream.isDash) setCustomCacheKey(entry.key)
+                }
                 .build()
 
             withContext(Dispatchers.Main) {
@@ -282,10 +292,13 @@ class DownloadController(
             val entry = entryFor(key) ?: return@launch
             resolver.setActive(entry.sourceId, entry.episodeUrl, entry.streamLabel)
 
-            val stale = runCatching {
-                engine.manager().downloadIndex.getDownload(key)
-            }.getOrNull()?.request?.customCacheKey == null &&
-                entry.state == DownloadState.FAILED
+            // Only a progressive download can be stale in this sense. An adaptive one has no
+            // custom key by design, so the absence of one is not evidence of anything.
+            val stale = !entry.isAdaptive &&
+                entry.state == DownloadState.FAILED &&
+                runCatching {
+                    engine.manager().downloadIndex.getDownload(key)
+                }.getOrNull()?.request?.customCacheKey == null
 
             if (stale) {
                 // Cleared first, or the re-added request merges with the unreadable entry
@@ -337,7 +350,11 @@ class DownloadController(
                     else -> null
                 },
             )
-            .setCustomCacheKey(entry.key)
+            // Progressive only; see the note in enqueue. Media3 throws on an adaptive stream
+            // carrying one.
+            .apply {
+                if (!match.isHls && !match.isDash) setCustomCacheKey(entry.key)
+            }
             .build()
 
         withContext(Dispatchers.Main) {
@@ -429,14 +446,23 @@ class DownloadController(
             // and an entry pointing at nothing is worse than no entry at all.
             val download = known[entry.key] ?: return@mapNotNull null
 
-            // Downloads written before the cache key was stable are unplayable.
+            // Progressive downloads written before the cache key was stable are unplayable.
             //
-            // Cache entries used to be keyed by the stream URL, and those URLs are signed and
-            // expire - so the bytes are on disk under a key nothing can recompute. There is no
-            // migration available: the key cannot be derived from an expired URL. Marked failed
-            // rather than left looking complete, so the row offers a retry that will work
-            // instead of playback that cannot.
+            // Those were keyed by the stream URL, and those URLs are signed and expire, so the
+            // bytes sit under a key nothing can recompute. No migration is possible - the key
+            // cannot be derived from an expired URL - so they are marked failed rather than
+            // left looking complete, and the row offers a retry that works instead of playback
+            // that cannot.
+            //
+            // Adaptive downloads are excluded: Media3 forbids a custom key on them, so a null
+            // one is correct there and says nothing about whether the download is readable.
+            // They are found through their manifest URI instead.
+            val adaptive = entry.isAdaptive ||
+                download.request.mimeType == MimeTypes.APPLICATION_M3U8 ||
+                download.request.mimeType == MimeTypes.APPLICATION_MPD
+
             val orphaned = download.state == Download.STATE_COMPLETED &&
+                !adaptive &&
                 download.request.customCacheKey == null
 
             entry.copy(
