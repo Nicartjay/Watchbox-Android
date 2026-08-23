@@ -63,6 +63,12 @@ import androidx.compose.ui.platform.LocalContext
 import space.nicart.watchbox.ui.components.openInBrowser
 import space.nicart.watchbox.ui.components.openYouTube
 import androidx.compose.runtime.mutableIntStateOf
+import space.nicart.watchbox.ui.download.DownloadQualityDialog
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.media3.common.util.UnstableApi
 
 /**
  * Title detail page.
@@ -74,6 +80,7 @@ import androidx.compose.runtime.mutableIntStateOf
  * No season selector, cast rail or recommendations row: `getEpisodeList` returns
  * one flat list and extensions expose no cast or related titles.
  */
+@UnstableApi
 @Composable
 fun DetailScreen(
     viewModel: DetailViewModel,
@@ -91,7 +98,19 @@ fun DetailScreen(
     autoPlay: Boolean = false,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val downloadStatus by viewModel.downloadStatus.collectAsStateWithLifecycle()
+    val downloadPicker by viewModel.picker.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    // Asked for the first time a download is started, not on arrival.
+    //
+    // The service runs either way, but from API 33 its progress notification is silently
+    // dropped without this - so a download would appear to do nothing at all. Requested at
+    // the point of the first download because that is when the reason for it is obvious;
+    // asking on page open would be a prompt with no context.
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* Declined is survivable: the download still runs, just quietly. */ }
 
     // Which list the tab strip is showing.
     //
@@ -597,6 +616,11 @@ fun DetailScreen(
                                     horizontalPadding = contentPadding,
                                     onPlay = { onPlay(it, 0L) },
                                     modifier = Modifier.padding(bottom = 20.dp),
+                                    downloadStatus = downloadStatus,
+                                    onDownload = viewModel::requestDownload,
+                                    onPauseDownload = { viewModel.pauseDownload(it.url) },
+                                    onResumeDownload = { viewModel.resumeDownload(it.url) },
+                                    onDeleteDownload = { viewModel.deleteDownload(it.url) },
                                 )
                             }
                         }
@@ -763,6 +787,25 @@ fun DetailScreen(
                 }
             }
         }
+
+        // Outside the `when`, so it survives the screen going from loaded to reloading -
+        // resolving streams is a network call, and a transient reload must not close a
+        // prompt the user is reading.
+        DownloadQualityDialog(
+            state = downloadPicker,
+            onPick = { stream ->
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        android.Manifest.permission.POST_NOTIFICATIONS,
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                }
+                viewModel.confirmDownload(stream)
+            },
+            onDismiss = viewModel::dismissDownloadPicker,
+        )
     }
 }
 

@@ -55,6 +55,8 @@ import space.nicart.watchbox.ui.components.WbWatchedBadge
 import java.text.DateFormat
 import java.util.Date
 import androidx.compose.runtime.mutableIntStateOf
+import space.nicart.watchbox.ui.download.EpisodeDownloadButton
+import space.nicart.watchbox.ui.download.EpisodeDownloadStatus
 
 /**
  * Episode list.
@@ -90,6 +92,17 @@ fun EpisodeList(
     horizontalPadding: Dp,
     onPlay: (EpisodeEntry) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Per-episode download state, keyed by episode URL.
+     *
+     * Empty disables the control entirely, which is what the phone's own reviews-and-extras
+     * callers want - they render an episode list without a download surface.
+     */
+    downloadStatus: Map<String, EpisodeDownloadStatus> = emptyMap(),
+    onDownload: ((EpisodeEntry) -> Unit)? = null,
+    onPauseDownload: ((EpisodeEntry) -> Unit)? = null,
+    onResumeDownload: ((EpisodeEntry) -> Unit)? = null,
+    onDeleteDownload: ((EpisodeEntry) -> Unit)? = null,
 ) {
     if (isLoading) {
         Row(
@@ -178,6 +191,11 @@ fun EpisodeList(
                 currentUrl = currentUrl,
                 horizontalPadding = horizontalPadding,
                 onPlay = onPlay,
+                downloadStatus = downloadStatus,
+                onDownload = onDownload,
+                onPauseDownload = onPauseDownload,
+                onResumeDownload = onResumeDownload,
+                onDeleteDownload = onDeleteDownload,
             )
         } else {
             EpisodeTextList(
@@ -186,6 +204,11 @@ fun EpisodeList(
                 currentUrl = currentUrl,
                 horizontalPadding = horizontalPadding,
                 onPlay = onPlay,
+                downloadStatus = downloadStatus,
+                onDownload = onDownload,
+                onPauseDownload = onPauseDownload,
+                onResumeDownload = onResumeDownload,
+                onDeleteDownload = onDeleteDownload,
             )
         }
     }
@@ -277,6 +300,11 @@ private fun EpisodeThumbnailRow(
     horizontalPadding: Dp,
     onPlay: (EpisodeEntry) -> Unit,
     modifier: Modifier = Modifier,
+    downloadStatus: Map<String, EpisodeDownloadStatus> = emptyMap(),
+    onDownload: ((EpisodeEntry) -> Unit)? = null,
+    onPauseDownload: ((EpisodeEntry) -> Unit)? = null,
+    onResumeDownload: ((EpisodeEntry) -> Unit)? = null,
+    onDeleteDownload: ((EpisodeEntry) -> Unit)? = null,
 ) {
     val listState = rememberLazyListState()
 
@@ -299,6 +327,11 @@ private fun EpisodeThumbnailRow(
                 watched = episode.url in watchedUrls,
                 isCurrent = episode.url == currentUrl,
                 onClick = { onPlay(episode) },
+                downloadStatus = downloadStatus[episode.url],
+                onDownload = onDownload?.let { { it(episode) } },
+                onPauseDownload = onPauseDownload?.let { { it(episode) } },
+                onResumeDownload = onResumeDownload?.let { { it(episode) } },
+                onDeleteDownload = onDeleteDownload?.let { { it(episode) } },
             )
         }
     }
@@ -310,6 +343,11 @@ private fun EpisodeThumbnailCard(
     watched: Boolean,
     isCurrent: Boolean,
     onClick: () -> Unit,
+    downloadStatus: EpisodeDownloadStatus? = null,
+    onDownload: (() -> Unit)? = null,
+    onPauseDownload: (() -> Unit)? = null,
+    onResumeDownload: (() -> Unit)? = null,
+    onDeleteDownload: (() -> Unit)? = null,
 ) {
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
@@ -365,6 +403,21 @@ private fun EpisodeThumbnailCard(
                 .align(Alignment.TopEnd)
                 .padding(8.dp),
         )
+
+        // Bottom right: the watched badge holds the top right, and the title block runs
+        // along the bottom left, so this is the one free corner of the card.
+        if (onDownload != null) {
+            EpisodeDownloadButton(
+                status = downloadStatus,
+                onDownload = onDownload,
+                onPause = onPauseDownload ?: {},
+                onResume = onResumeDownload ?: {},
+                onDelete = onDeleteDownload ?: {},
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp),
+            )
+        }
 
         Column(
             modifier = Modifier
@@ -438,6 +491,11 @@ private fun EpisodeTextList(
     horizontalPadding: Dp,
     onPlay: (EpisodeEntry) -> Unit,
     modifier: Modifier = Modifier,
+    downloadStatus: Map<String, EpisodeDownloadStatus> = emptyMap(),
+    onDownload: ((EpisodeEntry) -> Unit)? = null,
+    onPauseDownload: ((EpisodeEntry) -> Unit)? = null,
+    onResumeDownload: ((EpisodeEntry) -> Unit)? = null,
+    onDeleteDownload: ((EpisodeEntry) -> Unit)? = null,
 ) {
     Column(
         modifier = modifier
@@ -451,6 +509,11 @@ private fun EpisodeTextList(
                 watched = episode.url in watchedUrls,
                 isCurrent = episode.url == currentUrl,
                 onClick = { onPlay(episode) },
+                downloadStatus = downloadStatus[episode.url],
+                onDownload = onDownload?.let { { it(episode) } },
+                onPauseDownload = onPauseDownload?.let { { it(episode) } },
+                onResumeDownload = onResumeDownload?.let { { it(episode) } },
+                onDeleteDownload = onDeleteDownload?.let { { it(episode) } },
             )
         }
     }
@@ -462,6 +525,11 @@ private fun EpisodeTextRow(
     watched: Boolean,
     isCurrent: Boolean,
     onClick: () -> Unit,
+    downloadStatus: EpisodeDownloadStatus? = null,
+    onDownload: (() -> Unit)? = null,
+    onPauseDownload: (() -> Unit)? = null,
+    onResumeDownload: (() -> Unit)? = null,
+    onDeleteDownload: (() -> Unit)? = null,
 ) {
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
@@ -531,6 +599,18 @@ private fun EpisodeTextRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+
+        // Ahead of the watched badge, which is a status rather than a control and reads
+        // better at the far edge.
+        if (onDownload != null) {
+            EpisodeDownloadButton(
+                status = downloadStatus,
+                onDownload = onDownload,
+                onPause = onPauseDownload ?: {},
+                onResume = onResumeDownload ?: {},
+                onDelete = onDeleteDownload ?: {},
+            )
         }
 
         WbWatchedBadge(visible = watched)

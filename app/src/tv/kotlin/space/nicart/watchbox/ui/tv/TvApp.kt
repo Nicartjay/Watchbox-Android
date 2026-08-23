@@ -101,6 +101,8 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
                     repository = container.repository,
                     store = container.store,
                     countryResolver = container.countryResolver,
+                    downloads = container.downloadController,
+                    downloadStorage = container.downloadStorage,
                     sourceId = route.sourceId,
                     animeUrl = route.animeUrl,
                 ),

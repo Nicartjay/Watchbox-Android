@@ -18,6 +18,16 @@ import space.nicart.watchbox.data.remote.Trailer
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.domain.friendlyMessage
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import space.nicart.watchbox.domain.StreamOption
+import space.nicart.watchbox.download.DownloadController
+import space.nicart.watchbox.download.DownloadStorage
+import space.nicart.watchbox.ui.download.DownloadPickerState
+import space.nicart.watchbox.ui.download.EpisodeDownloadStatus
+import space.nicart.watchbox.ui.download.buildStatusMap
+import androidx.media3.common.util.UnstableApi
 
 data class DetailUiState(
     val isLoading: Boolean = true,
@@ -79,10 +89,17 @@ data class DetailUiState(
         }
 }
 
+/**
+ * Marked because the download controller it holds is built on Media3's offline API, which is
+ * annotated unstable in its entirety.
+ */
+@UnstableApi
 class DetailViewModel(
     private val repository: AnimeRepository,
     private val store: WatchBoxStore,
     private val countryResolver: CountryResolver,
+    private val downloads: DownloadController,
+    private val downloadStorage: DownloadStorage,
     private val sourceId: Long,
     private val animeUrl: String,
 ) : ViewModel() {
@@ -90,13 +107,47 @@ class DetailViewModel(
     private var suggestionsJob: Job? = null
     private var extrasJob: Job? = null
     private var trailerJob: Job? = null
+    private var downloadResolveJob: Job? = null
 
     private val _uiState = MutableStateFlow(DetailUiState())
     val uiState: StateFlow<DetailUiState> = _uiState.asStateFlow()
 
+    private val _picker = MutableStateFlow<DownloadPickerState>(DownloadPickerState.Hidden)
+
+    /** The download quality prompt, shown when an episode's download button is pressed. */
+    val picker: StateFlow<DownloadPickerState> = _picker.asStateFlow()
+
+    /**
+     * Per-episode download status, keyed by episode URL.
+     *
+     * Combines the registry with the engine's live progress, because neither alone can say
+     * what an episode's button should look like: one knows whether a download exists, the
+     * other how far it has got.
+     */
+    val downloadStatus: StateFlow<Map<String, EpisodeDownloadStatus>> = combine(
+        store.downloads,
+        downloads.progress,
+    ) { entries, progress ->
+        buildStatusMap(
+            entries = entries,
+            progress = progress,
+            sourceId = sourceId,
+            animeUrl = animeUrl,
+            mountedVolumes = downloadStorage.volumes().map { it.id }.toSet(),
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyMap(),
+    )
+
     init {
         load()
         observeStoredState()
+        // Safe to call repeatedly; it latches internally. Done here rather than at app
+        // startup so the download database is only opened once downloads are actually in
+        // view, which most sessions never do.
+        downloads.start()
     }
 
     private fun load() {
@@ -292,17 +343,104 @@ class DetailViewModel(
 
     fun retry() = load()
 
+    // ------------------------------------------------------------ downloads
+
+    /**
+     * Resolves the streams for [episode] and opens the quality prompt.
+     *
+     * The same call the player makes, and just as slow - the source resolves every server
+     * inside one opaque request - so the prompt opens on a spinner rather than after one.
+     */
+    fun requestDownload(episode: EpisodeEntry) {
+        downloadResolveJob?.cancel()
+        _picker.value = DownloadPickerState.Resolving(episode.url)
+
+        downloadResolveJob = viewModelScope.launch {
+            repository.streams(sourceId, episode.url)
+                .onSuccess { streams ->
+                    // Dropped if the prompt was dismissed while this was in flight, so a
+                    // late result cannot reopen a dialog the user closed.
+                    val pending = _picker.value
+                    if (pending !is DownloadPickerState.Resolving ||
+                        pending.episodeUrl != episode.url
+                    ) {
+                        return@onSuccess
+                    }
+
+                    _picker.value = if (streams.isEmpty()) {
+                        DownloadPickerState.Failed(NO_STREAMS)
+                    } else {
+                        DownloadPickerState.Ready(
+                            episodeUrl = episode.url,
+                            episodeLabel = episode.displayName,
+                            streams = streams,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _picker.value = DownloadPickerState.Failed(error.friendlyMessage())
+                }
+        }
+    }
+
+    /** Queues the chosen stream and closes the prompt. */
+    fun confirmDownload(stream: StreamOption) {
+        val pending = _picker.value as? DownloadPickerState.Ready ?: return
+        val detail = _uiState.value.detail ?: return
+        val episode = detail.episodes.firstOrNull { it.url == pending.episodeUrl } ?: return
+
+        downloads.enqueue(
+            sourceId = sourceId,
+            animeUrl = animeUrl,
+            title = detail.title,
+            posterUrl = detail.posterUrl,
+            sourceName = detail.sourceName,
+            episode = episode,
+            stream = stream,
+        )
+        _picker.value = DownloadPickerState.Hidden
+    }
+
+    fun dismissDownloadPicker() {
+        downloadResolveJob?.cancel()
+        _picker.value = DownloadPickerState.Hidden
+    }
+
+    fun pauseDownload(episodeUrl: String) =
+        downloads.pause(downloadKey(episodeUrl))
+
+    fun resumeDownload(episodeUrl: String) =
+        downloads.resume(downloadKey(episodeUrl))
+
+    fun deleteDownload(episodeUrl: String) =
+        downloads.remove(downloadKey(episodeUrl))
+
+    private fun downloadKey(episodeUrl: String) = "$sourceId::$animeUrl::$episodeUrl"
+
     companion object {
         fun factory(
             repository: AnimeRepository,
             store: WatchBoxStore,
             countryResolver: CountryResolver,
+            downloads: DownloadController,
+            downloadStorage: DownloadStorage,
             sourceId: Long,
             animeUrl: String,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                DetailViewModel(repository, store, countryResolver, sourceId, animeUrl) as T
+                DetailViewModel(
+                    repository,
+                    store,
+                    countryResolver,
+                    downloads,
+                    downloadStorage,
+                    sourceId,
+                    animeUrl,
+                ) as T
         }
     }
 }
+
+/** Shown when a source resolves but offers nothing downloadable. */
+private const val NO_STREAMS = "This source returned no downloadable streams."

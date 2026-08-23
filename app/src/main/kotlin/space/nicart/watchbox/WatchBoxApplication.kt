@@ -39,6 +39,7 @@ import space.nicart.watchbox.download.DownloadEngine
 import space.nicart.watchbox.download.DownloadNotifications
 import space.nicart.watchbox.download.DownloadStorage
 import space.nicart.watchbox.download.DownloadStreamResolver
+import space.nicart.watchbox.download.MediaDownloadService
 
 /**
  * Application + service locator.
@@ -55,6 +56,7 @@ class WatchBoxApplication : Application(), ImageLoaderFactory {
     lateinit var container: AppContainer
         private set
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
 
@@ -82,6 +84,11 @@ class WatchBoxApplication : Application(), ImageLoaderFactory {
                 container.store.currentSettings().castForceProxy,
             )
         }
+
+        // Created eagerly and cheaply: posting a notification to a channel that does not
+        // exist is dropped silently, and the service posts its first one before any UI has
+        // had a chance to create it.
+        MediaDownloadService.ensureChannel(this)
 
         // The artwork language is observed, not read once.
         //
