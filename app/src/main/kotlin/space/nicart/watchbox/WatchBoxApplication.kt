@@ -34,6 +34,11 @@ import space.nicart.watchbox.domain.SubtitleRepository
 import space.nicart.watchbox.extension.installExtensionInjekt
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
+import space.nicart.watchbox.download.DownloadController
+import space.nicart.watchbox.download.DownloadEngine
+import space.nicart.watchbox.download.DownloadNotifications
+import space.nicart.watchbox.download.DownloadStorage
+import space.nicart.watchbox.download.DownloadStreamResolver
 
 /**
  * Application + service locator.
@@ -119,6 +124,14 @@ class WatchBoxApplication : Application(), ImageLoaderFactory {
         .build()
 }
 
+/**
+ * Opted in for the download engine.
+ *
+ * Media3 marks its whole offline API unstable, and the container holds three of its types.
+ * Applied to the container rather than to each property because a constructor call cannot be
+ * covered by a `@get:` annotation - the initialiser runs outside the getter.
+ */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class AppContainer(
     application: Application,
     val networkHelper: NetworkHelper,
@@ -214,4 +227,45 @@ class AppContainer(
     val updateChecker = UpdateChecker(plainClient, BuildConfig.VERSION_NAME)
 
     val updateInstaller = UpdateInstaller(application, plainClient)
+
+    // ------------------------------------------------------------ downloads
+    //
+    // Media3's offline API is marked unstable, so the declarations that touch its types
+    // opt in explicitly. See the annotation on this class.
+
+    val downloadStorage = DownloadStorage(application)
+
+    val downloadNotifications = DownloadNotifications(application)
+
+    /**
+     * Resolves a download's stream afresh whenever it is needed.
+     *
+     * Shares the one repository, so a resolve for a download goes through the same extension
+     * instance and cookie jar as one for playback - a source that sets a cookie on the
+     * manifest request needs the download's segment requests to carry it too.
+     */
+    private val downloadStreamResolver = DownloadStreamResolver(repository)
+
+    /**
+     * The download engine.
+     *
+     * Constructed here but not started: `manager()` opens a database and scans the cache
+     * index, which most sessions never need, so the first caller pays for it.
+     */
+    val downloadEngine = DownloadEngine(
+        context = application,
+        storage = downloadStorage,
+        resolver = downloadStreamResolver,
+    )
+
+    /**
+     * What the UI talks to. Nothing else in the app touches the engine directly.
+     */
+    val downloadController = DownloadController(
+        context = application,
+        engine = downloadEngine,
+        store = store,
+        storage = downloadStorage,
+        resolver = downloadStreamResolver,
+    )
 }

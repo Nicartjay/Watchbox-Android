@@ -1,0 +1,20 @@
+<!--
+  Notification icon for downloads.
+
+  A status-bar icon is drawn as a mask: only the alpha channel survives, so this is a solid
+  white glyph on transparency rather than a coloured drawable. Anything with fill colours
+  would arrive as a flat white square.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,3L12,13.2L8.4,9.6L7,11L12,16L17,11L15.6,9.6L12,13.2L12,3Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M5,18L19,18L19,20L5,20Z" />
+</vector>

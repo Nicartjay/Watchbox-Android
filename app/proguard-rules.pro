@@ -156,6 +156,13 @@
 # ------------------------------------------------------------------- Media3
 -dontwarn androidx.media3.**
 
+# The download service is named in AndroidManifest.xml and started by Media3 from
+# that name, so R8 must not rename or remove it. The scheduler's JobService is
+# declared the same way and reached only from the manifest, so it needs the same
+# treatment - without these, downloads fail only in a release build.
+-keep class space.nicart.watchbox.download.MediaDownloadService { *; }
+-keep class androidx.media3.exoplayer.scheduler.PlatformScheduler$PlatformSchedulerService { *; }
+
 # --------------------------------------------------------------------- Coil
 -dontwarn coil.**
 

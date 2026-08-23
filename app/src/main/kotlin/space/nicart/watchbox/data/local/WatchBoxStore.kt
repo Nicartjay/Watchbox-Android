@@ -52,6 +52,8 @@ class WatchBoxStore(context: Context) {
                 preferredQuality = prefs[Keys.QUALITY] ?: "1080",
                 autoplayTrailers = prefs[Keys.AUTOPLAY_TRAILERS] ?: true,
                 trailerMuteButton = prefs[Keys.TRAILER_MUTE_BUTTON] ?: false,
+                downloadVolume = prefs[Keys.DOWNLOAD_VOLUME],
+                downloadWifiOnly = prefs[Keys.DOWNLOAD_WIFI_ONLY] ?: true,
                 nsfwSourcesEnabled = prefs[Keys.NSFW] ?: false,
                 autoCheckUpdates = prefs[Keys.AUTO_UPDATE_CHECK] ?: true,
                 lastUpdateCheck = prefs[Keys.LAST_UPDATE_CHECK] ?: 0L,
@@ -317,6 +319,69 @@ class WatchBoxStore(context: Context) {
 
     suspend fun clearWatchlist() = store.edit { it.remove(Keys.WATCHLIST) }
 
+    // ------------------------------------------------------------ downloads
+
+    /**
+     * The download registry.
+     *
+     * An index over the files on disk rather than the record of them. The filesystem is the
+     * authority: [decodeList] resolves a malformed blob to an empty list, which for history
+     * costs nothing that cannot be re-watched but here would orphan real gigabytes, so the
+     * reconciler cross-checks this against what is actually present at startup.
+     */
+    val downloads: Flow<List<DownloadEntry>> = store.data
+        .catch { emit(androidx.datastore.preferences.core.emptyPreferences()) }
+        .map { prefs -> decodeList(prefs[Keys.DOWNLOADS]) }
+
+    /**
+     * Upsert by [DownloadEntry.key].
+     *
+     * Called on state transitions only - queued, started, finished, failed - and never on
+     * byte progress. Every write here rewrites the whole preferences blob and re-emits to
+     * each collector in the app, so per-second progress would make the registry the most
+     * expensive thing in the process.
+     */
+    suspend fun saveDownload(entry: DownloadEntry) = store.edit { prefs ->
+        val current = decodeList<DownloadEntry>(prefs[Keys.DOWNLOADS])
+        val merged = buildList {
+            add(entry)
+            addAll(current.filter { it.key != entry.key })
+        }.take(DownloadEntry.MAX_ENTRIES)
+        prefs[Keys.DOWNLOADS] = json.encodeToString(merged)
+    }
+
+    suspend fun removeDownload(key: String) = store.edit { prefs ->
+        val current = decodeList<DownloadEntry>(prefs[Keys.DOWNLOADS])
+        prefs[Keys.DOWNLOADS] = json.encodeToString(current.filter { it.key != key })
+    }
+
+    /** Replaces the whole registry. For the reconciler, which rewrites it as one set. */
+    suspend fun replaceDownloads(entries: List<DownloadEntry>) = store.edit { prefs ->
+        prefs[Keys.DOWNLOADS] = json.encodeToString(entries.take(DownloadEntry.MAX_ENTRIES))
+    }
+
+    suspend fun clearDownloads() = store.edit { it.remove(Keys.DOWNLOADS) }
+
+    /** One-shot read, for the reconciler and for state transitions. */
+    suspend fun currentDownloads(): List<DownloadEntry> = downloads.first()
+
+    suspend fun downloadFor(
+        sourceId: Long,
+        animeUrl: String,
+        episodeUrl: String,
+    ): DownloadEntry? = downloads.first().firstOrNull {
+        it.sourceId == sourceId && it.animeUrl == animeUrl && it.episodeUrl == episodeUrl
+    }
+
+    /** Volume downloads are written to; null until the user has chosen one. */
+    suspend fun setDownloadVolume(volumeId: String) = store.edit {
+        it[Keys.DOWNLOAD_VOLUME] = volumeId
+    }
+
+    suspend fun setDownloadWifiOnly(enabled: Boolean) = store.edit {
+        it[Keys.DOWNLOAD_WIFI_ONLY] = enabled
+    }
+
     // --------------------------------------------------------- search terms
 
     val recentSearches: Flow<List<String>> = store.data
@@ -388,6 +453,9 @@ class WatchBoxStore(context: Context) {
         val TV_SOURCE = longPreferencesKey("tv_selected_source")
         val HISTORY = stringPreferencesKey("watch_history")
         val WATCHLIST = stringPreferencesKey("watchlist")
+        val DOWNLOADS = stringPreferencesKey("downloads")
+        val DOWNLOAD_VOLUME = stringPreferencesKey("download_volume")
+        val DOWNLOAD_WIFI_ONLY = booleanPreferencesKey("download_wifi_only")
         val RECENT_SEARCHES = stringPreferencesKey("recent_searches")
     }
 }
@@ -430,6 +498,21 @@ data class AppSettings(
      * so enabling it cannot cause sound to play unprompted.
      */
     val trailerMuteButton: Boolean = false,
+    /**
+     * Which volume downloads are written to, or null for the default.
+     *
+     * Null rather than the internal volume's own id, so a device that gains an SD card
+     * later is not pinned to internal by a value written before the card existed.
+     */
+    val downloadVolume: String? = null,
+    /**
+     * Restrict downloads to Wi-Fi.
+     *
+     * On by default. An episode is measured in gigabytes - one real source label advertises
+     * a 66 GB file - so the default has to be the one that cannot quietly spend a metered
+     * allowance.
+     */
+    val downloadWifiOnly: Boolean = true,
     val nsfwSourcesEnabled: Boolean = false,
     val autoCheckUpdates: Boolean = true,
     val lastUpdateCheck: Long = 0L,

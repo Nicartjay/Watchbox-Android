@@ -79,6 +79,28 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!--
+      Offline downloads. A multi-gigabyte file cannot be tied to a visible activity, so
+      the work runs in a foreground service with a notification that says so.
+
+      DATA_SYNC is the type Android requires for this from API 34; declaring the base
+      permission alone is rejected at service start there. POST_NOTIFICATIONS is only
+      needed from API 33 - the service itself still runs without it, but its progress
+      notification is silently dropped, so the download looks like nothing is happening.
+
+      RECEIVE_BOOT_COMPLETED lets an unfinished queue resume after a restart. Without it
+      the queue simply waits until the app is opened again, which is a degradation rather
+      than a failure.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+        tools:targetApi="34" />
+    <uses-permission
+        android:name="android.permission.POST_NOTIFICATIONS"
+        tools:targetApi="33" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!--
       Deliberately absent: QUERY_ALL_PACKAGES. Extensions live in this app's
       private storage, so package enumeration is never required.
     -->
@@ -152,5 +174,33 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!--
+          Offline downloads. Media3 starts this by name from DownloadService, so R8 has to
+          keep it - see the download rules in proguard-rules.pro.
+
+          dataSync is the foreground service type Android requires for a long transfer from
+          API 34; the service is refused at start there without it. Not exported: nothing
+          outside the app has any business starting a download.
+        -->
+        <service
+            android:name=".download.MediaDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync">
+            <intent-filter>
+                <action android:name="androidx.media3.exoplayer.downloadService.action.RESTART" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
+        <!--
+          Resumes an unfinished queue after a reboot, and waits for the network requirement
+          to be met. Media3 ships the JobService; it only needs declaring, with the bind
+          permission the platform requires of every job.
+        -->
+        <service
+            android:name="androidx.media3.exoplayer.scheduler.PlatformScheduler$PlatformSchedulerService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
     </application>
 </manifest>

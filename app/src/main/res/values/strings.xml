@@ -217,6 +217,11 @@
     <string name="detail_trailer_unmute">Unmute trailer</string>
     <string name="detail_trailer_mute">Mute trailer</string>
 
+    <!-- Downloads -->
+    <string name="download_channel_name">Downloads</string>
+    <string name="download_waiting_wifi">Waiting for Wi\u2011Fi</string>
+    <string name="download_waiting_network">Waiting for a connection</string>
+
     <string name="settings_data">Data</string>
     <string name="settings_clear_history">Clear watch history</string>
     <string name="settings_clear_list">Clear My List</string>
