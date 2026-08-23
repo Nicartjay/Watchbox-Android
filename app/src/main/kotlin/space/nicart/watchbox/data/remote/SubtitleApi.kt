@@ -67,11 +67,18 @@ class SubtitleApi(private val client: HttpClient) {
     private suspend fun searchLegacy(query: SubtitleQuery): List<SubtitleResult> {
         val imdb = query.imdbId?.removePrefix("tt")?.takeIf { it.isNotBlank() } ?: return emptyList()
 
+        // Refused rather than sent. An unrecognised language used to be lowercased and pasted
+        // straight into the path, which for a source's own track label ("English",
+        // "Portuguese (Brazil)") produced a segment the endpoint does not know - or, with a
+        // space or bracket in it, a URL that would not parse at all.
+        val lang = query.language.toIso639_2()
+        if (lang.isBlank()) return emptyList()
+
         val segments = buildList {
             if (query.episode != null) add("episode-${query.episode}")
             add("imdbid-$imdb")
             if (query.season != null) add("season-${query.season}")
-            add("sublanguageid-${query.language.toIso639_2()}")
+            add("sublanguageid-$lang")
         }
 
         val response = client.get("$LEGACY_BASE/search/${segments.joinToString("/")}") {
@@ -94,7 +101,11 @@ class SubtitleApi(private val client: HttpClient) {
             if (query.tmdbId == null) query.imdbId?.let { add("imdb_id=${it.removePrefix("tt")}") }
             query.season?.let { add("season_number=$it") }
             query.episode?.let { add("episode_number=$it") }
-            add("languages=${query.language.lowercase()}")
+            // The REST catalogue indexes by two-letter code, so a name or a regional tag has
+            // to be reduced before it is sent.
+            val lang = query.language.toIso639_1()
+            if (lang.isBlank()) return emptyList()
+            add("languages=$lang")
         }
         if (params.isEmpty()) return emptyList()
 
@@ -292,8 +303,69 @@ class SubtitleApi(private val client: HttpClient) {
             "hu" to "hun", "ro" to "rum", "uk" to "ukr", "fa" to "per", "ms" to "may",
         )
 
-        internal fun String.toIso639_2(): String =
-            ISO_639_2[lowercase()] ?: lowercase()
+        /**
+         * English names for the languages above, because a source labels its embedded tracks
+         * for people rather than for an API.
+         *
+         * Selecting one of those tracks stores its label as the preferred language, and that
+         * value is what a later online search is built from - so a track called "English"
+         * produced `sublanguageid-english`, which is not a code the endpoint knows. Worse, some
+         * labels are not URL-safe at all: "Portuguese (Brazil)" put brackets and a space into a
+         * path segment, the URL failed to parse, and the request went to a nonsense host -
+         * reported as "Unable to resolve host" rather than as a bad language.
+         */
+        private val NAME_TO_ISO_639_1 = mapOf(
+            "english" to "en", "spanish" to "es", "french" to "fr", "german" to "de",
+            "italian" to "it", "portuguese" to "pt", "russian" to "ru", "japanese" to "ja",
+            "korean" to "ko", "chinese" to "zh", "arabic" to "ar", "hindi" to "hi",
+            "indonesian" to "id", "thai" to "th", "vietnamese" to "vi", "turkish" to "tr",
+            "polish" to "pl", "dutch" to "nl", "swedish" to "sv", "danish" to "da",
+            "finnish" to "fi", "norwegian" to "no", "czech" to "cs", "greek" to "el",
+            "hebrew" to "he", "hungarian" to "hu", "romanian" to "ro", "ukrainian" to "uk",
+            "persian" to "fa", "malay" to "ms",
+        )
+
+        /**
+         * Reduces whatever was stored to a two-letter code, or empty when it cannot be.
+         *
+         * Three shapes turn up. A code (`en`) and a regional code (`pt-BR`, indexed by its
+         * base) are already usable. An English name is not: a source labels its embedded
+         * tracks for people, and selecting one stored that label as the preferred language.
+         *
+         * Empty only for something that is neither - a name nobody mapped. That case cannot be
+         * passed through, because the unsafe characters in a label like
+         * "Portuguese (Brazil)" made the URL itself unparseable and the request went to a
+         * nonsense host.
+         */
+        internal fun String.toIso639_1(): String {
+            val cleaned = trim().lowercase()
+            if (cleaned.isEmpty()) return ""
+
+            val base = cleaned.substringBefore('-').substringBefore('_')
+            if (base.length == 2 && base.all(Char::isLetter)) return base
+            if (base.length == 3 && base.all(Char::isLetter)) {
+                ISO_639_2.entries.firstOrNull { it.value == base }?.let { return it.key }
+            }
+
+            return NAME_TO_ISO_639_1[cleaned.substringBefore('(').trim()].orEmpty()
+        }
+
+        /**
+         * The three-letter code the legacy endpoint wants.
+         *
+         * A short alphabetic token it does not recognise is still passed through: the endpoint
+         * reads an unknown value as no language filter, which returns too much but is better
+         * than refusing to ask. Anything that would not survive being put in a path segment is
+         * refused instead - that is the case that produced an unresolvable host rather than a
+         * bad result.
+         */
+        internal fun String.toIso639_2(): String {
+            val code = toIso639_1()
+            if (code.isNotEmpty()) return ISO_639_2[code] ?: code
+
+            val cleaned = trim().lowercase()
+            return if (cleaned.length in 2..3 && cleaned.all(Char::isLetter)) cleaned else ""
+        }
 
         /** How many results a search returns at most. */
         internal const val MAX_RESULTS_LIMIT = MAX_RESULTS

@@ -24,6 +24,7 @@ import space.nicart.watchbox.domain.SubtitleRepository
 import androidx.media3.common.util.UnstableApi
 import space.nicart.watchbox.download.DownloadEngine
 import space.nicart.watchbox.data.local.DownloadEntry
+import space.nicart.watchbox.data.remote.SubtitleApi.Companion.toIso639_1
 
 /**
  * The online subtitle search, as a state machine.
@@ -234,7 +235,27 @@ class PlayerViewModel(
     init {
         viewModelScope.launch {
             val settings = store.currentSettings()
-            subtitleLanguage = settings.subtitleLanguage
+
+            // Repaired on read, not just on write.
+            //
+            // Earlier builds stored a source's own track label here - "English",
+            // "Portuguese (Brazil)" - and that value is what every online search was built
+            // from, so a device carrying one would stay broken however the write path is
+            // fixed. Reducing it to a code here heals it in place; "off" is passed through
+            // because it is a state rather than a language.
+            val stored = settings.subtitleLanguage
+            subtitleLanguage = when {
+                stored.equals("off", ignoreCase = true) -> stored
+                stored.toIso639_1().isNotBlank() -> stored.toIso639_1()
+                // Unrecognisable, so the default is better than a value known to fail.
+                else -> DEFAULT_SUBTITLE_LANGUAGE
+            }
+
+            // Written back only when it actually changed, so this costs nothing on a device
+            // that was never affected.
+            if (subtitleLanguage != stored) {
+                store.setSubtitleLanguage(subtitleLanguage)
+            }
             _uiState.value = _uiState.value.copy(
                 autoPlayNext = settings.autoPlayNext,
                 backgroundPlayback = settings.backgroundPlayback,
@@ -456,11 +477,33 @@ class PlayerViewModel(
 
     fun selectSubtitle(index: Int) {
         _uiState.value = _uiState.value.copy(selectedSubtitleIndex = index)
-        val language = _uiState.value.subtitles.getOrNull(index)?.language
+
+        // Normalised before it is stored, because this comes from the source's own track label
+        // and those are written for people: "English", "Portuguese (Brazil)". Stored verbatim,
+        // that value became the preferred language for every later online search, which then
+        // asked the catalogue for a language named rather than coded - so picking an embedded
+        // track silently broke subtitle search from then on.
+        //
+        // An unrecognised label leaves the stored preference alone rather than overwriting it
+        // with something unusable: the track still plays, and a language that cannot be coded
+        // is no basis for a search.
+        val raw = _uiState.value.subtitles.getOrNull(index)?.language
+        val code = raw?.toIso639_1().orEmpty()
+
         // Only a real language updates the search default: "off" is a state, not a language,
         // and letting it through would make a later search have nothing to look for.
-        language?.takeIf { it.isNotBlank() }?.let { subtitleLanguage = it }
-        viewModelScope.launch { store.setSubtitleLanguage(language ?: "off") }
+        if (code.isNotBlank()) subtitleLanguage = code
+
+        viewModelScope.launch {
+            store.setSubtitleLanguage(
+                when {
+                    raw == null -> "off"
+                    code.isNotBlank() -> code
+                    // Nothing usable, so what was already stored is kept.
+                    else -> subtitleLanguage.ifBlank { DEFAULT_SUBTITLE_LANGUAGE }
+                },
+            )
+        }
         refreshOffsetCues()
     }
 

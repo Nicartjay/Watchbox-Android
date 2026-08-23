@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import space.nicart.watchbox.data.remote.SubtitleApi.Companion.toIso639_1
 import space.nicart.watchbox.data.remote.SubtitleApi.Companion.toIso639_2
 
 /**
@@ -100,6 +101,49 @@ class SubtitleApiTest {
     fun `an unmapped language code passes through unchanged`() {
         assertEquals("xyz", "xyz".toIso639_2())
         assertEquals("eng", "eng".toIso639_2())
+    }
+
+    /**
+     * The bug this guards: a source labels its embedded tracks for people, and selecting one
+     * stored that label as the preferred language. Every later online search was then built
+     * from a name rather than a code, so it found nothing - and a label carrying a space or a
+     * bracket made the URL itself unparseable, which surfaced as "unable to resolve host".
+     */
+    @Test
+    fun `an English track label reduces to a code`() {
+        assertEquals("en", "English".toIso639_1())
+        assertEquals("pt", "Portuguese".toIso639_1())
+        assertEquals("ja", "Japanese".toIso639_1())
+        assertEquals("eng", "English".toIso639_2())
+    }
+
+    /** A label naming a region still identifies the language the catalogue indexes. */
+    @Test
+    fun `a regional label or code reduces to its base language`() {
+        assertEquals("pt", "Portuguese (Brazil)".toIso639_1())
+        assertEquals("pt", "pt-BR".toIso639_1())
+        assertEquals("pt", "pt_BR".toIso639_1())
+        assertEquals("por", "pt-BR".toIso639_2())
+    }
+
+    /** A three-letter code is already what the legacy endpoint wants. */
+    @Test
+    fun `a three-letter code maps back to its two-letter form`() {
+        assertEquals("en", "eng".toIso639_1())
+        assertEquals("ja", "jpn".toIso639_1())
+    }
+
+    /**
+     * Refused rather than passed through, unlike an unknown short code: these are the values
+     * that cannot go in a URL path at all, and sending one produced a request to a host that
+     * does not exist instead of an empty result.
+     */
+    @Test
+    fun `an unusable language is refused`() {
+        assertEquals("", "Klingon (Reformed)".toIso639_2())
+        assertEquals("", "".toIso639_2())
+        assertEquals("", "  ".toIso639_2())
+        assertEquals("", "Some Unknown Language".toIso639_1())
     }
 
     @Test
