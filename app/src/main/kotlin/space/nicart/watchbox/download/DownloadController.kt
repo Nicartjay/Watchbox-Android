@@ -20,6 +20,9 @@ import space.nicart.watchbox.data.local.DownloadState
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.domain.StreamOption
+import space.nicart.watchbox.data.remote.SubtitleQuery
+import space.nicart.watchbox.domain.AnimeRepository
+import space.nicart.watchbox.domain.SubtitleRepository
 
 /**
  * The app's handle on downloading.
@@ -41,6 +44,15 @@ class DownloadController(
     private val store: WatchBoxStore,
     private val storage: DownloadStorage,
     private val resolver: DownloadStreamResolver,
+    private val repository: AnimeRepository,
+    /**
+     * Online subtitles, for downloads that should work with no network at all.
+     *
+     * Nullable so the engine can be built without it - a download with no subtitle is a
+     * working download, and the search is the one part of this that depends on a third-party
+     * service being reachable.
+     */
+    private val subtitleRepository: SubtitleRepository? = null,
 ) {
 
     private val scope = CoroutineScope(Dispatchers.IO)
@@ -135,6 +147,60 @@ class DownloadController(
                     /* foreground = */ false,
                 )
             }
+
+            // After the video is queued, not before. A subtitle is a courtesy; failing to find
+            // one must not stop the download the user actually asked for, and the search is a
+            // network round-trip that would otherwise delay it.
+            fetchSubtitle(entry, episode)
+        }
+    }
+
+    /**
+     * Fetches a subtitle in the preferred language for a queued download.
+     *
+     * Best-effort throughout. No match, no IMDb or TMDB id to search with, a provider that is
+     * down - each ends with the download having no external subtitle, which is the same
+     * position as before this ran. Source-embedded tracks are unaffected: they travel inside
+     * the media and need no help.
+     *
+     * The file is written beside the video rather than into the subtitle cache, which is
+     * emptied at every episode change and would take an offline copy with it.
+     */
+    private suspend fun fetchSubtitle(entry: DownloadEntry, episode: EpisodeEntry) {
+        val subtitles = subtitleRepository ?: return
+        val settings = store.currentSettings()
+        val language = settings.subtitleLanguage.takeIf { it.isNotBlank() } ?: return
+
+        runCatching {
+            val detail = repository.detail(entry.sourceId, entry.animeUrl).getOrNull()
+            val isSeries = detail?.isMovie == false
+
+            val query = SubtitleQuery(
+                imdbId = detail?.imdbId,
+                tmdbId = detail?.tmdbId,
+                // Null for a film, which the catalogue holds as a single entry with no
+                // season - sending either field filters every result away.
+                season = if (isSeries) episode.season ?: 1 else null,
+                episode = if (isSeries) episode.number.takeIf { it >= 0f }?.toInt() else null,
+                language = language,
+                title = entry.title,
+            )
+            if (query.isUnusable) return@runCatching
+
+            val results = subtitles.search(query)
+            val best = subtitles.bestMatch(results, language) ?: return@runCatching
+
+            val option = subtitles.downloadForOffline(
+                result = best,
+                targetDir = storage.subtitleDir(entry.volumeId, entry.key),
+            ) ?: return@runCatching
+
+            // Re-read rather than reusing the entry captured above: the download may have
+            // started, or finished, while the search was in flight.
+            val current = entryFor(entry.key) ?: return@runCatching
+            store.saveDownload(
+                current.copy(subtitlePaths = current.subtitlePaths + option.url),
+            )
         }
     }
 
@@ -171,12 +237,16 @@ class DownloadController(
     /** Cancels a download and deletes whatever it had written. */
     fun remove(key: String) {
         scope.launch {
+            // Volume read before the entry goes, since it names where the sidecar files are.
+            val volumeId = entryFor(key)?.volumeId
+
             DownloadService.sendRemoveDownload(
                 context,
                 MediaDownloadService::class.java,
                 key,
                 /* foreground = */ false,
             )
+            storage.deleteSubtitles(volumeId, key)
             store.removeDownload(key)
         }
     }

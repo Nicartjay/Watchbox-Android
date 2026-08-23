@@ -274,5 +274,7 @@ class AppContainer(
         store = store,
         storage = downloadStorage,
         resolver = downloadStreamResolver,
+        repository = repository,
+        subtitleRepository = subtitleRepository,
     )
 }

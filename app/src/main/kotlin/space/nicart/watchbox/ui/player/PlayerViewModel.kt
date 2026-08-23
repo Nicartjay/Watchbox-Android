@@ -299,11 +299,29 @@ class PlayerViewModel(
                         ?.indexOfFirst { it.language.equals(subtitleLang, true) }
                         ?: -1
 
+                    // A subtitle fetched when this episode was downloaded, if there was
+                    // one. Added here rather than searched for again: it is already on disk
+                    // beside the video, and an offline copy that needed the network to find
+                    // its own subtitle would not be much of an offline copy.
+                    val offlineSubtitles = store
+                        .downloadFor(sourceId, animeUrl, episode.url)
+                        ?.subtitlePaths
+                        .orEmpty()
+                        .map { path ->
+                            SubtitleOption(
+                                label = OFFLINE_SUBTITLE_LABEL,
+                                url = path,
+                                language = store.currentSettings().subtitleLanguage,
+                                isExternal = true,
+                            )
+                        }
+
                     _uiState.value = _uiState.value.copy(
                         isResolving = false,
                         streams = streams,
                         selectedStream = chosen,
                         selectedSubtitleIndex = subtitleIndex,
+                        externalSubtitles = offlineSubtitles,
                         errorMessage = if (chosen == null) NO_STREAM else null,
                     )
 
@@ -772,3 +790,6 @@ class PlayerViewModel(
 }
 
 private const val TAG = "WbPlayer"
+
+/** Names a subtitle that came down with the download rather than being searched for. */
+private const val OFFLINE_SUBTITLE_LABEL = "Downloaded"

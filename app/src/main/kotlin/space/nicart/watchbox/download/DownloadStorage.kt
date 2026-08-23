@@ -72,6 +72,24 @@ class DownloadStorage(private val context: Context) {
         volumeId == null || volumes().any { it.id == volumeId }
 
     /**
+     * Where an episode's subtitle files are kept.
+     *
+     * A sibling of the media cache, not inside it: Media3 owns that directory and prunes
+     * anything absent from its own index, so a subtitle placed there would be deleted without
+     * warning. Named from the download's key so the files can be found again, and removed with
+     * it.
+     */
+    fun subtitleDir(volumeId: String?, downloadKey: String): File {
+        val safe = downloadKey.map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
+        return File(File(resolveRoot(volumeId), SUBTITLE_DIR), safe).apply { mkdirs() }
+    }
+
+    /** Deletes an episode's subtitle files. Called when its download is removed. */
+    fun deleteSubtitles(volumeId: String?, downloadKey: String) {
+        runCatching { subtitleDir(volumeId, downloadKey).deleteRecursively() }
+    }
+
+    /**
      * Total bytes occupied by downloaded media across every mounted volume.
      *
      * Walked rather than summed from the registry, because the filesystem is the authority:
@@ -100,6 +118,14 @@ class DownloadStorage(private val context: Context) {
          * are kept outside it.
          */
         const val DIR = "downloads"
+
+        /**
+         * Subtitles, beside the media cache rather than within it.
+         *
+         * Counted in [usedBytes] because it sits under the same root, which is correct - these
+         * files exist only for the downloads they belong to.
+         */
+        const val SUBTITLE_DIR = "subtitles"
     }
 }
 

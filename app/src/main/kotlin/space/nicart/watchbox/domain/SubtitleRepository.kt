@@ -64,6 +64,47 @@ class SubtitleRepository(
     }
 
     /**
+     * Downloads [result] into permanent storage, for an episode being kept offline.
+     *
+     * The one case where a subtitle must outlive the cache. [download] puts files in
+     * `cacheDir` on the reasoning that a subtitle is disposable because it can be fetched
+     * again - which is exactly untrue for an offline copy, whose whole purpose is to work with
+     * no network. It would also be deleted by [clearCache] at the end of the next episode.
+     *
+     * Returns null on failure, so the caller can record a download without a subtitle rather
+     * than one that silently plays none.
+     */
+    suspend fun downloadForOffline(result: SubtitleResult, targetDir: File): SubtitleOption? {
+        val key = store.currentSettings().subtitleApiKey
+        val file = api.download(result, targetDir.apply { mkdirs() }, key) ?: return null
+
+        return SubtitleOption(
+            label = result.displayLabel(),
+            url = file.toURI().toString(),
+            language = result.language,
+            isExternal = true,
+        )
+    }
+
+    /**
+     * The best match for [language] among [results], or null when none is close enough.
+     *
+     * Exact language first, then the base language of a regional tag - `pt-BR` satisfies a
+     * request for `pt`, since a subtitle in the wrong dialect is far better than none. The
+     * ranking within a language is the API's own, which is by download count, so this takes
+     * the most-used file rather than guessing at release names.
+     */
+    fun bestMatch(results: List<SubtitleResult>, language: String): SubtitleResult? {
+        if (results.isEmpty() || language.isBlank()) return null
+
+        val exact = results.firstOrNull { it.language.equals(language, ignoreCase = true) }
+        if (exact != null) return exact
+
+        val base = language.substringBefore('-')
+        return results.firstOrNull { it.language.substringBefore('-').equals(base, true) }
+    }
+
+    /**
      * Fetches and parses a subtitle into cues, for timing adjustment.
      *
      * Needed only when a timing offset is applied. ExoPlayer reports cues through
