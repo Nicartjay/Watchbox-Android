@@ -179,6 +179,14 @@ class DownloadController(
                         else -> null
                     },
                 )
+                // The download's own key, not the URL.
+                //
+                // This is what makes a download findable again. Cache entries are keyed by URL
+                // by default, and these URLs are signed and expire in about two minutes - so
+                // the key a download was written under could never be recomputed, and playback
+                // looked straight past a file that was sitting on disk. Keyed by episode
+                // instead, which is stable for as long as the download is.
+                .setCustomCacheKey(entry.key)
                 .build()
 
             withContext(Dispatchers.Main) {
@@ -261,10 +269,40 @@ class DownloadController(
     }
 
     /** Resumes a paused download, re-resolving its URL first. */
+    /**
+     * Resumes a paused download, or restarts one that cannot be resumed.
+     *
+     * A pause is a stop reason and is lifted by clearing it. A download orphaned by the old
+     * URL-based cache key is a different case: its bytes are unreachable, so un-stopping it
+     * would resume onto data nothing can read. Those are removed and re-added from scratch,
+     * which needs a fresh resolve because the URL it was queued with is long expired.
+     */
     fun resume(key: String) {
         scope.launch {
             val entry = entryFor(key) ?: return@launch
             resolver.setActive(entry.sourceId, entry.episodeUrl, entry.streamLabel)
+
+            val stale = runCatching {
+                engine.manager().downloadIndex.getDownload(key)
+            }.getOrNull()?.request?.customCacheKey == null &&
+                entry.state == DownloadState.FAILED
+
+            if (stale) {
+                // Cleared first, or the re-added request merges with the unreadable entry
+                // already in the index and inherits its key.
+                withContext(Dispatchers.Main) {
+                    DownloadService.sendRemoveDownload(
+                        context,
+                        MediaDownloadService::class.java,
+                        key,
+                        /* foreground = */ false,
+                    )
+                }
+                store.saveDownload(entry.copy(state = DownloadState.QUEUED, sizeBytes = 0L))
+                requeue(entry)
+                return@launch
+            }
+
             DownloadService.sendSetStopReason(
                 context,
                 MediaDownloadService::class.java,
@@ -273,6 +311,42 @@ class DownloadController(
                 /* foreground = */ false,
             )
             store.saveDownload(entry.copy(state = DownloadState.QUEUED))
+        }
+    }
+
+    /**
+     * Re-queues a download from its stored label, resolving a fresh URL first.
+     *
+     * Used where the original request cannot be reused - a stale cache key, or a URL that has
+     * expired past the point the data source can refresh it.
+     */
+    private suspend fun requeue(entry: DownloadEntry) {
+        val streams = repository.streams(entry.sourceId, entry.episodeUrl).getOrNull()
+        val match = streams?.let { matchLabel(it, entry.streamLabel) }
+
+        if (match == null) {
+            store.saveDownload(entry.copy(state = DownloadState.FAILED))
+            return
+        }
+
+        val request = DownloadRequest.Builder(entry.key, android.net.Uri.parse(match.url))
+            .setMimeType(
+                when {
+                    match.isHls -> MimeTypes.APPLICATION_M3U8
+                    match.isDash -> MimeTypes.APPLICATION_MPD
+                    else -> null
+                },
+            )
+            .setCustomCacheKey(entry.key)
+            .build()
+
+        withContext(Dispatchers.Main) {
+            DownloadService.sendAddDownload(
+                context,
+                MediaDownloadService::class.java,
+                request,
+                /* foreground = */ false,
+            )
         }
     }
 
@@ -355,10 +429,24 @@ class DownloadController(
             // and an entry pointing at nothing is worse than no entry at all.
             val download = known[entry.key] ?: return@mapNotNull null
 
+            // Downloads written before the cache key was stable are unplayable.
+            //
+            // Cache entries used to be keyed by the stream URL, and those URLs are signed and
+            // expire - so the bytes are on disk under a key nothing can recompute. There is no
+            // migration available: the key cannot be derived from an expired URL. Marked failed
+            // rather than left looking complete, so the row offers a retry that will work
+            // instead of playback that cannot.
+            val orphaned = download.state == Download.STATE_COMPLETED &&
+                download.request.customCacheKey == null
+
             entry.copy(
-                state = download.state.toDownloadState(),
+                state = if (orphaned) {
+                    DownloadState.FAILED
+                } else {
+                    download.state.toDownloadState()
+                },
                 sizeBytes = download.bytesDownloaded,
-                completedAt = if (download.state == Download.STATE_COMPLETED) {
+                completedAt = if (download.state == Download.STATE_COMPLETED && !orphaned) {
                     entry.completedAt.takeIf { it > 0 } ?: System.currentTimeMillis()
                 } else {
                     entry.completedAt

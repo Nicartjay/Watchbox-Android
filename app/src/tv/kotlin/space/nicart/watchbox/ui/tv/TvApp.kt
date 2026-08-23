@@ -134,6 +134,7 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
                     container.subtitleRepository,
                     container.skipRepository,
                     container.store,
+                    container.downloadEngine,
                     route.sourceId,
                     route.animeUrl,
                     route.episodeUrl,

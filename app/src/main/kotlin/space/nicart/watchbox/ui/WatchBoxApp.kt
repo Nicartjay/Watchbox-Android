@@ -182,6 +182,7 @@ fun WatchBoxApp(
                         subtitles = container.subtitleRepository,
                         skips = container.skipRepository,
                         store = container.store,
+                        downloadEngine = container.downloadEngine,
                         sourceId = route.sourceId,
                         animeUrl = route.animeUrl,
                         episodeUrl = route.episodeUrl,

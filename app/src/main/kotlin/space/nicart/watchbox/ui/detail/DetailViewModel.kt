@@ -28,6 +28,7 @@ import space.nicart.watchbox.ui.download.DownloadPickerState
 import space.nicart.watchbox.ui.download.EpisodeDownloadStatus
 import space.nicart.watchbox.ui.download.buildStatusMap
 import androidx.media3.common.util.UnstableApi
+import space.nicart.watchbox.domain.AnimeStatus
 
 data class DetailUiState(
     val isLoading: Boolean = true,
@@ -172,12 +173,69 @@ class DetailViewModel(
                     loadTrailer(detail)
                 }
                 .onFailure { error ->
+                    // Falls back to what has been downloaded before reporting a failure.
+                    //
+                    // Fetching the detail needs the network, so with none the page showed an
+                    // error and an empty episode list even where every episode on it was
+                    // already on disk. Rebuilt from the registry instead, which is enough to
+                    // list and play them - it holds the title, the poster and one entry per
+                    // downloaded episode.
+                    val offline = offlineDetail()
+                    if (offline != null) {
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            detail = offline,
+                            errorMessage = null,
+                        )
+                        return@onFailure
+                    }
+
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         errorMessage = error.friendlyMessage(),
                     )
                 }
         }
+    }
+
+    /**
+     * A detail assembled from downloaded episodes, for when the source cannot be reached.
+     *
+     * Deliberately sparse. There is no overview, no artwork beyond the poster already stored
+     * and no season structure, because none of that was kept - only what a download needs to be
+     * listed and opened. Returns null when nothing has been downloaded for this title, so the
+     * real error is reported rather than an empty page.
+     */
+    private suspend fun offlineDetail(): AnimeDetail? {
+        val entries = store.currentDownloads()
+            .filter { it.sourceId == sourceId && it.animeUrl == animeUrl && it.isComplete }
+            .sortedBy { it.episodeNumber }
+        if (entries.isEmpty()) return null
+
+        val first = entries.first()
+        return AnimeDetail(
+            sourceId = sourceId,
+            url = animeUrl,
+            title = first.title,
+            posterUrl = first.posterUrl,
+            sourceName = first.sourceName,
+            description = "",
+            author = null,
+            artist = null,
+            genres = emptyList(),
+            // Unknown rather than guessed: nothing about a download says whether the show
+            // has finished airing.
+            status = AnimeStatus.UNKNOWN,
+            episodes = entries.map { entry ->
+                EpisodeEntry(
+                    url = entry.episodeUrl,
+                    name = entry.episodeName,
+                    number = entry.episodeNumber,
+                    dateUpload = 0L,
+                    scanlator = null,
+                )
+            },
+        )
     }
 
     /** Keeps the action row honest as the user watches or saves elsewhere. */

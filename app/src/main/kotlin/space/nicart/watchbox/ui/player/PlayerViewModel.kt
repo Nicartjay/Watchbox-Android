@@ -21,6 +21,9 @@ import space.nicart.watchbox.domain.SubtitleOption
 import space.nicart.watchbox.data.remote.SkipInterval
 import space.nicart.watchbox.domain.SkipRepository
 import space.nicart.watchbox.domain.SubtitleRepository
+import androidx.media3.common.util.UnstableApi
+import space.nicart.watchbox.download.DownloadEngine
+import space.nicart.watchbox.data.local.DownloadEntry
 
 /**
  * The online subtitle search, as a state machine.
@@ -102,6 +105,13 @@ data class PlayerUiState(
      * looking for should outlive that.
      */
     val externalSubtitles: List<SubtitleOption> = emptyList(),
+    /**
+     * Cache key for a downloaded episode, or null when streaming.
+     *
+     * Handed to the media item so the cache can find bytes written under a URL that has since
+     * expired. Null means the URL is live and the default URL keying is correct.
+     */
+    val offlineCacheKey: String? = null,
     val subtitleSearch: SubtitleSearchState = SubtitleSearchState.Idle,
     /**
      * Opening/ending intervals for this episode, empty when none are known.
@@ -179,11 +189,13 @@ data class PlayerUiState(
  * return are usually signed and short-lived, so reusing an old one across an
  * episode change tends to 403.
  */
+@UnstableApi
 class PlayerViewModel(
     private val repository: AnimeRepository,
     private val subtitles: SubtitleRepository,
     private val skips: SkipRepository,
     private val store: WatchBoxStore,
+    private val downloadEngine: DownloadEngine,
     private val sourceId: Long,
     private val animeUrl: String,
     private val initialEpisodeUrl: String,
@@ -233,6 +245,28 @@ class PlayerViewModel(
     }
 
     private suspend fun loadDetail() {
+        // The downloaded copy first, before anything reaches the network.
+        //
+        // A download is meant to be watchable with the aeroplane on, and this is the point
+        // where that either works or does not: loading the detail is a network call, so
+        // resolving it first meant an offline episode failed before its own file was ever
+        // considered. It also means an online viewer with a download plays it from disk rather
+        // than paying for the stream a second time.
+        val offline = offlineEntry()
+        if (offline != null) {
+            playOffline(offline)
+            // The detail is still fetched, because episode navigation and the skip markers
+            // need it - but it is no longer on the path to playing, so failing is survivable.
+            repository.detail(sourceId, animeUrl).onSuccess { detail ->
+                _uiState.value = _uiState.value.copy(
+                    detail = detail,
+                    episode = detail.episodes.firstOrNull { it.url == initialEpisodeUrl }
+                        ?: _uiState.value.episode,
+                )
+            }
+            return
+        }
+
         repository.detail(sourceId, animeUrl)
             .onSuccess { detail ->
                 val episode = detail.episodes.firstOrNull { it.url == initialEpisodeUrl }
@@ -255,6 +289,63 @@ class PlayerViewModel(
                     errorMessage = error.message ?: "Could not load this title.",
                 )
             }
+    }
+
+    /** The completed download for the episode being opened, or null. */
+    private suspend fun offlineEntry(): DownloadEntry? = offlineEntryFor(initialEpisodeUrl)
+
+    /** The completed, present-on-disk download for [episodeUrl], or null. */
+    private suspend fun offlineEntryFor(episodeUrl: String): DownloadEntry? {
+        val entry = store.downloadFor(sourceId, animeUrl, episodeUrl) ?: return null
+        if (!entry.isComplete) return null
+        // The registry can outlive the bytes - a cleared cache, a pulled card - so the engine
+        // is asked as well. Believing the registry alone would offer a file that is not there
+        // and fail with no way back to streaming.
+        if (!downloadEngine.isDownloaded(entry.key)) return null
+        return entry
+    }
+
+    /**
+     * Plays a downloaded episode from disk.
+     *
+     * No extension call and no resolve. The stream it builds carries the download's cache key
+     * rather than a live URL, which is what lets the cache match bytes written under a URL that
+     * has long since expired; the URI is only a placeholder for the cache to key against and is
+     * never fetched while the download is complete.
+     */
+    private fun playOffline(entry: DownloadEntry) {
+        val episode = EpisodeEntry(
+            url = entry.episodeUrl,
+            name = entry.episodeName,
+            number = entry.episodeNumber,
+            dateUpload = 0L,
+            scanlator = null,
+        )
+
+        val stream = StreamOption(
+            label = entry.streamLabel.ifBlank { OFFLINE_STREAM_LABEL },
+            url = entry.episodeUrl,
+            headers = emptyMap(),
+            subtitles = entry.subtitlePaths.map { path ->
+                SubtitleOption(
+                    label = OFFLINE_SUBTITLE_LABEL,
+                    url = path,
+                    language = subtitleLanguage,
+                    isExternal = true,
+                )
+            },
+            audioTracks = emptyList(),
+            resolution = 0,
+        )
+
+        _uiState.value = _uiState.value.copy(
+            isResolving = false,
+            episode = _uiState.value.episode ?: episode,
+            streams = listOf(stream),
+            selectedStream = stream,
+            offlineCacheKey = entry.key,
+            errorMessage = null,
+        )
     }
 
     private fun resolve(episode: EpisodeEntry) {
@@ -691,7 +782,19 @@ class PlayerViewModel(
         // subtitle URL as already loaded and never refetch. Some sources reuse a URL
         // shape per episode, so this is not hypothetical.
         cuesLoadedFor = null
-        resolve(episode)
+
+        // The downloaded copy first here as well, or moving to the next episode of a show that
+        // was downloaded whole would go back to the network for one that is already on disk -
+        // and fail outright with no connection.
+        viewModelScope.launch {
+            val offline = offlineEntryFor(episode.url)
+            if (offline != null) {
+                playOffline(offline)
+                refreshOffsetCues()
+            } else {
+                resolve(episode)
+            }
+        }
     }
 
     fun nextEpisode() {
@@ -769,6 +872,7 @@ class PlayerViewModel(
             subtitles: SubtitleRepository,
             skips: SkipRepository,
             store: WatchBoxStore,
+            downloadEngine: DownloadEngine,
             sourceId: Long,
             animeUrl: String,
             episodeUrl: String,
@@ -780,6 +884,7 @@ class PlayerViewModel(
                 subtitles = subtitles,
                 skips = skips,
                 store = store,
+                downloadEngine = downloadEngine,
                 sourceId = sourceId,
                 animeUrl = animeUrl,
                 initialEpisodeUrl = episodeUrl,
@@ -793,3 +898,6 @@ private const val TAG = "WbPlayer"
 
 /** Names a subtitle that came down with the download rather than being searched for. */
 private const val OFFLINE_SUBTITLE_LABEL = "Downloaded"
+
+/** Shown in the quality panel for a stream being played from disk. */
+private const val OFFLINE_STREAM_LABEL = "Downloaded"

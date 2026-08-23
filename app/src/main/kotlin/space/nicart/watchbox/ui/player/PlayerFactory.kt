@@ -123,6 +123,14 @@ object PlayerFactory {
         stream: StreamOption,
         subtitles: List<SubtitleOption>,
         title: String,
+        /**
+         * The key a download of this episode was cached under, when there is one.
+         *
+         * Without it the cache is keyed by URL, and these URLs are signed and expire, so a
+         * downloaded episode could never be matched back to its bytes - playback looked past a
+         * file already on disk and fetched it again.
+         */
+        cacheKey: String? = null,
     ): MediaItem {
         val subtitleConfigs = subtitles.map { subtitle ->
             MediaItem.SubtitleConfiguration.Builder(android.net.Uri.parse(subtitle.url))
@@ -150,6 +158,7 @@ object PlayerFactory {
                 },
             )
             .setSubtitleConfigurations(subtitleConfigs)
+            .setCustomCacheKey(cacheKey)
             .setMediaMetadata(
                 androidx.media3.common.MediaMetadata.Builder()
                     .setTitle(title)

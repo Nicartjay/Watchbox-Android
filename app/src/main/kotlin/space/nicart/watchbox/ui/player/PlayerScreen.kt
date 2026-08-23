@@ -649,6 +649,10 @@ fun PlayerScreen(
                 stream = stream,
                 subtitles = state.subtitles,
                 title = state.title,
+                // Present only for a downloaded episode, and the reason its bytes can be
+                // found: the cache was written under this key rather than under the URL,
+                // which has long since expired.
+                cacheKey = state.offlineCacheKey,
             ),
         )
         exoPlayer.prepare()

@@ -154,6 +154,10 @@ class DownloadEngine(
             // so anything written here would be kept forever and counted as a download the
             // user never asked for.
             .setCacheWriteDataSinkFactory(null)
+            // Matches what the downloader wrote under. A DataSpec carries the key when the
+            // caller set one, and falls back to the URL otherwise - which for a signed,
+            // expiring URL means never matching anything.
+            .setCacheKeyFactory { spec -> spec.key ?: spec.uri.toString() }
     }
 
     /** Whether [key] has a complete download in the cache. */
