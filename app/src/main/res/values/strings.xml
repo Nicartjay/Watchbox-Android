@@ -219,6 +219,8 @@
 
     <!-- Downloads -->
     <string name="download_channel_name">Downloads</string>
+    <string name="download_notification_title">Downloading</string>
+    <string name="download_notification_generic">1 episode</string>
     <string name="download_waiting_wifi">Waiting for Wi\u2011Fi</string>
     <string name="download_waiting_network">Waiting for a connection</string>
     <string name="download_action_start">Download</string>

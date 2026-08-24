@@ -463,6 +463,7 @@ class DownloadController(
             }
 
             _progress.value = _progress.value - entry.key
+            stopFfmpegServiceIfIdle()
 
             val current = entryFor(entry.key) ?: entry
             if (ok) {
@@ -493,6 +494,18 @@ class DownloadController(
      */
     fun pause(key: String) {
         scope.launch {
+            // A remuxed download has no pause. It is one ffmpeg invocation with no resume point,
+            // and the stop-reason commands below go to Media3's service, which has never heard of
+            // it - so the state flipped to PAUSED in the registry while ffmpeg carried on
+            // downloading. The UI showed paused, the network meter showed otherwise.
+            //
+            // Refused rather than turned into a cancel: pause and discard are different
+            // intentions, and silently throwing away a part-finished transfer because the only
+            // available verb was "stop" is worse than declining.
+            if (entryFor(key)?.isRemuxed == true) {
+                android.util.Log.i(TAG, "pause refused for remuxed download $key")
+                return@launch
+            }
             DownloadService.sendSetStopReason(
                 context,
                 MediaDownloadService::class.java,
@@ -516,6 +529,19 @@ class DownloadController(
     fun resume(key: String) {
         scope.launch {
             val entry = entryFor(key) ?: return@launch
+
+            // A remuxed download cannot be resumed either, for the same reason. One that is
+            // already running is left alone; one that failed is started again from nothing,
+            // which is the only thing an ffmpeg session can do.
+            if (entry.isRemuxed) {
+                if (ffmpeg.isRunning(key)) {
+                    android.util.Log.i(TAG, "resume ignored: $key is already running")
+                    return@launch
+                }
+                android.util.Log.i(TAG, "restarting remuxed download $key from the beginning")
+                restartRemuxed(entry)
+                return@launch
+            }
             // Registered without seeded headers, deliberately: a resume happens long after the
             // stream was resolved, so the headers stored then may be as stale as the URL. The
             // first request resolves fresh ones, and requeue() seeds them for the rest.
@@ -790,6 +816,123 @@ class DownloadController(
         }
 
         store.replaceDownloads(reconciled)
+    }
+
+    /**
+     * Keeps a remuxed download's progress and state honest.
+     *
+     * Its byte count comes from ffmpeg's statistics callback, which is silent while the screen is
+     * off - so progress froze mid-download and stayed frozen after waking, even though the
+     * transfer never stopped. Reading the file's own size fixes that without depending on any
+     * callback arriving.
+     *
+     * It also catches a session whose completion never ran. That is what left a download sitting
+     * at QUEUED while its bytes were still growing, and then appearing to finish all at once much
+     * later.
+     */
+    private suspend fun reconcileRemuxedProgress() {
+        val running = store.currentDownloads().filter { it.isRemuxed && !it.isComplete }
+        if (running.isEmpty()) return
+
+        running.forEach { entry ->
+            val file = storage.remuxFile(entry.volumeId, entry.key)
+            val size = file.length()
+
+            if (ffmpeg.isRunning(entry.key)) {
+                // Size from disk, percentage left as the callback last reported it: the file
+                // says how much has arrived, not how far through the timeline that is.
+                val previous = _progress.value[entry.key]
+                if (size > 0 && size != previous?.bytesDownloaded) {
+                    _progress.value = _progress.value + (
+                        entry.key to DownloadProgress(
+                            percent = previous?.percent ?: 0f,
+                            bytesDownloaded = size,
+                        )
+                        )
+                }
+
+                // The state can be stale too, if the session outlived a pause that never
+                // reached it.
+                if (entry.state != DownloadState.DOWNLOADING) {
+                    store.saveDownload(entry.copy(state = DownloadState.DOWNLOADING))
+                }
+                return@forEach
+            }
+
+            // No session and no file: nothing is happening, and something claimed otherwise.
+            if (size <= 0L) {
+                if (entry.state == DownloadState.DOWNLOADING) {
+                    store.saveDownload(entry.copy(state = DownloadState.FAILED))
+                }
+                return@forEach
+            }
+
+            // A file with no session behind it is finished, whether or not the completion
+            // handler got to run - the process may have been killed between the two.
+            _progress.value = _progress.value - entry.key
+            store.saveDownload(
+                entry.copy(
+                    state = DownloadState.COMPLETED,
+                    sizeBytes = size,
+                    downloadUri = file.toURI().toString(),
+                    completedAt = entry.completedAt.takeIf { it > 0 }
+                        ?: System.currentTimeMillis(),
+                ),
+            )
+        }
+    }
+
+    /**
+     * Drops the foreground service once no ffmpeg session is left.
+     *
+     * Counted from the sessions themselves rather than from the registry: an entry can be marked
+     * complete a moment before or after its session ends, and stopping the service while another
+     * download is still running would throttle it exactly as before.
+     */
+    private suspend fun stopFfmpegServiceIfIdle() {
+        val stillRunning = store.currentDownloads().any { ffmpeg.isRunning(it.key) }
+        if (!stillRunning) {
+            withContext(Dispatchers.Main) { FfmpegDownloadService.stop(context) }
+        }
+    }
+
+    /** Starts a remuxed download over, the only recovery an ffmpeg session allows. */
+    private suspend fun restartRemuxed(entry: DownloadEntry) {
+        val streams = repository.streams(entry.sourceId, entry.episodeUrl).getOrNull()
+        val match = streams?.let { matchLabel(it, entry.streamLabel) }
+
+        if (match == null) {
+            store.saveDownload(entry.copy(state = DownloadState.FAILED))
+            return
+        }
+
+        runCatching { storage.remuxFile(entry.volumeId, entry.key).delete() }
+        store.saveDownload(entry.copy(state = DownloadState.DOWNLOADING, sizeBytes = 0L))
+
+        val target = storage.remuxFile(entry.volumeId, entry.key)
+        FfmpegDownloadService.start(context, entry.title)
+
+        val ok = ffmpeg.download(entry.key, match, target) { written, percent ->
+            _progress.value = _progress.value + (
+                entry.key to DownloadProgress(percent = percent, bytesDownloaded = written)
+                )
+        }
+
+        _progress.value = _progress.value - entry.key
+        stopFfmpegServiceIfIdle()
+        val current = entryFor(entry.key) ?: entry
+        store.saveDownload(
+            if (ok) {
+                current.copy(
+                    state = DownloadState.COMPLETED,
+                    sizeBytes = target.length(),
+                    downloadUri = target.toURI().toString(),
+                    completedAt = System.currentTimeMillis(),
+                )
+            } else {
+                current.copy(state = DownloadState.FAILED)
+            },
+        )
     }
 
     private suspend fun entryFor(key: String): DownloadEntry? =

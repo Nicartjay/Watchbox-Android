@@ -161,6 +161,7 @@
 # declared the same way and reached only from the manifest, so it needs the same
 # treatment - without these, downloads fail only in a release build.
 -keep class space.nicart.watchbox.download.MediaDownloadService { *; }
+-keep class space.nicart.watchbox.download.FfmpegDownloadService { *; }
 -keep class androidx.media3.exoplayer.scheduler.PlatformScheduler$PlatformSchedulerService { *; }
 
 # ------------------------------------------------------------------ FFmpeg

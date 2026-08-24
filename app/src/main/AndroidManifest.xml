@@ -194,6 +194,17 @@
         </service>
 
         <!--
+          Keeps an FFmpeg download alive while the app is backgrounded.
+          Separate from the Media3 service above because the two supervise different engines:
+          that one drives Media3's queue, this one an ffmpeg session running in-process. Without
+          it the process is throttled when the screen goes off and progress stops being reported.
+        -->
+        <service
+            android:name=".download.FfmpegDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!--
           Resumes an unfinished queue after a reboot, and waits for the network requirement
           to be met. Media3 ships the JobService; it only needs declaring, with the bind
           permission the platform requires of every job.

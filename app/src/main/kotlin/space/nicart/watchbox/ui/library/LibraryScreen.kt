@@ -239,6 +239,9 @@ private fun DownloadsTab(
                     totalBytes = live?.totalBytes ?: 0L,
                     unavailable = entry.volumeId.isNotBlank() &&
                         entry.volumeId !in state.mountedVolumes,
+                    // Without this the row offered a pause that could never reach an ffmpeg
+                    // session, so the state flipped to paused while the download carried on.
+                    isRemuxed = entry.isRemuxed,
                 ),
                 onPlay = { onPlay?.invoke(entry) },
                 onPause = { onPause(entry.key) },
