@@ -13,6 +13,8 @@ import androidx.media3.exoplayer.offline.DownloadManager
 import java.io.File
 import java.util.concurrent.Executors
 import androidx.media3.datasource.DataSource
+import space.nicart.watchbox.data.local.DOWNLOAD_CONCURRENCY_MAX
+import space.nicart.watchbox.data.local.DOWNLOAD_CONCURRENCY_MIN
 
 /**
  * The download engine, one per process.
@@ -58,6 +60,14 @@ class DownloadEngine(
     var volumeId: String? = null
         private set
 
+    /**
+     * How many downloads run at once.
+     *
+     * Held here as well as on the manager so it survives the manager being rebuilt on a volume
+     * change - otherwise switching storage would silently reset the queue to one at a time.
+     */
+    private var concurrency: Int = 1
+
     private var cache: SimpleCache? = null
     private var manager: DownloadManager? = null
 
@@ -69,6 +79,21 @@ class DownloadEngine(
      * touch a download at all.
      */
     fun manager(): DownloadManager = manager ?: build().also { manager = it }
+
+    /**
+     * Applies the concurrency preference, to a running queue as well as a future one.
+     *
+     * Set live rather than only at construction, because the manager is long-lived: a value
+     * applied only when it is built would appear to do nothing until the app was restarted.
+     */
+    fun useConcurrency(count: Int) {
+        val clamped = count.coerceIn(DOWNLOAD_CONCURRENCY_MIN, DOWNLOAD_CONCURRENCY_MAX)
+        if (clamped == concurrency) return
+        concurrency = clamped
+        // Only if one already exists. Touching manager() here would open the database purely to
+        // store a number, which is the work the lazy construction exists to avoid.
+        manager?.maxParallelDownloads = clamped
+    }
 
     /** Applies the stored volume preference. Must be called before [manager]. */
     fun useVolume(id: String?) {
@@ -93,9 +118,11 @@ class DownloadEngine(
             .setReadTimeoutMs(READ_TIMEOUT_MS)
             .setAllowCrossProtocolRedirects(true)
 
-        val upstream = ReResolvingDataSource.Factory(httpFactory) {
-            resolver.currentStream()
-        }
+        val upstream = ReResolvingDataSource.Factory(
+            upstreamFactory = httpFactory,
+            reResolve = { key -> resolver.currentStream(key) },
+            headersFor = { key -> resolver.headersFor(key) },
+        )
 
         // The downloader writes through the cache rather than to a file of its own: that is
         // what lets a segmented format be stored as the many parts it arrives in and still
@@ -114,10 +141,10 @@ class DownloadEngine(
             DefaultDownloadIndex(databaseProvider),
             downloaderFactory,
         ).apply {
-            // One at a time. Two large downloads sharing a connection each take twice as
-            // long to become usable, and on a television sharing bandwidth with playback
-            // the difference is watchable versus not.
-            maxParallelDownloads = 1
+            // From the stored preference. The default of one is deliberate - two large files
+            // sharing a connection each take twice as long to become watchable - but where the
+            // bottleneck is per-connection rather than the link, raising it genuinely helps.
+            maxParallelDownloads = concurrency
         }
     }
 
@@ -154,6 +181,19 @@ class DownloadEngine(
             // so anything written here would be kept forever and counted as a download the
             // user never asked for.
             .setCacheWriteDataSinkFactory(null)
+            // Fall through to the network when the cache cannot satisfy the request.
+            //
+            // Without this a *failed* download made its episode unplayable. The partial bytes
+            // it left are a real cache entry, so playback was served them, ran off the end of
+            // what was written, and could not fetch the rest because writing is disabled -
+            // reported as "cannot play this source". Changing server did not help, because the
+            // entry is keyed by episode rather than by server, and an episode that had never
+            // been downloaded played normally.
+            //
+            // The flag makes an incomplete or unreadable entry a miss rather than an error, so
+            // a half-downloaded episode streams instead of failing. A complete download is
+            // unaffected: it satisfies the request outright and never reaches the upstream.
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
             // Matches what the downloader wrote under. A DataSpec carries the key when the
             // caller set one, and falls back to the URL otherwise - which for a signed,
             // expiring URL means never matching anything.

@@ -40,6 +40,7 @@ import space.nicart.watchbox.download.DownloadNotifications
 import space.nicart.watchbox.download.DownloadStorage
 import space.nicart.watchbox.download.DownloadStreamResolver
 import space.nicart.watchbox.download.MediaDownloadService
+import space.nicart.watchbox.download.FfmpegDownloader
 
 /**
  * Application + service locator.
@@ -268,9 +269,13 @@ class AppContainer(
     /**
      * What the UI talks to. Nothing else in the app touches the engine directly.
      */
+    /** Remuxing downloader, for streams Media3 cannot fetch at all. */
+    val ffmpegDownloader = FfmpegDownloader(application)
+
     val downloadController = DownloadController(
         context = application,
         engine = downloadEngine,
+        ffmpeg = ffmpegDownloader,
         store = store,
         storage = downloadStorage,
         resolver = downloadStreamResolver,

@@ -4,6 +4,7 @@ import androidx.media3.common.util.UnstableApi
 import kotlinx.coroutines.runBlocking
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.StreamOption
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Turns a persisted download record back into a live stream.
@@ -24,33 +25,69 @@ class DownloadStreamResolver(
     private val repository: AnimeRepository,
 ) {
 
-    /** The download currently being worked on, set by the engine before it starts. */
-    @Volatile
-    private var active: ActiveDownload? = null
+    /**
+     * Every download that may need a URL resolved, keyed by its own key.
+     *
+     * A map rather than one slot, which is what it used to be. With several downloads running,
+     * each new one overwrote the slot, so a credential failure on any of the others re-resolved
+     * against the *last* episode queued - matching a label from the wrong episode, or finding
+     * nothing and aborting. Only whichever download happened to be last could recover, which is
+     * exactly the "one works, the rest fail" shape.
+     */
+    private val active = ConcurrentHashMap<String, ActiveDownload>()
 
-    fun setActive(sourceId: Long, episodeUrl: String, streamLabel: String) {
-        active = ActiveDownload(sourceId, episodeUrl, streamLabel)
-    }
+    /** Headers last resolved per download, so every segment does not re-resolve. */
+    private val headers = ConcurrentHashMap<String, Map<String, String>>()
 
-    fun clearActive() {
-        active = null
+    fun setActive(
+        key: String,
+        sourceId: Long,
+        episodeUrl: String,
+        streamLabel: String,
+        /**
+         * Headers already known for this download, from the resolve that queued it.
+         *
+         * Seeded here so the first request carries them without a second trip through the
+         * extension. A segmented download opens hundreds of connections; resolving for each one
+         * would make the download slower than streaming it.
+         */
+        knownHeaders: Map<String, String> = emptyMap(),
+    ) {
+        active[key] = ActiveDownload(sourceId, episodeUrl, streamLabel)
+        if (knownHeaders.isNotEmpty()) headers[key] = knownHeaders
     }
 
     /**
-     * A freshly resolved URL and headers for the active download.
+     * Headers to send for [key], without touching the network.
+     *
+     * Cached from the resolve that queued the download, or from the last refresh. Empty when
+     * nothing is known, which is correct for a source that needs none.
+     */
+    fun headersFor(key: String): Map<String, String> = headers[key].orEmpty()
+
+    fun clearActive(key: String) {
+        active.remove(key)
+        headers.remove(key)
+    }
+
+    /**
+     * A freshly resolved URL and headers for the download identified by [key].
      *
      * Blocking, because Media3's data source contract is synchronous and this is called from
      * a download thread that is already off the main thread. Returning null aborts the
      * attempt, which the engine surfaces as a failed download rather than retrying forever.
      */
-    fun currentStream(): ReResolvingDataSource.ResolvedStream? {
-        val target = active ?: return null
+    fun currentStream(key: String): ReResolvingDataSource.ResolvedStream? {
+        val target = active[key] ?: return null
 
         val streams = runBlocking {
             repository.streams(target.sourceId, target.episodeUrl).getOrNull()
         }.orEmpty()
 
         val match = matchLabel(streams, target.streamLabel) ?: return null
+
+        // Cached so the segments that follow this refresh do not each resolve again.
+        if (match.headers.isNotEmpty()) headers[key] = match.headers
 
         return ReResolvingDataSource.ResolvedStream(
             url = match.url,

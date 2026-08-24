@@ -20,11 +20,13 @@ import kotlinx.coroutines.withContext
 import space.nicart.watchbox.data.local.DownloadEntry
 import space.nicart.watchbox.data.local.DownloadState
 import space.nicart.watchbox.data.local.WatchBoxStore
-import space.nicart.watchbox.data.remote.SubtitleQuery
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.domain.StreamOption
 import space.nicart.watchbox.domain.SubtitleRepository
+import java.io.File
+import space.nicart.watchbox.domain.SubtitleOption
+import space.nicart.watchbox.data.remote.SubtitleResult
 
 /**
  * The app's handle on downloading.
@@ -43,6 +45,7 @@ import space.nicart.watchbox.domain.SubtitleRepository
 class DownloadController(
     private val context: Context,
     private val engine: DownloadEngine,
+    private val ffmpeg: FfmpegDownloader,
     private val store: WatchBoxStore,
     private val storage: DownloadStorage,
     private val resolver: DownloadStreamResolver,
@@ -78,6 +81,7 @@ class DownloadController(
         scope.launch {
             val settings = store.currentSettings()
             engine.useVolume(settings.downloadVolume)
+            engine.useConcurrency(settings.downloadConcurrency)
 
             val manager = engine.manager()
             manager.addListener(listener)
@@ -103,15 +107,13 @@ class DownloadController(
         while (true) {
             val active = manager.currentDownloads
 
-            if (active.isEmpty()) {
-                // Clear once rather than every tick, so a finished download's last reading
-                // does not linger and the map does not churn while idle.
-                if (_progress.value.isNotEmpty()) _progress.value = emptyMap()
-                delay(IDLE_POLL_MS)
-                continue
-            }
-
-            _progress.value = active.associate { download ->
+            // Merged into whatever is already there, never assigned over it.
+            //
+            // Two things write this map: this poller for Media3's queue, and the ffmpeg
+            // downloader for its own sessions. Replacing the map wholesale removed every ffmpeg
+            // entry twice a second, and its callback put them straight back - so a running
+            // remux flickered between its real size and nothing at all.
+            val media3 = active.associate { download ->
                 download.request.id to DownloadProgress(
                     percent = download.percentDownloaded.takeIf { it >= 0f } ?: 0f,
                     bytesDownloaded = download.bytesDownloaded,
@@ -122,11 +124,27 @@ class DownloadController(
                 )
             }
 
-            delay(ACTIVE_POLL_MS)
+            // Only this poller's own keys are dropped. An entry belonging to ffmpeg is left
+            // alone: the poller cannot see those downloads and so cannot know they have ended.
+            _progress.value = _progress.value
+                .filterKeys { it !in media3Keys || it in media3 }
+                .plus(media3)
+
+            media3Keys = media3.keys
+
+            delay(if (media3.isEmpty()) IDLE_POLL_MS else ACTIVE_POLL_MS)
         }
     }
 
     private var started = false
+
+    /**
+     * Keys the poller reported last time round.
+     *
+     * Kept so a finished Media3 download can be cleared without touching an ffmpeg entry, which
+     * this poller has no visibility of.
+     */
+    private var media3Keys: Set<String> = emptySet()
 
     /**
      * Queues [episode] for download at the quality [stream] names.
@@ -142,7 +160,34 @@ class DownloadController(
         sourceName: String,
         episode: EpisodeEntry,
         stream: StreamOption,
+        /**
+         * A subtitle the viewer chose at download time, for a stream carrying none of its own.
+         *
+         * Null when the stream supplies its own tracks - those are saved instead - or when the
+         * offer was declined.
+         */
+        subtitle: SubtitleResult? = null,
     ) {
+        // Two engines, split by format rather than by preference.
+        //
+        // FFmpeg takes anything segmented - HLS, DASH - and anything served through a proxy
+        // inside the extension. Media3 keeps plain progressive files.
+        //
+        // That split is from evidence, not taste. Media3's segment downloader fetches each
+        // segment, key and variant playlist as a separate request through its own data source,
+        // and these CDNs answered 403 to every one of them however the headers were applied -
+        // while the same episodes played perfectly and the rest of this ecosystem downloads them
+        // without trouble using FFmpeg. FFmpeg resolves the manifest and pulls the whole graph
+        // itself in one session, which is the part that works.
+        //
+        // The cost is real: an ffmpeg session cannot pause and cannot resume after a restart, so
+        // an interrupted segmented download starts again. Progressive files keep both, which is
+        // why they stay on Media3 rather than everything moving across.
+        if (stream.isLocalProxy || stream.isHls || stream.isDash) {
+            enqueueViaFfmpeg(sourceId, animeUrl, title, posterUrl, sourceName, episode, stream, subtitle)
+            return
+        }
+
         scope.launch {
             val settings = store.currentSettings()
             engine.useVolume(settings.downloadVolume)
@@ -172,7 +217,15 @@ class DownloadController(
             // The engine needs to know which download it is working on before the first
             // request, because the data source asks the resolver for headers rather than
             // being handed them.
-            resolver.setActive(sourceId, episode.url, stream.label)
+            resolver.setActive(
+                key = entry.key,
+                sourceId = sourceId,
+                episodeUrl = episode.url,
+                streamLabel = stream.label,
+                // From the resolve that produced this stream, so the first request
+                // already carries the Referer these CDNs check for.
+                knownHeaders = stream.headers,
+            )
 
             val request = DownloadRequest.Builder(entry.key, android.net.Uri.parse(stream.url))
                 // Declared, not sniffed. A manifest handed to the progressive downloader is
@@ -211,7 +264,10 @@ class DownloadController(
             // After the video is queued, not before. A subtitle is a courtesy; failing to find
             // one must not stop the download the user actually asked for, and the search is a
             // network round-trip that would otherwise delay it.
-            fetchSubtitle(entry, episode)
+            //
+            // The stream's own tracks are passed in because the choice between them and an
+            // online search is made from what this particular stream offers.
+            fetchSubtitles(entry, stream.subtitles, subtitle, stream.headers)
         }
     }
 
@@ -226,45 +282,215 @@ class DownloadController(
      * The file is written beside the video rather than into the subtitle cache, which is
      * emptied at every episode change and would take an offline copy with it.
      */
-    private suspend fun fetchSubtitle(entry: DownloadEntry, episode: EpisodeEntry) {
+    private suspend fun fetchSubtitles(
+        entry: DownloadEntry,
+        sourceTracks: List<SubtitleOption>,
+        chosen: SubtitleResult?,
+        streamHeaders: Map<String, String> = emptyMap(),
+    ) {
         val subtitles = subtitleRepository ?: return
-        val settings = store.currentSettings()
-        val language = settings.subtitleLanguage.takeIf { it.isNotBlank() } ?: return
+
+        // The source's own tracks first, and they were being lost entirely: an extension hands
+        // these over as sidecar URLs, the player shows them, and nothing saved them - so a
+        // downloaded episode arrived with no subtitles even where the source had supplied
+        // several. They are also the better file when present, being cut for this exact release
+        // rather than matched by title and episode.
+        val saved = saveSourceTracks(entry, sourceTracks, streamHeaders)
+        if (saved.isNotEmpty()) {
+            appendSubtitles(entry.key, saved)
+            return
+        }
+
+        // Otherwise whatever was chosen at download time. Nothing is searched for here: that
+        // happened in front of the viewer, who picked a specific file or declined - so there is
+        // no second guess to make behind their back.
+        val result = chosen ?: return
 
         runCatching {
-            val detail = repository.detail(entry.sourceId, entry.animeUrl).getOrNull()
-            val isSeries = detail?.isMovie == false
-
-            val query = SubtitleQuery(
-                imdbId = detail?.imdbId,
-                tmdbId = detail?.tmdbId,
-                // Null for a film, which the catalogue holds as a single entry with no
-                // season - sending either field filters every result away.
-                season = if (isSeries) episode.season ?: 1 else null,
-                episode = if (isSeries) episode.number.takeIf { it >= 0f }?.toInt() else null,
-                language = language,
-                title = entry.title,
-            )
-            if (query.isUnusable) return@runCatching
-
-            val results = subtitles.search(query)
-            val best = subtitles.bestMatch(results, language) ?: return@runCatching
-
             val option = subtitles.downloadForOffline(
-                result = best,
+                result = result,
                 targetDir = storage.subtitleDir(entry.volumeId, entry.key),
             ) ?: return@runCatching
 
-            // Re-read rather than reusing the entry captured above: the download may have
-            // started, or finished, while the search was in flight.
-            val current = entryFor(entry.key) ?: return@runCatching
-            store.saveDownload(
-                current.copy(subtitlePaths = current.subtitlePaths + option.url),
-            )
+            appendSubtitles(entry.key, listOf(option.url))
         }
     }
 
-    /** Stops a download, keeping what is already on disk so it can resume. */
+    /**
+     * Downloads the subtitle tracks the source supplied with the stream.
+     *
+     * Written to disk rather than kept as URLs, for the same reason the video is: the URLs are
+     * signed like the stream's own and are dead within minutes, so an offline copy pointing at
+     * one plays no subtitles at all.
+     *
+     * Best-effort per track. One that fails is skipped rather than abandoning the rest - three
+     * of four languages is a better outcome than none.
+     */
+    private suspend fun saveSourceTracks(
+        entry: DownloadEntry,
+        tracks: List<SubtitleOption>,
+        streamHeaders: Map<String, String>,
+    ): List<String> {
+        if (tracks.isEmpty()) return emptyList()
+
+        val dir = storage.subtitleDir(entry.volumeId, entry.key)
+
+        return tracks.mapIndexedNotNull { index, track ->
+            runCatching {
+                val text = subtitleRepository?.rawText(track.url, streamHeaders).orEmpty()
+                if (text.isBlank()) return@runCatching null
+
+                // Named by index and language rather than by the remote filename, which is
+                // routinely absent from a signed URL.
+                val extension = track.url.substringBefore('?').substringAfterLast('.', "vtt")
+                    .takeIf { it.length in 3..4 } ?: "vtt"
+                val safeLang = track.language.filter(Char::isLetterOrDigit).ifBlank { "sub" }
+                val file = File(dir, "src-$index-$safeLang.$extension")
+                file.writeText(text)
+                file.toURI().toString()
+            }.getOrNull()
+        }
+    }
+
+    /**
+     * Adds subtitle paths to a download's record.
+     *
+     * Re-read rather than using an entry captured earlier: the download may have started, or
+     * finished, while these were being fetched.
+     */
+    private suspend fun appendSubtitles(key: String, paths: List<String>) {
+        if (paths.isEmpty()) return
+        val current = entryFor(key) ?: return
+        store.saveDownload(current.copy(subtitlePaths = current.subtitlePaths + paths))
+    }
+
+    /**
+     * Downloads a stream through FFmpeg.
+     *
+     * Limited by the same concurrency setting Media3's queue uses, through a semaphore rather
+     * than a queue: these sessions run in this process rather than in the download service, so
+     * there is nothing to hand them to. Without it, queueing a season would start every episode
+     * at once and saturate the connection.
+     *
+     * A proxied stream is the exception and skips the wait entirely. The whole reason it can be
+     * downloaded is that the extension's proxy is alive now and will not be later, so holding it
+     * behind a slot would mean waiting for the thing that makes it possible to disappear.
+     */
+    private fun enqueueViaFfmpeg(
+        sourceId: Long,
+        animeUrl: String,
+        title: String,
+        posterUrl: String?,
+        sourceName: String,
+        episode: EpisodeEntry,
+        stream: StreamOption,
+        subtitle: SubtitleResult?,
+    ) {
+        scope.launch {
+            val settings = store.currentSettings()
+            val volumeId = settings.downloadVolume ?: VOLUME_INTERNAL
+
+            // Resized on each use rather than held, since the preference can change between
+            // downloads and a Semaphore's limit is fixed at construction.
+            val slots = ffmpegSlots(settings.downloadConcurrency)
+
+            val entry = DownloadEntry(
+                sourceId = sourceId,
+                animeUrl = animeUrl,
+                episodeUrl = episode.url,
+                title = title,
+                episodeName = episode.name,
+                episodeNumber = episode.number,
+                posterUrl = posterUrl,
+                sourceName = sourceName,
+                streamLabel = stream.label,
+                // Remuxed to a single file, so it is neither adaptive nor cache-backed as far as
+                // playback is concerned - it is a plain file on disk.
+                isAdaptive = false,
+                isRemuxed = true,
+                volumeId = volumeId,
+                state = DownloadState.DOWNLOADING,
+                createdAt = System.currentTimeMillis(),
+            )
+            store.saveDownload(entry)
+
+            val target = storage.remuxFile(volumeId, entry.key)
+
+            // The Wi-Fi rule, enforced here because the platform cannot enforce it for us.
+            //
+            // Media3's queue has this applied through Requirements, but an ffmpeg session runs in
+            // this process and the download service knows nothing about it - so without this
+            // check the setting silently did not apply to most downloads. Refused rather than
+            // held: there is no scheduler here to release it later, and a download that sat
+            // waiting forever with no way to see why would be worse than one that says no.
+            if (settings.downloadWifiOnly && isMetered()) {
+                android.util.Log.i(TAG, "refusing ${entry.key}: Wi-Fi only and connection is metered")
+                store.saveDownload(entry.copy(state = DownloadState.FAILED))
+                return@launch
+            }
+
+            // Queued behind the concurrency limit, except for a proxied stream which cannot
+            // wait. Marked queued while it waits so the UI does not claim it is transferring.
+            val proxied = stream.isLocalProxy
+            if (!proxied) {
+                store.saveDownload(entry.copy(state = DownloadState.QUEUED))
+                slots.acquire()
+                store.saveDownload(
+                    entryFor(entry.key)?.copy(state = DownloadState.DOWNLOADING) ?: entry,
+                )
+            }
+
+            val ok = try {
+                ffmpeg.download(
+                    key = entry.key,
+                    stream = stream,
+                    target = target,
+                ) { written, percent ->
+                    // In memory only, like Media3's own progress: this fires several times a
+                    // second and every registry write rewrites the whole preferences blob.
+                    _progress.value = _progress.value + (
+                        entry.key to DownloadProgress(
+                            // From ffprobe's duration, so this is real progress through the
+                            // timeline. Zero when the probe could not read a length, in which
+                            // case the UI falls back to showing the size written.
+                            percent = percent,
+                            bytesDownloaded = written,
+                        )
+                        )
+                }
+            } finally {
+                if (!proxied) slots.release()
+            }
+
+            _progress.value = _progress.value - entry.key
+
+            val current = entryFor(entry.key) ?: entry
+            if (ok) {
+                store.saveDownload(
+                    current.copy(
+                        state = DownloadState.COMPLETED,
+                        sizeBytes = target.length(),
+                        downloadUri = target.toURI().toString(),
+                        completedAt = System.currentTimeMillis(),
+                    ),
+                )
+                // No source tracks here: ffmpeg has already muxed those into the file, so
+                // fetching them again as sidecars would store the same cues twice and show
+                // every language in the panel two times over.
+                fetchSubtitles(current, emptyList(), subtitle, stream.headers)
+            } else {
+                store.saveDownload(current.copy(state = DownloadState.FAILED))
+            }
+        }
+    }
+
+    /**
+     * Stops a download, keeping what is already on disk so it can resume.
+     *
+     * A remuxed download cannot pause - an ffmpeg session is one process invocation with no
+     * resume point - so pausing one cancels it outright. The UI hides the pause control for
+     * those rather than offering something that silently discards the transfer.
+     */
     fun pause(key: String) {
         scope.launch {
             DownloadService.sendSetStopReason(
@@ -290,19 +516,27 @@ class DownloadController(
     fun resume(key: String) {
         scope.launch {
             val entry = entryFor(key) ?: return@launch
-            resolver.setActive(entry.sourceId, entry.episodeUrl, entry.streamLabel)
+            // Registered without seeded headers, deliberately: a resume happens long after the
+            // stream was resolved, so the headers stored then may be as stale as the URL. The
+            // first request resolves fresh ones, and requeue() seeds them for the rest.
+            resolver.setActive(
+                key = key,
+                sourceId = entry.sourceId,
+                episodeUrl = entry.episodeUrl,
+                streamLabel = entry.streamLabel,
+            )
 
-            // Only a progressive download can be stale in this sense. An adaptive one has no
-            // custom key by design, so the absence of one is not evidence of anything.
-            val stale = !entry.isAdaptive &&
-                entry.state == DownloadState.FAILED &&
-                runCatching {
-                    engine.manager().downloadIndex.getDownload(key)
-                }.getOrNull()?.request?.customCacheKey == null
-
-            if (stale) {
-                // Cleared first, or the re-added request merges with the unreadable entry
-                // already in the index and inherits its key.
+            // A failure is re-queued from scratch; a pause is simply un-paused.
+            //
+            // These are not the same operation, and treating them alike is what left a retried
+            // download sitting at QUEUED forever. A paused download is stopped, so clearing the
+            // stop reason releases it. A failed one is not stopped - it has already exhausted
+            // its retries - so clearing a reason it never had does nothing, and the URL it was
+            // queued with expired long ago anyway. It has to be removed and added again with a
+            // freshly resolved URL.
+            if (entry.state == DownloadState.FAILED) {
+                // Removed first, or the re-added request merges with the failed entry already in
+                // the index and inherits its exhausted state.
                 withContext(Dispatchers.Main) {
                     DownloadService.sendRemoveDownload(
                         context,
@@ -337,10 +571,22 @@ class DownloadController(
         val streams = repository.streams(entry.sourceId, entry.episodeUrl).getOrNull()
         val match = streams?.let { matchLabel(it, entry.streamLabel) }
 
-        if (match == null) {
+        // A retry must not land on a proxied server either: the label may now match one, and
+        // re-queueing against it would fail exactly as the original did.
+        if (match == null || match.isLocalProxy) {
             store.saveDownload(entry.copy(state = DownloadState.FAILED))
             return
         }
+
+        // Re-registered under this download's own key, so a later credential failure resolves
+        // against this episode rather than whichever was queued most recently.
+        resolver.setActive(
+            key = entry.key,
+            sourceId = entry.sourceId,
+            episodeUrl = entry.episodeUrl,
+            streamLabel = entry.streamLabel,
+            knownHeaders = match.headers,
+        )
 
         val request = DownloadRequest.Builder(entry.key, android.net.Uri.parse(match.url))
             .setMimeType(
@@ -371,7 +617,15 @@ class DownloadController(
     fun remove(key: String) {
         scope.launch {
             // Volume read before the entry goes, since it names where the sidecar files are.
-            val volumeId = entryFor(key)?.volumeId
+            val entry = entryFor(key)
+            val volumeId = entry?.volumeId
+
+            // An ffmpeg session is not in Media3's queue, so the service knows nothing about it
+            // and it has to be stopped directly.
+            if (ffmpeg.isRunning(key)) ffmpeg.cancel(key)
+            if (entry?.isRemuxed == true) {
+                runCatching { storage.remuxFile(volumeId, key).delete() }
+            }
 
             DownloadService.sendRemoveDownload(
                 context,
@@ -380,6 +634,9 @@ class DownloadController(
                 /* foreground = */ false,
             )
             storage.deleteSubtitles(volumeId, key)
+            // Dropped from the resolver too, or its map grows for the life of the process and
+            // keeps re-resolving an episode nobody is downloading any more.
+            resolver.clearActive(key)
             store.removeDownload(key)
         }
     }
@@ -387,6 +644,21 @@ class DownloadController(
     /** Cancels every download and deletes what they had written. */
     fun removeAll() {
         scope.launch {
+            // Both engines, and the sidecars.
+            //
+            // Clearing Media3's queue alone left every remuxed file on disk with nothing
+            // referencing it - the same orphan state that loses gigabytes silently, except
+            // reached deliberately by pressing "delete all". FFmpeg's sessions are not in that
+            // queue, so they have to be stopped and their files removed here.
+            store.currentDownloads().forEach { entry ->
+                if (ffmpeg.isRunning(entry.key)) ffmpeg.cancel(entry.key)
+                if (entry.isRemuxed) {
+                    runCatching { storage.remuxFile(entry.volumeId, entry.key).delete() }
+                }
+                storage.deleteSubtitles(entry.volumeId, entry.key)
+                resolver.clearActive(entry.key)
+            }
+
             withContext(Dispatchers.Main) {
                 DownloadService.sendRemoveAllDownloads(
                     context,
@@ -397,7 +669,25 @@ class DownloadController(
         }
     }
 
+    /**
+     * Applies the concurrency preference to the running queue.
+     *
+     * Takes effect immediately: raising it starts more of the queue at once, and lowering it
+     * lets the extras finish rather than cutting them off - Media3 stops issuing new ones
+     * instead of abandoning what is in flight.
+     */
+    fun applyConcurrency(count: Int) {
+        engine.useConcurrency(count)
+    }
+
     /** Applies the Wi-Fi-only preference to the running queue. */
+    /**
+     * Applies the Wi-Fi rule to Media3's queue.
+     *
+     * Reaches Media3 only. An ffmpeg session runs in this process rather than in the download
+     * service, so the platform has nothing to gate it on - the rule is enforced for those at the
+     * point of starting one instead, in [enqueueViaFfmpeg].
+     */
     fun applyRequirements(wifiOnly: Boolean) {
         val requirements = if (wifiOnly) {
             Requirements(Requirements.NETWORK_UNMETERED)
@@ -440,6 +730,25 @@ class DownloadController(
             // engine legitimately knows nothing about them and deleting the record would
             // lose a download that is merely offline.
             if (!storage.isVolumeAvailable(entry.volumeId)) return@mapNotNull entry
+
+            // A remuxed download is not in Media3's index and never will be: it is a plain file
+            // that FFmpeg wrote. Its own file is the authority, so it is checked on disk instead.
+            //
+            // This is what silently deleted finished downloads on restart. Reconciliation asked
+            // Media3 about every entry, found nothing for the remuxed ones, and dropped them -
+            // leaving hundreds of megabytes on disk with no record pointing at them.
+            if (entry.isRemuxed) {
+                val file = storage.remuxFile(entry.volumeId, entry.key)
+                return@mapNotNull if (file.length() > 0L) {
+                    // Size re-read from the file, which is more trustworthy than a figure written
+                    // while the download was still running.
+                    entry.copy(sizeBytes = file.length())
+                } else {
+                    // The file really is gone - deleted by hand, or the write never finished - so
+                    // the entry has nothing behind it.
+                    null
+                }
+            }
 
             // Dropped. The volume is mounted and the engine has no record, so whatever was
             // written is gone - a cleared cache, or a crash before the index was flushed -
@@ -492,6 +801,24 @@ class DownloadController(
             download: Download,
             finalException: Exception?,
         ) {
+            // Logged, because a download failure was otherwise completely silent: the reason
+            // arrives here and was being discarded, so "it just failed" was all anyone could
+            // observe - including from a logcat capture. These are the failures that matter
+            // most when diagnosing a source, and they are usually an HTTP status or a dead
+            // host rather than anything the app can act on.
+            if (download.state == Download.STATE_FAILED) {
+                android.util.Log.w(
+                    TAG,
+                    "download failed: ${download.request.id} " +
+                        "uri=${download.request.uri} " +
+                        "mime=${download.request.mimeType} " +
+                        "bytes=${download.bytesDownloaded} " +
+                        "reason=${finalException?.javaClass?.simpleName}: " +
+                        finalException?.message,
+                    finalException,
+                )
+            }
+
             // Progress is owned by the poller above; this only records the transition. The
             // two have very different write costs, and only one of them needs to survive a
             // restart.
@@ -499,6 +826,9 @@ class DownloadController(
                 val entry = entryFor(download.request.id) ?: return@launch
                 val next = download.state.toDownloadState()
                 if (entry.state == next && entry.sizeBytes == download.bytesDownloaded) return@launch
+
+                // Nothing more to resolve for a download that has finished.
+                if (next == DownloadState.COMPLETED) resolver.clearActive(download.request.id)
 
                 store.saveDownload(
                     entry.copy(
@@ -519,10 +849,45 @@ class DownloadController(
             download: Download,
         ) {
             _progress.value = _progress.value - download.request.id
+            resolver.clearActive(download.request.id)
+        }
+    }
+
+    /**
+     * Whether the active connection is metered.
+     *
+     * Read at the moment a download starts rather than observed: this is a gate on starting, not
+     * a condition to wait on. Treated as unmetered when it cannot be determined, so a device that
+     * reports nothing useful still downloads rather than refusing everything.
+     */
+    private fun isMetered(): Boolean = runCatching {
+        val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
+        val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+        caps?.hasCapability(
+            android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED,
+        )?.not() ?: false
+    }.getOrDefault(false)
+
+    /** Semaphore sized to the current concurrency preference, rebuilt when it changes. */
+    private var slotsLimit = 0
+    private var slots: java.util.concurrent.Semaphore? = null
+
+    private fun ffmpegSlots(limit: Int): java.util.concurrent.Semaphore {
+        val clamped = limit.coerceAtLeast(1)
+        val existing = slots
+        if (existing != null && slotsLimit == clamped) return existing
+        // A permit held under the old limit is released against the new semaphore, which is
+        // harmless: the release is what the finally block does and an unmatched one only raises
+        // the ceiling for a moment.
+        return java.util.concurrent.Semaphore(clamped, true).also {
+            slots = it
+            slotsLimit = clamped
         }
     }
 
     private companion object {
+        const val TAG = "WbDownload"
+
         /** Distinguishes a user pause from the engine stopping for an unmet requirement. */
         const val STOP_REASON_USER = 1
 

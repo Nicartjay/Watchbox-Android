@@ -29,7 +29,9 @@ import android.net.Uri
 @UnstableApi
 class ReResolvingDataSource(
     private val upstream: HttpDataSource,
-    private val reResolve: () -> ResolvedStream?,
+    private val reResolve: (String) -> ResolvedStream?,
+    /** Cached headers for a download, read without touching the network. */
+    private val headersFor: (String) -> Map<String, String>,
 ) : DataSource {
 
     private var attemptedReResolve = false
@@ -39,8 +41,23 @@ class ReResolvingDataSource(
     }
 
     override fun open(dataSpec: DataSpec): Long {
+        // Headers applied before the first request, not only after one has failed.
+        //
+        // This is what made every segmented download 403 immediately with nothing transferred.
+        // These CDNs check a Referer, the extension supplies one, and it was reaching the
+        // network only on the retry path - so the opening request was always sent bare, failed,
+        // and the download was marked failed before the refresh could help. The player has
+        // always applied them per request; the downloader has to as well.
+        // Read from cache, never resolved here: a segmented download opens hundreds of
+        // connections and resolving for each would be slower than streaming the episode.
+        val prepared = dataSpec.key
+            ?.let(headersFor)
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { dataSpec.withRequestHeaders(it) }
+            ?: dataSpec
+
         return try {
-            upstream.open(dataSpec)
+            upstream.open(prepared)
         } catch (error: HttpDataSource.InvalidResponseCodeException) {
             if (!isCredentialFailure(error.responseCode) || attemptedReResolve) throw error
 
@@ -49,13 +66,17 @@ class ReResolvingDataSource(
             // and retrying it in a loop would hammer the extension.
             attemptedReResolve = true
 
-            val fresh = reResolve() ?: throw error
+            // Identified by the spec's own key, which the downloader sets per download. Asking
+            // without it re-resolved against whichever download was queued most recently, so
+            // with several running only that one could ever recover.
+            val key = dataSpec.key ?: throw error
+            val fresh = reResolve(key) ?: throw error
 
             // The offset is carried over, not reset. The refreshed URL points at the same
             // file, so what is already on disk is still valid and only the remainder is
             // wanted.
             upstream.open(
-                dataSpec
+                prepared
                     .buildUpon()
                     .setUri(Uri.parse(fresh.url))
                     .build()
@@ -90,9 +111,10 @@ class ReResolvingDataSource(
     @UnstableApi
     class Factory(
         private val upstreamFactory: HttpDataSource.Factory,
-        private val reResolve: () -> ResolvedStream?,
+        private val reResolve: (String) -> ResolvedStream?,
+        private val headersFor: (String) -> Map<String, String>,
     ) : DataSource.Factory {
         override fun createDataSource(): DataSource =
-            ReResolvingDataSource(upstreamFactory.createDataSource(), reResolve)
+            ReResolvingDataSource(upstreamFactory.createDataSource(), reResolve, headersFor)
     }
 }
