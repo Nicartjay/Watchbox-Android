@@ -91,6 +91,15 @@ enum class SkipKind {
 
     /** Ending credits. */
     ENDING,
+
+    /**
+     * A "previously on" recap before the episode proper.
+     *
+     * Its own kind rather than folded into [OPENING], because the two are not the same thing and a
+     * button that says the wrong one is worse than no button: a viewer watching in order wants the
+     * recap gone, while someone returning after a break may well want it.
+     */
+    RECAP,
 }
 
 /**
@@ -125,8 +134,9 @@ private data class SkipResultDto(
         val kind = when (skipType.lowercase()) {
             "op", "mixed-op" -> SkipKind.OPENING
             "ed", "mixed-ed" -> SkipKind.ENDING
-            // "recap" and anything new are ignored rather than guessed at: the button names a
-            // specific thing, and mislabelling a recap as an opening is worse than omitting it.
+            "recap" -> SkipKind.RECAP
+            // Anything new is ignored rather than guessed at: the button names a specific thing,
+            // and mislabelling an unknown segment is worse than omitting it.
             else -> return null
         }
 

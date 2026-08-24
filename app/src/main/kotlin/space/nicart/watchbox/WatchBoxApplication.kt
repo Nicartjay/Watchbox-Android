@@ -41,6 +41,7 @@ import space.nicart.watchbox.download.DownloadStorage
 import space.nicart.watchbox.download.DownloadStreamResolver
 import space.nicart.watchbox.download.MediaDownloadService
 import space.nicart.watchbox.download.FfmpegDownloader
+import space.nicart.watchbox.data.remote.IntroDbApi
 
 /**
  * Application + service locator.
@@ -200,6 +201,9 @@ class AppContainer(
     val skipRepository = SkipRepository(
         aniSkip = AniSkipApi(plainClient),
         arm = ArmApi(plainClient),
+        // Also on the plain client, and for the same reason: a timestamp database is not a
+        // content source and wants none of the extensions' cookies or Referer.
+        introDb = IntroDbApi(plainClient),
     )
 
     val subtitleRepository = SubtitleRepository(

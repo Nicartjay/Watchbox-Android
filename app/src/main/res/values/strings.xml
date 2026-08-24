@@ -175,6 +175,7 @@
     <string name="player_episodes">Episodes</string>
     <string name="player_skip_intro">Skip Intro</string>
     <string name="player_skip_outro">Skip Outro</string>
+    <string name="player_skip_recap">Skip Recap</string>
     <string name="player_subtitle_appearance">Subtitle appearance</string>
     <string name="player_subtitles_off">Off</string>
     <string name="player_subtitle_search">Search online</string>

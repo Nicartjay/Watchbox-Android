@@ -73,6 +73,7 @@ fun SkipSegmentMarkers(
                 color = when (interval.kind) {
                     SkipKind.OPENING -> OPENING_COLOR
                     SkipKind.ENDING -> ENDING_COLOR
+                    SkipKind.RECAP -> RECAP_COLOR
                 },
             )
         }
@@ -90,6 +91,14 @@ private val OPENING_COLOR = Color(0xCCFFB300)
 
 /** Teal for the ending, clearly separable from the opening at a glance and for most colour blindness. */
 private val ENDING_COLOR = Color(0xCC26C6DA)
+
+/**
+ * Violet for the recap, which sits immediately before the opening.
+ *
+ * Chosen to stay distinguishable from the amber opening it abuts - two warm bands touching would
+ * read as one longer marker - and to remain separable under the common forms of colour blindness.
+ */
+private val RECAP_COLOR = Color(0xCCAB7DF8)
 
 /** Matches the visual weight of the slider's own track. */
 private val MARKER_HEIGHT = 4.dp

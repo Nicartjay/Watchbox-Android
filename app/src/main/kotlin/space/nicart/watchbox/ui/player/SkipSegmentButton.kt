@@ -128,6 +128,7 @@ fun SkipSegmentButton(
                     when (shown.kind) {
                         SkipKind.OPENING -> R.string.player_skip_intro
                         SkipKind.ENDING -> R.string.player_skip_outro
+                        SkipKind.RECAP -> R.string.player_skip_recap
                     },
                 ),
                 style = MaterialTheme.typography.titleMedium,
