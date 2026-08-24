@@ -324,6 +324,15 @@ fun DetailActionButtons(
     isTablet: Boolean = false,
     /** True on a wide hero, where buttons size to their content. */
     compactButtons: Boolean = false,
+    /**
+     * Download control, for a title whose episode list is not shown.
+     *
+     * A film has exactly one episode - `isMovie` is derived from that - but the detail page hides
+     * the episode list for one, so the per-episode download button had nowhere to live and a film
+     * could not be downloaded at all. It sits beside Play here instead, which is where a film's
+     * only other action already is.
+     */
+    downloadSlot: (@Composable () -> Unit)? = null,
 ) {
     val tokens = MaterialTheme.wb
     val buttonHeight = if (isTablet) 56.dp else 52.dp
@@ -471,6 +480,13 @@ fun DetailActionButtons(
             }
 
             Spacer(Modifier.width(12.dp * menuProgress))
+
+            // Between the secondary actions and the overflow, so it reads as an action on the
+            // title rather than as part of the menu.
+            if (downloadSlot != null) {
+                Spacer(Modifier.width(12.dp))
+                downloadSlot()
+            }
 
             // --- more
             Surface(

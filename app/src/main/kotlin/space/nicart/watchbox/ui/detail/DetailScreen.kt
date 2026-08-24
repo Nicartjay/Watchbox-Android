@@ -72,6 +72,8 @@ import androidx.media3.common.util.UnstableApi
 import space.nicart.watchbox.ui.download.DownloadDeleteDialog
 import space.nicart.watchbox.ui.download.DownloadDeleteTarget
 import space.nicart.watchbox.data.local.DownloadState
+import space.nicart.watchbox.ui.download.EpisodeDownloadButton
+import space.nicart.watchbox.domain.AnimeDetail
 
 /**
  * Title detail page.
@@ -443,6 +445,30 @@ fun DetailScreen(
                                         onPlay = onPlay,
                                         onToggleWatched = viewModel::toggleWatched,
                                         onToggleWatchlist = viewModel::toggleWatchlist,
+                                        // Only for a film, whose episode list is never
+                                        // rendered and so cannot carry a download button. A
+                                        // series keeps its per-episode controls.
+                                        downloadSlot = detail.singleEpisodeOrNull()?.let { ep ->
+                                            {
+                                                EpisodeDownloadButton(
+                                                    status = downloadStatus[ep.url],
+                                                    onDownload = { viewModel.requestDownload(ep) },
+                                                    onPause = { viewModel.pauseDownload(ep.url) },
+                                                    onResume = { viewModel.resumeDownload(ep.url) },
+                                                    onDelete = {
+                                                        pendingDelete = DownloadDeleteTarget(
+                                                            key = ep.url,
+                                                            label = detail.title,
+                                                            sizeBytes = downloadStatus[ep.url]
+                                                                ?.sizeBytes ?: 0L,
+                                                            unfinished = downloadStatus[ep.url]
+                                                                ?.state != DownloadState.COMPLETED,
+                                                        )
+                                                    },
+                                                    size = 48.dp,
+                                                )
+                                            }
+                                        },
                                         onOpenInBrowser = onOpenInBrowser,
                                         modifier = Modifier
                                             .focusRequester(actionsFocusRequester)
@@ -506,6 +532,27 @@ fun DetailScreen(
                                 onToggleWatched = viewModel::toggleWatched,
                                 onToggleWatchlist = viewModel::toggleWatchlist,
                                 onOpenInBrowser = onOpenInBrowser,
+                                downloadSlot = detail.singleEpisodeOrNull()?.let { ep ->
+                                    {
+                                        EpisodeDownloadButton(
+                                            status = downloadStatus[ep.url],
+                                            onDownload = { viewModel.requestDownload(ep) },
+                                            onPause = { viewModel.pauseDownload(ep.url) },
+                                            onResume = { viewModel.resumeDownload(ep.url) },
+                                            onDelete = {
+                                                pendingDelete = DownloadDeleteTarget(
+                                                    key = ep.url,
+                                                    label = detail.title,
+                                                    sizeBytes = downloadStatus[ep.url]
+                                                        ?.sizeBytes ?: 0L,
+                                                    unfinished = downloadStatus[ep.url]
+                                                        ?.state != DownloadState.COMPLETED,
+                                                )
+                                            },
+                                            size = 48.dp,
+                                        )
+                                    }
+                                },
                             )
                         }
                     }
@@ -857,6 +904,8 @@ private fun DetailActions(
     onToggleWatchlist: () -> Unit,
     onOpenInBrowser: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    /** Download control for a film, which has no episode list to carry one. */
+    downloadSlot: (@Composable () -> Unit)? = null,
 ) {
     DetailActionButtons(
         playLabel = stringResource(
@@ -879,6 +928,7 @@ private fun DetailActions(
         onOpenInBrowser = onOpenInBrowser,
         compactButtons = compactButtons,
         modifier = modifier,
+        downloadSlot = downloadSlot,
     )
 }
 
@@ -900,3 +950,13 @@ private const val CHROME_FADE_OUT_MS = 600
  * reads as the remote lagging rather than as an animation.
  */
 private const val CHROME_FADE_IN_MS = 180
+
+/**
+ * The one episode a film is made of, or null for a series.
+ *
+ * A film is not a special kind of title in this ecosystem - `getEpisodeList` simply returns a
+ * single entry, which is where `isMovie` comes from. The detail page hides the episode list for
+ * one, so this is how the action row reaches the thing to download.
+ */
+private fun AnimeDetail.singleEpisodeOrNull(): EpisodeEntry? =
+    episodes.singleOrNull().takeIf { isMovie }
