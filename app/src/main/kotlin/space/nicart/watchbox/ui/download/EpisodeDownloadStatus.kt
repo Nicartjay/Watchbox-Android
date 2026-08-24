@@ -20,6 +20,13 @@ data class EpisodeDownloadStatus(
     val totalBytes: Long = 0L,
     /** True when the file is on a volume that is not currently mounted. */
     val unavailable: Boolean,
+    /**
+     * True for a download FFmpeg is remuxing rather than one Media3 is caching.
+     *
+     * These cannot be paused - an ffmpeg session has no resume point - so the control offers
+     * cancel instead of pause rather than appearing to pause and silently discarding the work.
+     */
+    val isRemuxed: Boolean = false,
 ) {
     val isActive: Boolean
         get() = state == DownloadState.QUEUED || state == DownloadState.DOWNLOADING
@@ -50,6 +57,7 @@ internal fun buildStatusMap(
             sizeBytes = live?.bytesDownloaded?.takeIf { it > 0 } ?: entry.sizeBytes,
             totalBytes = live?.totalBytes ?: 0L,
             unavailable = entry.volumeId.isNotBlank() && entry.volumeId !in mountedVolumes,
+            isRemuxed = entry.isRemuxed,
         )
     }
 

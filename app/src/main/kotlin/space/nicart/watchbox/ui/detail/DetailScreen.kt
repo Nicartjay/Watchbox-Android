@@ -71,6 +71,7 @@ import androidx.core.content.ContextCompat
 import androidx.media3.common.util.UnstableApi
 import space.nicart.watchbox.ui.download.DownloadDeleteDialog
 import space.nicart.watchbox.ui.download.DownloadDeleteTarget
+import space.nicart.watchbox.data.local.DownloadState
 
 /**
  * Title detail page.
@@ -633,6 +634,10 @@ fun DetailScreen(
                                             sizeBytes = downloadStatus[episode.url]
                                                 ?.sizeBytes
                                                 ?: 0L,
+                                            // A long press on an unfinished download means
+                                            // abandon it; on a finished one it means delete.
+                                            unfinished = downloadStatus[episode.url]
+                                                ?.state != DownloadState.COMPLETED,
                                         )
                                     },
                                 )
@@ -829,6 +834,8 @@ fun DetailScreen(
                 }
                 viewModel.confirmDownload(stream)
             },
+            onPickSubtitle = viewModel::confirmDownloadWithSubtitle,
+            onSkipSubtitle = viewModel::confirmDownloadWithoutSubtitle,
             onDismiss = viewModel::dismissDownloadPicker,
         )
     }

@@ -319,10 +319,18 @@ class PlayerViewModel(
     private suspend fun offlineEntryFor(episodeUrl: String): DownloadEntry? {
         val entry = store.downloadFor(sourceId, animeUrl, episodeUrl) ?: return null
         if (!entry.isComplete) return null
-        // The registry can outlive the bytes - a cleared cache, a pulled card - so the engine
-        // is asked as well. Believing the registry alone would offer a file that is not there
-        // and fail with no way back to streaming.
-        if (!downloadEngine.isDownloaded(entry.key)) return null
+
+        // The registry can outlive the bytes - a cleared cache, a pulled card, a file deleted by
+        // hand - so what actually holds the download is checked too. Believing the registry alone
+        // would offer something that is not there and fail with no way back to streaming.
+        val present = if (entry.isRemuxed) {
+            runCatching {
+                java.io.File(java.net.URI(entry.downloadUri)).length() > 0
+            }.getOrDefault(false)
+        } else {
+            downloadEngine.isDownloaded(entry.key)
+        }
+        if (!present) return null
         return entry
     }
 
@@ -350,13 +358,24 @@ class PlayerViewModel(
             // but it is never fetched: the request is served from the cache. A progressive
             // download is found by its key instead, so any URI would do and the episode URL is
             // used to keep isHls and isDash false for it.
-            url = if (entry.isAdaptive) entry.downloadUri else entry.episodeUrl,
+            url = when {
+                // A remuxed download is a plain file. Played from its own path, with no cache
+                // and no manifest, which is the simplest of the three cases.
+                entry.isRemuxed -> entry.downloadUri
+                entry.isAdaptive -> entry.downloadUri
+                else -> entry.episodeUrl
+            },
             headers = emptyMap(),
+            // Language recovered from the filename, which the downloader encodes as
+            // `src-<index>-<lang>.<ext>`. Labelling every track "Downloaded" in the viewer's
+            // own language was fine while there could only be one, but a source may supply
+            // several - and identical rows in the panel are unpickable.
             subtitles = entry.subtitlePaths.map { path ->
+                val lang = offlineSubtitleLanguage(path) ?: subtitleLanguage
                 SubtitleOption(
-                    label = OFFLINE_SUBTITLE_LABEL,
+                    label = offlineSubtitleLabel(lang),
                     url = path,
-                    language = subtitleLanguage,
+                    language = lang,
                     isExternal = true,
                 )
             },
@@ -372,7 +391,9 @@ class PlayerViewModel(
             // Progressive only. An adaptive stream is matched through its manifest URI, and
             // handing a custom key to a media item Media3 treats as adaptive would put the
             // cache lookup back on a key nothing was written under.
-            offlineCacheKey = entry.key.takeUnless { entry.isAdaptive },
+            // Neither an adaptive stream nor a remuxed file wants a cache key: the first is
+            // matched through its manifest URI, the second is read straight off disk.
+            offlineCacheKey = entry.key.takeUnless { entry.isAdaptive || entry.isRemuxed },
             errorMessage = null,
         )
     }
@@ -428,10 +449,14 @@ class PlayerViewModel(
                         ?.subtitlePaths
                         .orEmpty()
                         .map { path ->
+                            // Same labelling as the offline path, and read from the filename
+                            // for the same reason: the two lists sit in one panel, so a track
+                            // must not be named differently depending on how it got there.
+                            val lang = offlineSubtitleLanguage(path) ?: subtitleLanguage
                             SubtitleOption(
-                                label = OFFLINE_SUBTITLE_LABEL,
+                                label = offlineSubtitleLabel(lang),
                                 url = path,
-                                language = store.currentSettings().subtitleLanguage,
+                                language = lang,
                                 isExternal = true,
                             )
                         }
@@ -947,8 +972,54 @@ class PlayerViewModel(
 
 private const val TAG = "WbPlayer"
 
-/** Names a subtitle that came down with the download rather than being searched for. */
-private const val OFFLINE_SUBTITLE_LABEL = "Downloaded"
+/**
+ * Names a subtitle stored with a download, as `English (Downloaded)`.
+ *
+ * The language leads because that is what is being chosen between - several downloaded tracks
+ * all reading "Downloaded" were unpickable - and the suffix says where the file came from, which
+ * matters when a source track and a downloaded one are both in the list.
+ *
+ * The language name is spelled out where it is known. A panel row reading "EN" asks the viewer
+ * to decode it, and the codes stored here come from a source's own labels, so several are not
+ * obvious even to someone who knows the language.
+ */
+private fun offlineSubtitleLabel(language: String): String {
+    val name = LANGUAGE_NAMES[language.lowercase()]
+        ?: language.takeIf { it.isNotBlank() }?.uppercase()
+        ?: return OFFLINE_SUBTITLE_SUFFIX
+    return "$name ($OFFLINE_SUBTITLE_SUFFIX)"
+}
+
+private const val OFFLINE_SUBTITLE_SUFFIX = "Downloaded"
+
+/**
+ * Codes to English names, for the languages the subtitle providers index.
+ *
+ * Mirrors the set the subtitle API maps, so anything that can be searched for can be named.
+ */
+private val LANGUAGE_NAMES = mapOf(
+    "en" to "English", "es" to "Spanish", "fr" to "French", "de" to "German",
+    "it" to "Italian", "pt" to "Portuguese", "ru" to "Russian", "ja" to "Japanese",
+    "ko" to "Korean", "zh" to "Chinese", "ar" to "Arabic", "hi" to "Hindi",
+    "id" to "Indonesian", "th" to "Thai", "vi" to "Vietnamese", "tr" to "Turkish",
+    "pl" to "Polish", "nl" to "Dutch", "sv" to "Swedish", "da" to "Danish",
+    "fi" to "Finnish", "no" to "Norwegian", "cs" to "Czech", "el" to "Greek",
+    "he" to "Hebrew", "hu" to "Hungarian", "ro" to "Romanian", "uk" to "Ukrainian",
+    "fa" to "Persian", "ms" to "Malay",
+)
 
 /** Shown in the quality panel for a stream being played from disk. */
 private const val OFFLINE_STREAM_LABEL = "Downloaded"
+
+/**
+ * The language a downloaded subtitle file was saved under.
+ *
+ * Read back from the name the downloader gave it - `src-<index>-<lang>.<ext>` - because nothing
+ * else records it per file. Null for a file that predates the scheme, or for one fetched by the
+ * online fallback, where the language is the viewer's own preference anyway.
+ */
+private fun offlineSubtitleLanguage(path: String): String? {
+    val name = path.substringAfterLast('/').substringBeforeLast('.')
+    if (!name.startsWith("src-")) return null
+    return name.substringAfterLast('-').takeIf { it.isNotBlank() && it != "sub" }
+}

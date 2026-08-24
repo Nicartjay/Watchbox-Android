@@ -4,14 +4,15 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material3.Icon
@@ -55,6 +56,12 @@ fun EpisodeDownloadButton(
     modifier: Modifier = Modifier,
     size: Dp = 40.dp,
 ) {
+    // A long press cancels whatever is unfinished, and the same gesture deletes a finished
+    // download - so "get rid of this" is one action whatever state it is in.
+    //
+    // Needed because a tap cannot carry it: on an unfinished download a tap has to mean
+    // pause or resume, which left no way to abandon one at all. Starting a large file by
+    // mistake meant either letting it finish or leaving it paused forever.
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
 
@@ -71,9 +78,16 @@ fun EpisodeDownloadButton(
     val icon = when {
         status == null -> Icons.Rounded.Download
         status.unavailable -> Icons.Rounded.CloudOff
-        state == DownloadState.COMPLETED -> Icons.Rounded.Check
+        // Deliberately not a tick. The watched badge beside this one is a tick, and two ticks
+        // on the same card meant "downloaded" and "finished watching" were indistinguishable.
+        // A filled downward chevron reads as "this is here on the device" and matches the
+        // outlined download arrow it replaces.
+        state == DownloadState.COMPLETED -> Icons.Rounded.DownloadDone
         state == DownloadState.FAILED -> Icons.Rounded.ErrorOutline
         state == DownloadState.PAUSED -> Icons.Rounded.Download
+        // A remuxing download cannot pause, so it offers cancel. Showing a pause icon that
+        // silently threw the transfer away would be worse than showing what it really does.
+        status.isRemuxed -> Icons.Rounded.Close
         // Queued and downloading both offer a pause, since a queued item is one the user may
         // well want to take back out of the queue.
         else -> Icons.Rounded.Pause
@@ -86,6 +100,7 @@ fun EpisodeDownloadButton(
             state == DownloadState.COMPLETED -> R.string.download_action_delete
             state == DownloadState.FAILED -> R.string.download_action_retry
             state == DownloadState.PAUSED -> R.string.download_action_resume
+            status.isRemuxed -> R.string.download_action_cancel
             else -> R.string.download_action_pause
         },
     )
@@ -108,9 +123,10 @@ fun EpisodeDownloadButton(
             .adaptiveFocus(interaction, CircleShape, scale = false)
             .clip(CircleShape)
             .background(tokens.colors.background.copy(alpha = 0.45f))
-            .clickable(
+            .combinedClickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
+                onLongClick = onDelete.takeIf { status != null },
             ) {
                 when {
                     // Nothing to act on: the file is real but its volume is absent, and
@@ -122,6 +138,8 @@ fun EpisodeDownloadButton(
                     // already on disk are still good.
                     state == DownloadState.FAILED -> onResume()
                     state == DownloadState.PAUSED -> onResume()
+                    // Cancel, not pause: there is nothing to resume from.
+                    status.isRemuxed -> onDelete()
                     else -> onPause()
                 }
             }

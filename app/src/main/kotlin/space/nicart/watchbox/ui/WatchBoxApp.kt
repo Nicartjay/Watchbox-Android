@@ -148,6 +148,7 @@ fun WatchBoxApp(
                         countryResolver = container.countryResolver,
                         downloads = container.downloadController,
                         downloadStorage = container.downloadStorage,
+                        subtitleRepository = container.subtitleRepository,
                         sourceId = route.sourceId,
                         animeUrl = route.animeUrl,
                     ),

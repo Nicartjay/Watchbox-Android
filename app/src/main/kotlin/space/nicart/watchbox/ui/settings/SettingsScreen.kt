@@ -94,6 +94,9 @@ import space.nicart.watchbox.ui.download.formatBytes
 import androidx.media3.common.util.UnstableApi
 import space.nicart.watchbox.ui.download.DownloadDeleteDialog
 import space.nicart.watchbox.ui.download.DownloadDeleteTarget
+import space.nicart.watchbox.data.local.DOWNLOAD_CONCURRENCY_MAX
+import space.nicart.watchbox.data.local.DOWNLOAD_CONCURRENCY_MIN
+import space.nicart.watchbox.ui.components.WbChip
 
 /**
  * Settings.
@@ -617,6 +620,13 @@ fun SettingsScreen(
                     checked = settings.downloadWifiOnly,
                     onCheckedChange = viewModel::setDownloadWifiOnly,
                     summary = stringResource(R.string.settings_download_wifi_only_summary),
+                )
+            }
+
+            item(key = "download-concurrency") {
+                DownloadConcurrencyCard(
+                    selected = settings.downloadConcurrency,
+                    onSelect = viewModel::setDownloadConcurrency,
                 )
             }
 
@@ -1364,6 +1374,50 @@ private fun DownloadVolumeCard(
                 onClick = { onSelect(volume.id) },
             )
             Spacer(Modifier.height(6.dp))
+        }
+    }
+}
+
+/**
+ * How many episodes download at once.
+ *
+ * Chips rather than a slider, matching the subtitle size and provider rows: the range is five
+ * discrete values, and a slider over five stops is harder to hit precisely than five targets -
+ * particularly with a D-pad, where a slider needs held presses and a chip needs one.
+ *
+ * The summary says what raising it actually costs, because "more at once" reads as unambiguously
+ * better and it is not: past a couple of downloads a home connection is the limit, and
+ * everything slows together rather than anything finishing sooner.
+ */
+@Composable
+private fun DownloadConcurrencyCard(
+    selected: Int,
+    onSelect: (Int) -> Unit,
+) {
+    val tokens = MaterialTheme.wb
+
+    SettingsCard {
+        Text(
+            text = stringResource(R.string.settings_download_concurrency),
+            style = MaterialTheme.typography.titleMedium,
+            color = tokens.colors.textPrimary,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = stringResource(R.string.settings_download_concurrency_summary),
+            style = MaterialTheme.typography.labelSmall,
+            color = tokens.colors.textMuted,
+        )
+        Spacer(Modifier.height(10.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (count in DOWNLOAD_CONCURRENCY_MIN..DOWNLOAD_CONCURRENCY_MAX) {
+                WbChip(
+                    label = count.toString(),
+                    selected = count == selected,
+                    onClick = { onSelect(count) },
+                )
+            }
         }
     }
 }

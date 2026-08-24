@@ -103,6 +103,7 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
                     countryResolver = container.countryResolver,
                     downloads = container.downloadController,
                     downloadStorage = container.downloadStorage,
+                    subtitleRepository = container.subtitleRepository,
                     sourceId = route.sourceId,
                     animeUrl = route.animeUrl,
                 ),

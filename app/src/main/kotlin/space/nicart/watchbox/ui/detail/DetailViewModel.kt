@@ -29,6 +29,9 @@ import space.nicart.watchbox.ui.download.EpisodeDownloadStatus
 import space.nicart.watchbox.ui.download.buildStatusMap
 import androidx.media3.common.util.UnstableApi
 import space.nicart.watchbox.domain.AnimeStatus
+import space.nicart.watchbox.data.remote.SubtitleQuery
+import space.nicart.watchbox.data.remote.SubtitleResult
+import space.nicart.watchbox.domain.SubtitleRepository
 
 data class DetailUiState(
     val isLoading: Boolean = true,
@@ -101,6 +104,7 @@ class DetailViewModel(
     private val countryResolver: CountryResolver,
     private val downloads: DownloadController,
     private val downloadStorage: DownloadStorage,
+    private val subtitleRepository: SubtitleRepository,
     private val sourceId: Long,
     private val animeUrl: String,
 ) : ViewModel() {
@@ -425,6 +429,10 @@ class DetailViewModel(
                         return@onSuccess
                     }
 
+                    // Every server is offered, including those served through a proxy inside the
+                    // extension. Those used to be hidden because Media3 could not fetch them at
+                    // all; they now go through FFmpeg instead, which pulls the stream in one
+                    // session while that proxy is still alive.
                     _picker.value = if (streams.isEmpty()) {
                         DownloadPickerState.Failed(NO_STREAMS)
                     } else {
@@ -441,11 +449,63 @@ class DetailViewModel(
         }
     }
 
-    /** Queues the chosen stream and closes the prompt. */
+    /**
+     * Handles a chosen server.
+     *
+     * Downloads it straight away when the stream carries its own subtitles - those were cut for
+     * this exact release, so there is nothing to ask about. Where it carries none, the prompt
+     * moves on to offering one rather than quietly downloading a video that cannot be followed.
+     */
     fun confirmDownload(stream: StreamOption) {
         val pending = _picker.value as? DownloadPickerState.Ready ?: return
+
+        if (stream.subtitles.isNotEmpty()) {
+            startDownload(pending.episodeUrl, stream, subtitle = null)
+            return
+        }
+
+        _picker.value = DownloadPickerState.FindingSubtitles(pending.episodeUrl, stream)
+
+        downloadResolveJob?.cancel()
+        downloadResolveJob = viewModelScope.launch {
+            val results = findSubtitles(pending.episodeUrl)
+
+            // Dropped if the prompt moved on while the search was in flight, so a late result
+            // cannot reopen a step the user has already left.
+            val current = _picker.value
+            if (current !is DownloadPickerState.FindingSubtitles ||
+                current.episodeUrl != pending.episodeUrl
+            ) {
+                return@launch
+            }
+
+            _picker.value = DownloadPickerState.SubtitleChoice(
+                episodeUrl = pending.episodeUrl,
+                stream = stream,
+                results = results,
+            )
+        }
+    }
+
+    /** Downloads the video with the chosen subtitle alongside it. */
+    fun confirmDownloadWithSubtitle(result: SubtitleResult) {
+        val pending = _picker.value as? DownloadPickerState.SubtitleChoice ?: return
+        startDownload(pending.episodeUrl, pending.stream, subtitle = result)
+    }
+
+    /** Downloads the video on its own. */
+    fun confirmDownloadWithoutSubtitle() {
+        val pending = _picker.value as? DownloadPickerState.SubtitleChoice ?: return
+        startDownload(pending.episodeUrl, pending.stream, subtitle = null)
+    }
+
+    private fun startDownload(
+        episodeUrl: String,
+        stream: StreamOption,
+        subtitle: SubtitleResult?,
+    ) {
         val detail = _uiState.value.detail ?: return
-        val episode = detail.episodes.firstOrNull { it.url == pending.episodeUrl } ?: return
+        val episode = detail.episodes.firstOrNull { it.url == episodeUrl } ?: return
 
         downloads.enqueue(
             sourceId = sourceId,
@@ -455,8 +515,38 @@ class DetailViewModel(
             sourceName = detail.sourceName,
             episode = episode,
             stream = stream,
+            subtitle = subtitle,
         )
         _picker.value = DownloadPickerState.Hidden
+    }
+
+    /**
+     * Searches for subtitles for one episode.
+     *
+     * Empty for anything that cannot be searched - no IMDb or TMDB match, a provider that is
+     * down - which the prompt reports as "none found" and still offers the download.
+     */
+    private suspend fun findSubtitles(episodeUrl: String): List<SubtitleResult> {
+        val detail = _uiState.value.detail ?: return emptyList()
+        val episode = detail.episodes.firstOrNull { it.url == episodeUrl } ?: return emptyList()
+        val language = store.currentSettings().subtitleLanguage
+            .takeIf { it.isNotBlank() && !it.equals("off", ignoreCase = true) }
+            ?: return emptyList()
+
+        val isSeries = !detail.isMovie
+        val query = SubtitleQuery(
+            imdbId = detail.imdbId,
+            tmdbId = detail.tmdbId,
+            // Null for a film: the catalogue holds one as a single entry with no season, and
+            // sending either field filters every result away.
+            season = if (isSeries) episode.season ?: 1 else null,
+            episode = if (isSeries) episode.number.takeIf { it >= 0f }?.toInt() else null,
+            language = language,
+            title = detail.title,
+        )
+        if (query.isUnusable) return emptyList()
+
+        return runCatching { subtitleRepository.search(query) }.getOrDefault(emptyList())
     }
 
     fun dismissDownloadPicker() {
@@ -482,6 +572,7 @@ class DetailViewModel(
             countryResolver: CountryResolver,
             downloads: DownloadController,
             downloadStorage: DownloadStorage,
+            subtitleRepository: SubtitleRepository,
             sourceId: Long,
             animeUrl: String,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
@@ -493,6 +584,7 @@ class DetailViewModel(
                     countryResolver,
                     downloads,
                     downloadStorage,
+                    subtitleRepository,
                     sourceId,
                     animeUrl,
                 ) as T

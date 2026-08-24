@@ -54,6 +54,10 @@ class WatchBoxStore(context: Context) {
                 trailerMuteButton = prefs[Keys.TRAILER_MUTE_BUTTON] ?: false,
                 downloadVolume = prefs[Keys.DOWNLOAD_VOLUME],
                 downloadWifiOnly = prefs[Keys.DOWNLOAD_WIFI_ONLY] ?: true,
+                // Clamped on read as well as on write: a value from a future build, or a
+                // corrupted one, must not be handed to the engine unchecked.
+                downloadConcurrency = (prefs[Keys.DOWNLOAD_CONCURRENCY] ?: 1)
+                    .coerceIn(DOWNLOAD_CONCURRENCY_MIN, DOWNLOAD_CONCURRENCY_MAX),
                 nsfwSourcesEnabled = prefs[Keys.NSFW] ?: false,
                 autoCheckUpdates = prefs[Keys.AUTO_UPDATE_CHECK] ?: true,
                 lastUpdateCheck = prefs[Keys.LAST_UPDATE_CHECK] ?: 0L,
@@ -382,6 +386,14 @@ class WatchBoxStore(context: Context) {
         it[Keys.DOWNLOAD_WIFI_ONLY] = enabled
     }
 
+    suspend fun setDownloadConcurrency(count: Int) = store.edit {
+        it[Keys.DOWNLOAD_CONCURRENCY] = count.coerceIn(
+            DOWNLOAD_CONCURRENCY_MIN,
+            DOWNLOAD_CONCURRENCY_MAX,
+        )
+    }
+
+
     // --------------------------------------------------------- search terms
 
     val recentSearches: Flow<List<String>> = store.data
@@ -456,6 +468,7 @@ class WatchBoxStore(context: Context) {
         val DOWNLOADS = stringPreferencesKey("downloads")
         val DOWNLOAD_VOLUME = stringPreferencesKey("download_volume")
         val DOWNLOAD_WIFI_ONLY = booleanPreferencesKey("download_wifi_only")
+        val DOWNLOAD_CONCURRENCY = intPreferencesKey("download_concurrency")
         val RECENT_SEARCHES = stringPreferencesKey("recent_searches")
     }
 }
@@ -513,6 +526,18 @@ data class AppSettings(
      * allowance.
      */
     val downloadWifiOnly: Boolean = true,
+    /**
+     * How many episodes download at once.
+     *
+     * One by default. Two large files sharing a connection each take twice as long to become
+     * watchable, and on a television sharing bandwidth with playback that is the difference
+     * between watchable and not - so the useful default is the one that finishes something
+     * soonest rather than the one that starts the most.
+     *
+     * Raising it helps where the bottleneck is per-connection rather than the link itself,
+     * which is common on a source that throttles a single stream.
+     */
+    val downloadConcurrency: Int = 1,
     val nsfwSourcesEnabled: Boolean = false,
     val autoCheckUpdates: Boolean = true,
     val lastUpdateCheck: Long = 0L,
@@ -602,3 +627,15 @@ internal const val POSTER_SCALE_MAX = 1.6f
 
 /** Artwork language default: TMDB's English coverage is the most complete. */
 internal const val ARTWORK_LANGUAGE_DEFAULT = "en"
+
+/**
+ * Bounds on how many episodes download at once.
+ *
+ * One at the floor because zero would stall the queue with no way to tell it apart from a
+ * broken download. Five at the ceiling because the constraint is the link rather than the
+ * app: past a handful of connections a home line is saturated, and every download slows
+ * together instead of any one finishing sooner. Media3 also runs several threads inside each
+ * download, so the real connection count is a multiple of this.
+ */
+internal const val DOWNLOAD_CONCURRENCY_MIN = 1
+internal const val DOWNLOAD_CONCURRENCY_MAX = 5

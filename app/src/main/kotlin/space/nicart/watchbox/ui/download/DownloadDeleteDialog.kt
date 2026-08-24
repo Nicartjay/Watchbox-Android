@@ -73,7 +73,13 @@ fun DownloadDeleteDialog(
                     modifier = Modifier.size(22.dp),
                 )
                 Text(
-                    text = stringResource(R.string.download_delete_title),
+                    text = stringResource(
+                        if (target.unfinished) {
+                            R.string.download_cancel_title
+                        } else {
+                            R.string.download_delete_title
+                        },
+                    ),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = tokens.colors.textPrimary,
@@ -83,16 +89,30 @@ fun DownloadDeleteDialog(
             Spacer(Modifier.height(12.dp))
 
             Text(
-                text = if (target.sizeBytes > 0L) {
-                    stringResource(
+                text = when {
+                    // Partial bytes are discarded, which is worth saying: the alternative is
+                    // pausing, and the difference between the two is exactly whether what has
+                    // already downloaded is kept.
+                    target.unfinished && target.sizeBytes > 0L -> stringResource(
+                        R.string.download_cancel_body_sized,
+                        target.label,
+                        formatBytes(target.sizeBytes),
+                    )
+
+                    target.unfinished -> stringResource(
+                        R.string.download_cancel_body,
+                        target.label,
+                    )
+
+                    target.sizeBytes > 0L -> stringResource(
                         R.string.download_delete_body_sized,
                         target.label,
                         formatBytes(target.sizeBytes),
                     )
-                } else {
-                    // A download removed before it wrote anything measurable, where naming a
-                    // size would read as a bug rather than as an answer.
-                    stringResource(R.string.download_delete_body, target.label)
+
+                    // Nothing measurable was written, where naming a size would read as a bug
+                    // rather than as an answer.
+                    else -> stringResource(R.string.download_delete_body, target.label)
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = tokens.colors.textSecondary,
@@ -105,12 +125,24 @@ fun DownloadDeleteDialog(
                 horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
             ) {
                 DialogButton(
-                    label = stringResource(R.string.download_delete_cancel),
+                    label = stringResource(
+                        if (target.unfinished) {
+                            R.string.download_cancel_keep
+                        } else {
+                            R.string.download_delete_cancel
+                        },
+                    ),
                     emphasised = false,
                     onClick = onDismiss,
                 )
                 DialogButton(
-                    label = stringResource(R.string.download_delete_confirm),
+                    label = stringResource(
+                        if (target.unfinished) {
+                            R.string.download_cancel_confirm
+                        } else {
+                            R.string.download_delete_confirm
+                        },
+                    ),
                     emphasised = true,
                     onClick = onConfirm,
                 )
@@ -129,6 +161,14 @@ data class DownloadDeleteTarget(
     val key: String,
     val label: String,
     val sizeBytes: Long,
+    /**
+     * True when the download has not finished.
+     *
+     * Changes the question rather than only the wording: abandoning a transfer in progress and
+     * deleting a file you already have are different decisions, and "Delete download?" asked of
+     * something still downloading reads as though it were already complete.
+     */
+    val unfinished: Boolean = false,
 )
 
 @Composable

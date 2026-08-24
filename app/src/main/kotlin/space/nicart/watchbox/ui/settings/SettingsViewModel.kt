@@ -90,6 +90,15 @@ class SettingsViewModel(
         }
     }
 
+    fun setDownloadConcurrency(count: Int) {
+        viewModelScope.launch {
+            store.setDownloadConcurrency(count)
+            // Applied to the running queue as well as stored, or the change would appear to do
+            // nothing until the app was restarted.
+            downloads.applyConcurrency(count)
+        }
+    }
+
     fun setDownloadVolume(volumeId: String) {
         viewModelScope.launch {
             store.setDownloadVolume(volumeId)

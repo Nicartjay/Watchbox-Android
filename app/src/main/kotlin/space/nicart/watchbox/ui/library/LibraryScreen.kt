@@ -250,6 +250,7 @@ private fun DownloadsTab(
                             label = entry.episodeName.ifBlank { entry.title },
                             sizeBytes = live?.bytesDownloaded?.takeIf { it > 0 }
                                 ?: entry.sizeBytes,
+                            unfinished = !entry.isComplete,
                         ),
                     )
                 },
