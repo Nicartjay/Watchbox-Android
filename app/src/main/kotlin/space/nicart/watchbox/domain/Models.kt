@@ -326,6 +326,30 @@ data class StreamOption(
         get() = url.substringBefore('?').endsWith(".mpd", ignoreCase = true)
 
     val isHls: Boolean get() = !isDash && url.contains(".m3u8", ignoreCase = true)
+
+    /**
+     * True when the stream is served by a proxy running inside the extension.
+     *
+     * Some extensions do not hand back the real media URL at all: they start an HTTP server in
+     * their own process and return a `localhost` address that relays to it, which is how they
+     * add headers a player cannot be told to send.
+     *
+     * That works for playback, where the proxy is alive for as long as the video is on screen.
+     * It cannot work for a download, which outlives the page that started it - and the port is
+     * chosen fresh each session, so a stored URL points at a port nothing is listening on. The
+     * observed failure is an immediate 403 with nothing transferred.
+     *
+     * Matched on the host rather than the port, since the port is exactly the part that varies.
+     */
+    val isLocalProxy: Boolean
+        get() = LOOPBACK_HOSTS.any { host ->
+            url.startsWith("http://$host:", ignoreCase = true) ||
+                url.startsWith("https://$host:", ignoreCase = true)
+        }
+
+    private companion object {
+        val LOOPBACK_HOSTS = listOf("localhost", "127.0.0.1", "[::1]")
+    }
 }
 
 data class SubtitleOption(

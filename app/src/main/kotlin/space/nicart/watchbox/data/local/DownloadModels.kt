@@ -47,6 +47,14 @@ data class DownloadEntry(
      */
     val isAdaptive: Boolean = false,
     /**
+     * True when the download is a single remuxed file rather than a Media3 cache entry.
+     *
+     * Set for streams FFmpeg had to fetch, which are the ones served through a proxy inside the
+     * extension. Playback reads these straight from [downloadUri] as a plain file - no cache key
+     * and no manifest - and they cannot be paused, because an ffmpeg session has no resume point.
+     */
+    val isRemuxed: Boolean = false,
+    /**
      * The URI the download was fetched from.
      *
      * Kept only for adaptive streams, where it is the cache key for the manifest itself. Its

@@ -79,10 +79,17 @@ class DownloadStorage(private val context: Context) {
      * warning. Named from the download's key so the files can be found again, and removed with
      * it.
      */
-    fun subtitleDir(volumeId: String?, downloadKey: String): File {
-        val safe = downloadKey.map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
-        return File(File(resolveRoot(volumeId), SUBTITLE_DIR), safe).apply { mkdirs() }
-    }
+    fun subtitleDir(volumeId: String?, downloadKey: String): File =
+        File(File(resolveRoot(volumeId), SUBTITLE_DIR), downloadKey.toFileName()).apply { mkdirs() }
+
+    /**
+     * Where a remuxed download is written.
+     *
+     * A single Matroska file, outside the Media3 cache directory: that directory is Media3's to
+     * own and it prunes anything absent from its own index, which this would be.
+     */
+    fun remuxFile(volumeId: String?, downloadKey: String): File =
+        File(File(resolveRoot(volumeId), REMUX_DIR).apply { mkdirs() }, "${downloadKey.toFileName()}.mkv")
 
     /** Deletes an episode's subtitle files. Called when its download is removed. */
     fun deleteSubtitles(volumeId: String?, downloadKey: String) {
@@ -109,6 +116,38 @@ class DownloadStorage(private val context: Context) {
             ?: 0L
     }
 
+    /**
+     * A filesystem-safe, length-bounded name for a download key.
+     *
+     * Hashed rather than sanitised. A key carries the episode URL, and some sources encode their
+     * whole session into that - Anikoto's are around 300 characters of base64 - so escaping the
+     * unsafe characters produced a name well past the 255-byte limit every Android filesystem
+     * enforces. ffmpeg reported it plainly as "File name too long" and the download failed at the
+     * moment of writing, after the video had already been fetched.
+     *
+     * A truncated key was the obvious alternative and is wrong: these keys differ only in their
+     * tail, so cutting them short makes two episodes of the same show collide and overwrite one
+     * another. The hash keeps them distinct at a fixed length.
+     *
+     * The title fragment on the front is for a human looking at the directory; correctness rests
+     * entirely on the hash that follows it.
+     */
+    private fun String.toFileName(): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(toByteArray())
+            .joinToString("") { "%02x".format(it) }
+            .take(32)
+
+        // The leading readable part is bounded too, since the source id alone can be 19 digits.
+        val readable = substringBefore("::")
+            .plus("_")
+            .plus(substringAfter("::").substringBefore("::").takeLast(24))
+            .filter { it.isLetterOrDigit() || it == '_' || it == '-' }
+            .take(48)
+
+        return "${readable}_$digest"
+    }
+
     private companion object {
         /**
          * Sits beside the Media3 download cache rather than containing it.
@@ -126,6 +165,9 @@ class DownloadStorage(private val context: Context) {
          * files exist only for the downloads they belong to.
          */
         const val SUBTITLE_DIR = "subtitles"
+
+        /** Remuxed single-file downloads, beside the cache rather than inside it. */
+        const val REMUX_DIR = "files"
     }
 }
 
