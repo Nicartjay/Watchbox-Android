@@ -147,7 +147,7 @@ or off independently.
 | 🧭 **Browse** | Popular and latest per source, with filters and a button that opens the source's own site |
 | 🧩 **Extensions** | Multiple repositories, each switchable; filter by language, adult content and repository; per-extension settings; load failures surfaced rather than hidden |
 | 📄 **Detail** | Parallax hero, collapsing floating header, expanding action row, episode list in blocks of fifty for long runs, a Videos tab of TMDB trailers, where-to-watch by country, studio logos, reviews, and source metadata parsed out of markdown |
-| ▶️ **Player** | Media3/ExoPlayer with HLS, DASH and progressive files, quality/subtitle/speed pickers, episode switcher, aspect cycling, gesture seek, brightness and volume swipes, lock mode |
+| ▶️ **Player** | Media3/ExoPlayer with HLS, DASH and progressive files, quality/subtitle/speed pickers, skip recap/intro/outro, episode switcher, aspect cycling, gesture seek, brightness and volume swipes, lock mode |
 | ⬇️ **Downloads** | Episodes and films kept for offline viewing, with subtitles; quality chosen per download; pause, resume and cancel; storage usage and an SD-card option |
 | 💬 **Subtitles** | Online search and download; size, background style, outline width, colour and opacity; and timing correction measured from the video itself — adjustable from Settings or inside the player |
 | 📡 **Casting** | Chromecast and DLNA in one list, with a header-injecting local proxy and a Web Video Caster hand-off |
@@ -492,6 +492,11 @@ app/src/main/kotlin/
 - **One TMDB request per detail page, not seven.** `append_to_response` folds videos,
   providers, reviews, keywords, ratings, alternative titles and external ids into the same
   payload for the same rate-limit cost.
+- **Two skip-timestamp sources, tried in order.** AniSkip is keyed on a MyAnimeList id, so
+  it holds anime and nothing else; IntroDB is keyed on an IMDb id, which covers the rest.
+  AniSkip goes first for anime because it judges an interval against the episode's own
+  length and rejects a submission from a different release, where IntroDB has no such
+  check — so it is the better fallback rather than the better default.
 - **Two download engines, split by format.** Media3's segment downloader could not fetch
   the HLS these sources serve — each segment, key and variant playlist is its own request,
   and the CDNs refused them however headers were applied, while the same stream played
@@ -635,6 +640,9 @@ provided derivative works stay under the GPL-3.0 and ship their source. See
 - **Typeface** — JetBrains Sans (Apache-2.0).
 - **Metadata and artwork** — [TMDB](https://www.themoviedb.org/). This product uses
   the TMDB API but is not endorsed or certified by TMDB.
+- **Skip timestamps** — [AniSkip](https://github.com/aniskip) for anime, and
+  [IntroDB](https://introdb.app/) for everything else. Both are community-submitted and
+  read anonymously.
 
 ---
 
