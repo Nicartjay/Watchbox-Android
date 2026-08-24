@@ -55,7 +55,7 @@ class UpdateChecker(
         // Matched to this build's form factor. A release carries both a phone and a
         // TV APK, and taking the first .apk would install the wrong UI - a TV would
         // download the touch build and become unusable with a remote.
-        val asset = selectApkAsset(release.assets.orEmpty(), formFactor)
+        val asset = selectApkAsset(release.assets.orEmpty(), formFactor, deviceAbis())
 
         when {
             compareVersions(remote, currentVersion) <= 0 -> UpdateResult.UpToDate
@@ -164,6 +164,7 @@ class UpdateChecker(
         internal fun selectApkAsset(
             assets: List<GithubAsset>,
             formFactor: String,
+            abis: List<String>,
         ): GithubAsset? {
             val apks = assets.filter { it.name.endsWith(".apk", ignoreCase = true) }
             if (apks.isEmpty()) return null
@@ -174,25 +175,66 @@ class UpdateChecker(
 
             // Matched positively in both directions rather than by negation. Treating
             // "not TV" as "mobile" would accept any other variant that might appear in
-            // a release - a wear or ABI-split APK - as the phone build.
-            return if (wantsTv) {
-                tvAssets.firstOrNull()
+            // a release as the phone build.
+            val forFormFactor = if (wantsTv) {
+                tvAssets
             } else {
-                (apks - tvAssets.toSet()).firstOrNull { it.name.matchesMobileNaming() }
+                apks - tvAssets.toSet()
             }
+
+            // Then by architecture, in the order the device prefers them.
+            //
+            // Releases carry one APK per ABI because FFmpeg's native libraries are too large to
+            // ship together. Build.SUPPORTED_ABIS is already ordered best-first, so a 64-bit
+            // device takes the arm64 build and falls back to the 32-bit one where only that was
+            // published.
+            abis.forEach { abi ->
+                forFormFactor.firstOrNull { it.name.contains("-$abi.apk", ignoreCase = true) }
+                    ?.let { return it }
+            }
+
+            // A release from before the split, which published one APK per form factor with no
+            // architecture in the name. Still installable, so still offered.
+            //
+            // Matched positively against the exact naming rather than as "whatever is left".
+            // Accepting anything without an ABI suffix would hand a `-wear` or any other future
+            // variant to the phone build, which is the defect the strict match exists to stop.
+            return forFormFactor.firstOrNull { it.name.matchesLegacyNaming(wantsTv) }
+        }
+
+        /**
+         * The architectures this device runs, best first.
+         *
+         * Read through a function so the selection logic stays testable without a device.
+         */
+        private fun deviceAbis(): List<String> =
+            android.os.Build.SUPPORTED_ABIS?.toList().orEmpty()
+
+        /**
+         * Architectures a release may be split by.
+         *
+         * Used to recognise a name as ABI-qualified, so an older unqualified release is not
+         * mistaken for one and skipped.
+         */
+        private val KNOWN_ABIS = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+
+        /**
+         * Whether a name is the pre-split naming for [wantsTv].
+         *
+         * `watchbox-<version>.apk`, or `watchbox-<version>-tv.apk`, and nothing more: a name
+         * carrying any other qualifier is some third artifact, not this build.
+         */
+        private fun String.matchesLegacyNaming(wantsTv: Boolean): Boolean {
+            val pattern = if (wantsTv) {
+                """^watchbox-[0-9][^-]*-tv\.apk$"""
+            } else {
+                """^watchbox-[0-9][^-]*\.apk$"""
+            }
+            return Regex(pattern, RegexOption.IGNORE_CASE).matches(this)
         }
 
         /** Marks the television APK in a release. Set by the release workflow. */
         private const val TV_ASSET_MARKER = "-tv"
-
-        /**
-         * Whether a name looks like the phone APK.
-         *
-         * `watchbox-<version>.apk` and nothing more: a name carrying any other
-         * qualifier is some third artifact, not this build.
-         */
-        private fun String.matchesMobileNaming(): Boolean =
-            Regex("""^watchbox-[0-9][^-]*\.apk$""", RegexOption.IGNORE_CASE).matches(this)
 
         fun compareVersions(a: String, b: String): Int {
             val left = a.toVersionParts()

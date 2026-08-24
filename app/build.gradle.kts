@@ -143,12 +143,30 @@ android {
         }
     }
 
+    // One APK per architecture, because of FFmpeg.
+    //
+    // It ships full native libraries per ABI - libavcodec alone is 13 MB each - so a universal
+    // APK carried every copy and grew from about 10 MB to 133 MB. Two things cut that back:
+    //
+    //  * x86 is dropped outright. x86 Android is emulators and a few retired Chromebooks, and
+    //    both run ARM builds through translation, so those 57 MB served no real device.
+    //  * The two ARM builds ship separately rather than together, which halves what anyone
+    //    installs: about 50 MB each instead of one 75 MB file carrying both.
+    //
+    // The release workflow names each output by ABI, and the updater matches on that name.
     splits {
         abi {
-            // Universal-only for simplicity: one APK that installs anywhere.
-            isEnable = false
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            // No universal APK: it would be the 75 MB file this split exists to avoid, and
+            // the updater would have to choose between it and the right one.
+            isUniversalApk = false
         }
     }
+
+    // No ndk.abiFilters here: Gradle refuses both at once, and the split's own include list
+    // already restricts which architectures are built.
 
     buildFeatures {
         compose = true
@@ -209,6 +227,23 @@ android {
             excludes += "/META-INF/DEPENDENCIES"
             excludes += "/META-INF/INDEX.LIST"
         }
+
+        jniLibs {
+            // aniyomi-mpv-lib is pulled in for the two libraries ffmpeg-kit links against but
+            // does not ship: libpostproc and libxml2. Both are real dependencies - libavfilter
+            // needs the first, libavformat the second - and their absence fails at dlopen rather
+            // than at build time, so it surfaces on the first download and not in CI.
+            //
+            // The list came from reading DT_NEEDED across every ffmpeg-kit .so rather than from
+            // assumption: an earlier version of this block excluded libxml2 on the guess that it
+            // belonged to mpv, which simply moved the crash from libpostproc to libxml2.
+            //
+            // What is dropped is mpv itself, which this app does not use - about 26 MB.
+            excludes += setOf(
+                "**/libmpv.so",
+                "**/libplayer.so",
+            )
+        }
     }
 
     lint {
@@ -245,6 +280,31 @@ dependencies {
     implementation(libs.compose.material.icons.extended)
     implementation(libs.compose.animation)
     debugImplementation(libs.compose.ui.tooling)
+
+    // Video download muxer, for streams Media3's downloader cannot fetch.
+    //
+    // Needed because some extensions do not return a real media URL: they run an HTTP proxy
+    // inside their own process and hand back a localhost address on a port chosen fresh each
+    // session. Media3 persists a download and works through it in a background service, by
+    // which point that proxy is gone - so those downloads fail instantly with a 403 and no
+    // bytes. FFmpeg resolves the manifest and pulls every segment in one session, while the
+    // proxy is still alive, which is how the Aniyomi family downloads them.
+    implementation(libs.ffmpeg.kit)
+
+    // ffmpeg-kit reaches for this from its own static initialiser but its POM declares no
+    // dependencies at all, so nothing pulls it in. Missing, the very first ffmpeg call throws
+    // NoClassDefFoundError - and a -dontwarn rule silences the build warning while leaving the
+    // crash in place, which is exactly what happened here.
+    implementation(libs.arthenica.smartexception)
+
+    // Only for libpostproc.so.
+    //
+    // ffmpeg-kit's libavfilter.so declares a hard link against libpostproc, and the ffmpeg-kit
+    // artifact ships no copy of it - so loading ffmpeg fails outright with "library
+    // libpostproc.so not found". The two are built together upstream and published apart, and
+    // this is where the missing half lives. The packaging block below keeps that one file and
+    // drops the 26 MB of mpv that comes with it.
+    implementation(libs.aniyomi.mpv.lib)
 
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.hls)

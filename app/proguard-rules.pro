@@ -163,6 +163,16 @@
 -keep class space.nicart.watchbox.download.MediaDownloadService { *; }
 -keep class androidx.media3.exoplayer.scheduler.PlatformScheduler$PlatformSchedulerService { *; }
 
+# ------------------------------------------------------------------ FFmpeg
+# ffmpeg-kit is reached through JNI from its own native libraries, so R8 must not
+# rename or remove the classes those callbacks land on.
+-keep class com.arthenica.ffmpegkit.** { *; }
+
+# smartexception is now a real dependency rather than a suppressed warning: ffmpeg-kit
+# calls it from its static initialiser, so -dontwarn only moved the failure from build
+# time to the first download. Kept because it is reached reflectively.
+-keep class com.arthenica.smartexception.** { *; }
+
 # --------------------------------------------------------------------- Coil
 -dontwarn coil.**
 

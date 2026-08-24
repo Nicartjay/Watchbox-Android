@@ -16,6 +16,17 @@ androidx-datastore = "1.1.7"
 androidx-media3 = "1.6.1"
 androidx-palette = "1.0.0"
 
+# Video download muxer. jmir1's fork is the one the Aniyomi family uses; the upstream
+# ffmpeg-kit was retired and its artifacts pulled.
+ffmpeg-kit = "1.17"
+# ffmpeg-kit calls this from its static initialiser but declares no dependency on it,
+# so it has to be added by hand or the first call dies with NoClassDefFoundError.
+arthenica-smartexception = "0.2.1"
+# Carries libpostproc.so, which ffmpeg-kit's libavfilter links against but which the
+# ffmpeg-kit artifact does not ship. Only that one library is kept; see the packaging
+# block in app/build.gradle.kts.
+aniyomi-mpv-lib = "1.17.n"
+
 compose-bom = "2025.05.00"
 compose-compiler-ext = "1.5.15"
 
@@ -40,6 +51,9 @@ kotlinx-serialization = "1.8.1"
 kotlinx-coroutines = "1.10.2"
 
 [libraries]
+ffmpeg-kit = { module = "com.github.jmir1:ffmpeg-kit", version.ref = "ffmpeg-kit" }
+arthenica-smartexception = { module = "com.arthenica:smart-exception-java", version.ref = "arthenica-smartexception" }
+aniyomi-mpv-lib = { module = "com.github.aniyomiorg:aniyomi-mpv-lib", version.ref = "aniyomi-mpv-lib" }
 # AndroidX core
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
 androidx-splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "androidx-splashscreen" }

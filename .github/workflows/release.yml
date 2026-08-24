@@ -184,27 +184,43 @@ jobs:
 
       - name: Rename APKs
         id: apk
-        # The names are load-bearing: UpdateChecker.selectApkAsset matches the TV
-        # build on a "-tv" suffix and the phone build on the bare name, so a release
-        # asset renamed by hand will send devices the wrong APK.
+        # The names are load-bearing: UpdateChecker.selectApkAsset matches the TV build on a
+        # "-tv" marker and the device's architecture on an "-arm64-v8a" / "-armeabi-v7a"
+        # marker, so an asset renamed by hand will send devices the wrong APK.
+        #
+        # Four outputs now, not two. FFmpeg ships native libraries per architecture, so the
+        # build splits by ABI rather than shipping one APK carrying every copy - see the
+        # splits block in app/build.gradle.kts.
         run: |
           version="${{ steps.version.outputs.version }}"
+          names=()
 
-          mobile_src="$(find app/build/outputs/apk/mobile -name '*-release.apk' | head -1)"
-          tv_src="$(find app/build/outputs/apk/tv -name '*-release.apk' | head -1)"
+          for flavor in mobile tv; do
+            for abi in arm64-v8a armeabi-v7a; do
+              src="$(find "app/build/outputs/apk/${flavor}" -name "*${abi}*-release.apk" | head -1)"
 
-          for pair in "mobile:${mobile_src}" "tv:${tv_src}"; do
-            if [[ -z "${pair#*:}" ]]; then
-              echo "::error::No release APK for ${pair%%:*}." >&2
-              exit 1
-            fi
+              if [[ -z "${src}" ]]; then
+                echo "::error::No ${abi} release APK for ${flavor}." >&2
+                exit 1
+              fi
+
+              # watchbox-<version>[-tv]-<abi>.apk
+              suffix=""
+              [[ "${flavor}" == "tv" ]] && suffix="-tv"
+              out="watchbox-${version}${suffix}-${abi}.apk"
+
+              mv "${src}" "${out}"
+              names+=("${out}")
+            done
           done
 
-          mv "${mobile_src}" "watchbox-${version}.apk"
-          mv "${tv_src}" "watchbox-${version}-tv.apk"
+          # Newline-separated, because the upload step takes a multi-line path list.
+          {
+            echo "files<<EOF"
+            printf '%s\n' "${names[@]}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
 
-          echo "mobile=watchbox-${version}.apk" >> "${GITHUB_OUTPUT}"
-          echo "tv=watchbox-${version}-tv.apk" >> "${GITHUB_OUTPUT}"
           ls -lh watchbox-*.apk
 
       - name: Upload artifact
@@ -212,8 +228,7 @@ jobs:
         with:
           name: watchbox-${{ steps.version.outputs.version }}
           path: |
-            ${{ steps.apk.outputs.mobile }}
-            ${{ steps.apk.outputs.tv }}
+            ${{ steps.apk.outputs.files }}
           if-no-files-found: error
           retention-days: 90
 
@@ -257,11 +272,9 @@ jobs:
 
           if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
             echo "Release already exists; uploading the APKs to it instead."
+            # shellcheck disable=SC2046
             gh release upload "${{ steps.version.outputs.tag }}" \
-              "${{ steps.apk.outputs.mobile }}" \
-              "${{ steps.apk.outputs.tv }}" --clobber
+              watchbox-*.apk --clobber
           else
-            gh release create "${args[@]}" \
-              "${{ steps.apk.outputs.mobile }}" \
-              "${{ steps.apk.outputs.tv }}"
+            gh release create "${args[@]}" watchbox-*.apk
           fi
