@@ -151,9 +151,12 @@ jobs:
             exit 1
           fi
 
+          # Four now, not two: two form factors times two architectures. FFmpeg ships
+          # native libraries per ABI, so the build splits rather than carrying every copy
+          # in one APK - see the splits block in app/build.gradle.kts.
           count=$(wc -l <<< "${apks}")
-          if [[ "${count}" -ne 2 ]]; then
-            echo "::error::Expected 2 release APKs (mobile + tv), found ${count}." >&2
+          if [[ "${count}" -ne 4 ]]; then
+            echo "::error::Expected 4 release APKs (mobile/tv x arm64-v8a/armeabi-v7a), found ${count}." >&2
             echo "${apks}" >&2
             exit 1
           fi
