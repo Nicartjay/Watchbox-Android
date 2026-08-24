@@ -87,6 +87,23 @@ class SubtitleRepository(
     }
 
     /**
+     * Fetches a subtitle's text from a remote URL.
+     *
+     * Exposed for downloads, which have to put a source-supplied track on disk rather than
+     * hand its URL to the player: those URLs are signed like the stream's own and expire within
+     * minutes, so an offline copy holding one would show no subtitles.
+     *
+     * Returns empty for anything unreadable, which the caller treats as "skip this track"
+     * rather than as a failure worth reporting.
+     */
+    suspend fun rawText(
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+    ): String = withContext(Dispatchers.IO) {
+        runCatching { api.fetchText(url, headers) }.getOrDefault("")
+    }
+
+    /**
      * The best match for [language] among [results], or null when none is close enough.
      *
      * Exact language first, then the base language of a regional tag - `pt-BR` satisfies a

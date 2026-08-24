@@ -172,8 +172,16 @@ class SubtitleApi(private val client: HttpClient) {
      * detected from the payload's magic bytes for the same reason [download] does it: the
      * legacy provider serves compressed files without always saying so.
      */
-    suspend fun fetchText(url: String): String {
-        val response = client.get(url) { header("User-Agent", LEGACY_AGENT) }
+    suspend fun fetchText(url: String, extraHeaders: Map<String, String> = emptyMap()): String {
+        val response = client.get(url) {
+            header("User-Agent", LEGACY_AGENT)
+            // A source's own subtitle sits on the same CDN as its video and is gated the same
+            // way, so it needs the Referer the extension supplied. Without these the request
+            // came back 403 and the track was silently skipped.
+            extraHeaders.forEach { (name, value) ->
+                if (!name.equals("User-Agent", ignoreCase = true)) header(name, value)
+            }
+        }
         if (!response.status.isSuccess()) return ""
 
         val bytes = response.bodyAsChannel().toInputStream().use { it.readBytes() }
