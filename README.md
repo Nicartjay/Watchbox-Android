@@ -10,15 +10,16 @@
 [![License](https://img.shields.io/github/license/Nicartjay/Watchbox-Android?style=for-the-badge&color=6C5CE7)](LICENSE)
 [![Issues](https://img.shields.io/github/issues/Nicartjay/Watchbox-Android?style=for-the-badge&color=6C5CE7&logo=github)](https://github.com/Nicartjay/Watchbox-Android/issues)
 
-[![Platform](https://img.shields.io/badge/Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#%EF%B8%8F-download)
-[![Platform](https://img.shields.io/badge/Android_TV-6C5CE7?style=for-the-badge&logo=youtube&logoColor=white)](#%EF%B8%8F-download)
+[![Platform](https://img.shields.io/badge/Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)](#%EF%B8%8F-get-the-app)
+[![Platform](https://img.shields.io/badge/Android_TV-6C5CE7?style=for-the-badge&logo=youtube&logoColor=white)](#%EF%B8%8F-get-the-app)
 [![Kotlin](https://img.shields.io/badge/Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](#-tech-stack)
 [![Compose](https://img.shields.io/badge/Jetpack_Compose-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white)](#-tech-stack)
 
 [**Overview**](#-overview) ·
-[**Download**](#%EF%B8%8F-download) ·
+[**Get the app**](#%EF%B8%8F-get-the-app) ·
 [**First run**](#-first-run) ·
 [**Features**](#-features) ·
+[**Downloads**](#%EF%B8%8F-downloads) ·
 [**Casting**](#-casting) ·
 [**Build**](#-build) ·
 [**Architecture**](#-architecture) ·
@@ -36,9 +37,9 @@ Content comes entirely from **user-installed Aniyomi-compatible extensions**. Th
 ships no sources, no extension repository, and hosts no media of its own — it is the
 player and the library, and you decide what it reads from.
 
-| 📺 Two real UIs | 🔌 Extension-driven | 📡 Cast anywhere | 💬 Subtitles |
+| 📺 Two real UIs | 🔌 Extension-driven | 📡 Cast anywhere | ⬇️ Watch offline |
 |---|---|---|---|
-| Separate phone and big-screen builds | Aniyomi lib 12–15 | Chromecast + DLNA | Search, download, style |
+| Separate phone and big-screen builds | Aniyomi lib 12–15 | Chromecast + DLNA | Downloads with subtitles |
 
 > [!NOTE]
 > The interface is a deliberate port of
@@ -48,16 +49,28 @@ player and the library, and you decide what it reads from.
 
 ---
 
-## ⬇️ Download
+## ⬇️ Get the app
 
 Grab the latest build from the **[Releases](https://github.com/Nicartjay/Watchbox-Android/releases/latest)**
-page. Two APKs per release — pick by **screen size**, not by whether the device is
-"mobile":
+page. Four APKs per release — pick by **screen size**, then by **architecture**:
 
 | APK | Recommended for |
 |---|---|
-| 📱 `watchbox-X.Y.Z.apk` | Phones — portrait-first, thumb-reachable, touch affordances |
-| 📺 `watchbox-X.Y.Z-tv.apk` | **Tablets**, Android TV, Google TV, TV boxes |
+| 📱 `watchbox-X.Y.Z-arm64-v8a.apk` | Phones — portrait-first, thumb-reachable, touch affordances |
+| 📱 `watchbox-X.Y.Z-armeabi-v7a.apk` | Older 32-bit phones |
+| 📺 `watchbox-X.Y.Z-tv-arm64-v8a.apk` | **Tablets**, Android TV, Google TV, TV boxes |
+| 📺 `watchbox-X.Y.Z-tv-armeabi-v7a.apk` | Older 32-bit TV boxes |
+
+Take **arm64-v8a** unless the device is genuinely old; everything from roughly 2016
+onward is 64-bit. Installing the wrong architecture fails at launch rather than at
+install, so if the app dies immediately, try the other one.
+
+> [!NOTE]
+> The split exists because of FFmpeg. It ships native libraries per architecture —
+> `libavcodec` alone is 13 MB each — so a single universal APK carrying every copy came
+> to 133 MB. One architecture per APK brings that back to about 35 MB. x86 is not built
+> at all: it is emulators and a few retired Chromebooks, both of which run ARM builds
+> through translation.
 
 > [!TIP]
 > **On a tablet, install the TV APK.** A tablet has the screen area the big-screen UI
@@ -87,18 +100,22 @@ Neither of these is a bug:
 <summary><b>Switching between the two builds</b></summary>
 
 The in-app updater picks its APK from the build's own form factor, decided at compile
-time, and matches release assets by filename. A tablet running the TV build therefore
-keeps getting TV builds, which is what you want. It also means:
+time, and from the device's own architecture, and matches release assets by filename. A
+tablet running the TV build therefore keeps getting TV builds, which is what you want.
+It also means:
 
 - Switching between them is a manual uninstall and reinstall — the differing package
   names make them separate apps, not an upgrade path. Library and settings do not
   carry across.
-- Renaming release assets by hand sends devices the wrong build. The `-tv` suffix is
-  load-bearing.
+- Renaming release assets by hand sends devices the wrong build. Both the `-tv` marker
+  and the architecture suffix are load-bearing.
+- A 64-bit device falls back to a 32-bit build where only that was published, but never
+  the reverse: the wrong architecture fails at load rather than at install.
 
 </details>
 
-**Requirements:** Android 7.0 (API 24) or newer. `targetSdk` is 36.
+**Requirements:** Android 7.0 (API 24) or newer, on ARM. `targetSdk` is 36. x86 is not
+built — see the note above.
 
 > [!TIP]
 > WatchBox checks GitHub Releases for new versions and can update itself from
@@ -130,11 +147,12 @@ or off independently.
 | 🧭 **Browse** | Popular and latest per source, with filters and a button that opens the source's own site |
 | 🧩 **Extensions** | Multiple repositories, each switchable; filter by language, adult content and repository; per-extension settings; load failures surfaced rather than hidden |
 | 📄 **Detail** | Parallax hero, collapsing floating header, expanding action row, episode list in blocks of fifty for long runs, a Videos tab of TMDB trailers, where-to-watch by country, studio logos, reviews, and source metadata parsed out of markdown |
-| ▶️ **Player** | Media3/ExoPlayer with HLS + MP4, quality/subtitle/speed pickers, episode switcher, aspect cycling, gesture seek, brightness and volume swipes, lock mode |
+| ▶️ **Player** | Media3/ExoPlayer with HLS, DASH and progressive files, quality/subtitle/speed pickers, episode switcher, aspect cycling, gesture seek, brightness and volume swipes, lock mode |
+| ⬇️ **Downloads** | Episodes and films kept for offline viewing, with subtitles; quality chosen per download; pause, resume and cancel; storage usage and an SD-card option |
 | 💬 **Subtitles** | Online search and download; size, background style, outline width, colour and opacity; and timing correction measured from the video itself — adjustable from Settings or inside the player |
 | 📡 **Casting** | Chromecast and DLNA in one list, with a header-injecting local proxy and a Web Video Caster hand-off |
-| 📚 **Library** | My List, in-progress, and full watch history |
-| ⚙️ **Settings** | Seven accent themes, display scaling, auto-play-next, repository management, subtitle appearance and provider, 18+ toggle |
+| 📚 **Library** | My List, in-progress, full watch history, and Downloads |
+| ⚙️ **Settings** | Seven accent themes, display scaling, auto-play-next, repository management, subtitle appearance and provider, download storage and concurrency, 18+ toggle |
 | ⬆️ **Updates** | Checked once a day on launch, prompting to install or skip — the APK is fetched and handed to the system installer |
 
 <details>
@@ -168,6 +186,60 @@ scaling from one shared definition. Nothing is broken there; it is simply the
 smaller-screen design given more room.
 
 </details>
+
+---
+
+## ⬇️ Downloads
+
+Press the download icon on an episode row — or beside **Play** for a film, which has no
+episode list to carry one — pick a server, and it downloads for offline viewing.
+Finished downloads appear under **Library → Downloads** and play with no network at all.
+
+**Two engines, chosen by format.** This is not a preference; each covers what the other
+cannot:
+
+| Stream | Engine | Pause / resume | Survives a restart |
+|---|---|---|---|
+| Progressive file (MP4, MKV) | Media3 | yes | yes |
+| HLS, DASH | FFmpeg | no | no |
+| Served via the extension's own proxy | FFmpeg | no | no |
+
+Media3's segment downloader issues each segment, key and variant playlist as its own
+request, and several CDNs behind HLS refuse those however the headers are applied — while
+the same stream plays perfectly. FFmpeg reads the manifest and pulls the whole graph in
+one session, which is what works. The cost is that an ffmpeg session is a single process
+invocation with no resume point, so those downloads restart rather than continue.
+
+Subtitles come down with the video. Where the source supplies its own they are muxed into
+the file — those are cut for that exact release. Where it supplies none, the download
+prompt offers what is available online and lets you proceed without one.
+
+<details>
+<summary><b>What to expect, and why</b></summary>
+
+- **Quality is asked for, not assumed.** Source labels advertise anything from 850 MB to
+  66 GB for one episode, so choosing silently risks most of a phone's free space.
+- **A segmented download shows a percentage from a duration probe**, not a byte total: a
+  manifest declares no total size until it finishes.
+- **Progressive downloads can pause; segmented ones cannot.** The control offers cancel
+  instead, rather than appearing to pause and discarding the transfer.
+- **Long-press cancels an unfinished download** and discards what it wrote. Tap keeps its
+  own meaning, so cancel needs a separate gesture.
+- **Storage can be an SD card** where the device has one — useful on a TV box with 16 GB
+  internal. Switching does not move existing files, and a download on a card that has been
+  removed is reported as unavailable rather than deleted.
+- **Wi-Fi only is the default**, and applies to both engines.
+- **Concurrency is one by default**, adjustable to five. More is not always faster: past a
+  couple of downloads the connection is the limit and everything slows together.
+
+</details>
+
+> [!WARNING]
+> **A source that streams through its own in-process proxy can still fail.** Some
+> extensions return a `localhost` URL on a port chosen fresh each session; FFmpeg is used
+> for exactly that reason, but if a server answers with something that is not media —
+> usually an error page served with HTTP 200 — the download fails where playback would
+> have worked. Another server for the same episode generally does.
 
 ---
 
@@ -263,7 +335,11 @@ extension would call members this app does not implement.
 - **Extensions are private to this app.** Stored in internal storage rather than
   installed system-wide, which avoids needing `REQUEST_INSTALL_PACKAGES` and
   `QUERY_ALL_PACKAGES` — but means they are not shared with other Aniyomi clients.
-- **No downloads and no tracker sync.**
+- **No tracker sync.**
+- **Downloads depend on the source.** A stream Media3 cannot fetch goes through FFmpeg
+  instead, which covers HLS, DASH and proxied streams — but a server answering with
+  something that is not media fails where playback would not. See
+  [Downloads](#%EF%B8%8F-downloads).
 
 </details>
 
@@ -284,7 +360,9 @@ echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties
 ./gradlew :app:assembleMobileDebug
 ```
 
-APKs land in `app/build/outputs/apk/mobile/debug/` and `app/build/outputs/apk/tv/debug/`.
+APKs land in `app/build/outputs/apk/mobile/debug/` and `app/build/outputs/apk/tv/debug/`,
+one per architecture — `app-tv-arm64-v8a-debug.apk` and `app-tv-armeabi-v7a-debug.apk`.
+Take the arm64 one unless the device is 32-bit.
 
 Task names are flavor-aware: `assembleRelease` does not exist — use
 `assembleMobileRelease` / `assembleTvRelease`.
@@ -309,8 +387,9 @@ the user. It survives as a build constant for forks that want to hardcode one.
 <details>
 <summary><b>Releasing</b></summary>
 
-`.github/workflows/release.yml` builds a minified release APK and publishes it. Run it
-from the **Actions** tab with one of three modes:
+`.github/workflows/release.yml` builds minified release APKs — four of them, two form
+factors times two architectures — and publishes them. Run it from the **Actions** tab
+with one of three modes:
 
 | Mode | Effect |
 |---|---|
@@ -318,7 +397,7 @@ from the **Actions** tab with one of three modes:
 | `draft` | Build and create a **draft** GitHub Release |
 | `publish` | Build and publish the Release |
 
-Pushing a `v*` tag (e.g. `v3.5.4`) publishes automatically and takes the version from
+Pushing a `v*` tag (e.g. `v4.9.9`) publishes automatically and takes the version from
 the tag name. `versionCode` comes from the workflow run number so it always increases,
 which Android requires for in-place upgrades. A local build defaults to `1`, so a
 locally built APK will not install over a released one.
@@ -362,6 +441,7 @@ app/src/main/kotlin/
     ├── core/ui/                  Design tokens, theme, type scale
     ├── data/local/               DataStore: history, watchlist, settings, repos
     ├── domain/                   UI models + AnimeRepository
+    ├── download/                 Two engines, registry, storage, foreground services
     ├── extension/                Loader, classloader, repo index, installer
     └── ui/                       home, browse, detail, player, search, library,
                                   settings, extensions, components, navigation
@@ -412,6 +492,20 @@ app/src/main/kotlin/
 - **One TMDB request per detail page, not seven.** `append_to_response` folds videos,
   providers, reviews, keywords, ratings, alternative titles and external ids into the same
   payload for the same rate-limit cost.
+- **Two download engines, split by format.** Media3's segment downloader could not fetch
+  the HLS these sources serve — each segment, key and variant playlist is its own request,
+  and the CDNs refused them however headers were applied, while the same stream played
+  fine. FFmpeg reads the manifest and pulls the graph in one session. Progressive files
+  stay on Media3, which keeps pause and resume-after-restart that an ffmpeg session cannot
+  offer.
+- **A download is keyed by episode, and its filename hashed.** Stream URLs are signed and
+  expire within minutes, so a cache keyed by URL could never find a finished download
+  again. The key carries the episode URL, which some sources fill with a whole session —
+  hashing keeps the filename inside the 255-byte limit without two episodes of one show
+  colliding, which truncating would cause silently.
+- **The filesystem is the authority for a download, not the registry.** A remuxed file is
+  a plain file no index knows about, so reconciliation checks it on disk; judging it by
+  Media3's index deleted finished downloads while their video sat there orphaned.
 - **Two flavors rather than one combined APK.** A single build carrying both
   `LAUNCHER` and `LEANBACK_LAUNCHER` works, but ships the TV UI to every phone and
   makes the two impossible to install side by side.
@@ -432,7 +526,7 @@ app/src/main/kotlin/
 ./gradlew :app:testMobileDebugUnitTest :app:testTvDebugUnitTest
 ```
 
-1012 unit tests, run in CI. They deliberately cover only pure logic whose failures are
+1148 unit tests, run in CI. They deliberately cover only pure logic whose failures are
 *silent* on a device — HLS URI rewriting, DLNA SOAP envelopes, subtitle parsing and
 conversion, subtitle sync arithmetic, cast stream selection, gesture maths, remote key
 mapping, filter application, deep-link parsing, TMDB title matching — because those
@@ -440,8 +534,10 @@ break in ways that look like missing data rather than errors. Anything better ch
 by looking at the screen is not unit-tested.
 
 A few pin things that are otherwise invisible: the mangled JVM names of the
-`kotlin.time.Duration` rate-limit overloads extensions link against, and the list keys
-that Compose treats as fatal when repeated.
+`kotlin.time.Duration` rate-limit overloads extensions link against, the list keys that
+Compose treats as fatal when repeated, and — from bugs that reached a device — that a
+download filename stays inside the filesystem's length limit without two episodes of one
+show colliding, and that reconciliation never drops a download the other engine owns.
 
 </details>
 
@@ -450,7 +546,7 @@ that Compose treats as fatal when repeated.
 ## 🧰 Tech stack
 
 Kotlin 2.1 · Compose BOM 2025.05 · Material 3 · Navigation-Compose (typed routes) ·
-Media3 1.6 · Ktor 3.1 · Coil 2.7 · DataStore · kotlinx.serialization ·
+Media3 1.6 · ffmpeg-kit 1.17 · Ktor 3.1 · Coil 2.7 · DataStore · kotlinx.serialization ·
 play-services-cast 22 · androidx.mediarouter 1.7
 
 **Extension runtime:** okhttp 5.3.2 (+ brotli) · rxjava 1.3.8 · jsoup 1.22.1 ·
@@ -465,8 +561,10 @@ No. It ships no sources and hosts nothing. All content comes from extensions you
 choose to install, from repositories you choose to add.
 
 **Which APK should I download?**
-Phones: `watchbox-X.Y.Z.apk`. Tablets, Android TV and TV boxes:
-`watchbox-X.Y.Z-tv.apk`. On a tablet the TV build is the better experience.
+Phones: `watchbox-X.Y.Z-arm64-v8a.apk`. Tablets, Android TV and TV boxes:
+`watchbox-X.Y.Z-tv-arm64-v8a.apk`. On a tablet the TV build is the better experience.
+Take `armeabi-v7a` only on a genuinely old 32-bit device — the wrong architecture fails
+at launch rather than at install.
 
 **Why are there no extensions after installing?**
 The app ships with no repository on purpose — see [First run](#-first-run).
@@ -479,6 +577,20 @@ emptying.
 **Chromecast finds no devices — why?**
 Chromecast discovery needs genuine Google Play Services. Devices with a sideloaded or
 spoofed GMS register no cast routes at all. DLNA still works.
+
+**Can I watch downloads with no connection?**
+Yes. A finished download plays from disk with no network and no call into the extension,
+whether opened from Library → Downloads or from the title's own page.
+
+**Why can I pause some downloads but not others?**
+A progressive file is fetched by Media3, which can pause and resume it. HLS and DASH go
+through FFmpeg, which has no resume point — those offer cancel instead, rather than
+appearing to pause and quietly discarding the transfer. See
+[Downloads](#%EF%B8%8F-downloads).
+
+**Why is the APK so much larger than it used to be?**
+FFmpeg's native libraries. They are what make HLS and DASH downloadable at all. Releases
+are split per architecture so you install one copy rather than four.
 
 **Can I install both builds at once?**
 Yes — different package names, so they coexist. They do not share library or settings.
