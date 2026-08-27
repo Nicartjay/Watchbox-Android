@@ -348,4 +348,113 @@ class StreamFacetsTest {
     fun `returns null for an empty stream list`() {
         assertNull(defaultStream(emptyList(), 1080))
     }
+
+    // ------------------------------------------- resolutions carrying detail
+
+    /**
+     * The shape an expanded HLS master produces.
+     *
+     * The extension names each variant from the manifest, so the resolution part
+     * arrives with the pixel dimensions and bitrate attached. Requiring the part
+     * to be exactly "1080p" read this as no resolution at all, which filtered
+     * every such stream out of the quality panel and hid its button.
+     */
+    @Test
+    fun `reads a resolution that carries dimensions and bitrate`() {
+        val facets = StreamFacets.parse("Jay/Lisbon · 1080p (1920x1080) - 4.50 MB/s · HLS")
+
+        assertEquals("Jay/Lisbon", facets.server)
+        assertEquals("1080p", facets.quality)
+    }
+
+    @Test
+    fun `keeps the bitrate as detail so two rows at one height differ`() {
+        val facets = StreamFacets.parse("Jay/Lisbon · 1080p (1920x1080) - 4.50 MB/s · HLS")
+
+        // Without this the panel numbers them 1080p-1 / 1080p-2 with nothing to
+        // say which is which.
+        assertEquals("(1920x1080) - 4.50 MB/s · HLS", facets.detail)
+    }
+
+    @Test
+    fun `reads a resolution with dimensions but no bitrate`() {
+        val facets = StreamFacets.parse("Jay/Castle · 720p (1280x720) · HLS")
+
+        assertEquals("720p", facets.quality)
+        assertEquals("(1280x720) · HLS", facets.detail)
+    }
+
+    @Test
+    fun `still reads a bare resolution`() {
+        val facets = StreamFacets.parse("Yoru · 1080p · HLS · Original audio · 12 subs")
+
+        assertEquals("1080p", facets.quality)
+        assertEquals("Original audio", facets.dub)
+    }
+
+    @Test
+    fun `normalises a capitalised height so it is one choice`() {
+        assertEquals("1080p", StreamFacets.parse("Srv · 1080P · HLS").quality)
+    }
+
+    @Test
+    fun `reads a bare 4K and shows it in upper case`() {
+        assertEquals("4K", StreamFacets.parse("Srv · 4k · HLS").quality)
+    }
+
+    @Test
+    fun `does not read a file size as a resolution`() {
+        // Anchoring at the start is what prevents this: "66.39 GB" contains
+        // digits but no height, and a loose match would have made it the quality.
+        val facets = StreamFacets.parse("Art/4k-Hub · 2160p · BluRay · HEVC · 66.39 GB · MKV")
+
+        assertEquals("2160p", facets.quality)
+        assertEquals("BluRay · HEVC · 66.39 GB · MKV", facets.detail)
+    }
+
+    @Test
+    fun `groups two bitrates at one height into a single quality choice`() {
+        // The reported bug: four heights looked like none, so the pill vanished
+        // and only the audio one appeared.
+        val streams = listOf(
+            stream("Jay/Lisbon · 2160p (3840x2160) - 12.1 MB/s · HLS", 2160),
+            stream("Jay/Lisbon · 1080p (1920x1080) - 4.50 MB/s · HLS", 1080),
+            stream("Jay/Lisbon · 1080p (1920x1080) - 2.20 MB/s · HLS", 1080),
+            stream("Jay/Lisbon · 720p (1280x720) - 1.10 MB/s · HLS", 720),
+        )
+
+        val choices = streams.qualityChoices(server = "Jay/Lisbon", dub = null)
+
+        assertEquals(4, choices.size)
+        assertEquals(listOf("2160p", "1080p-1", "1080p-2", "720p"), choices.map { it.label })
+    }
+
+    @Test
+    fun `offers the resolutions an expanded master carries`() {
+        val streams = listOf(
+            stream("Jay/Solara · 1080p (1920x1080) - 4.50 MB/s · HLS", 1080),
+            stream("Jay/Solara · 720p (1280x720) - 1.10 MB/s · HLS", 720),
+        )
+
+        // More than one, which is what makes the quality pill appear at all.
+        assertEquals(2, streams.qualityChoices(server = "Jay/Solara", dub = null).size)
+    }
+
+    @Test
+    fun `survives a label with no resolution at all`() {
+        // The pre-existing contract: an unparseable label still yields facets and
+        // the stream stays reachable through the flat list.
+        val facets = StreamFacets.parse("Breach · Auto · HLS")
+
+        assertNull(facets.quality)
+        assertEquals("Breach", facets.server)
+        assertEquals("Auto · HLS", facets.detail)
+    }
+
+    @Test
+    fun `does not read a bare year or bitrate as a resolution`() {
+        // "1080" without the p is not a height, and a four digit number is
+        // otherwise exactly the shape the regex looks for.
+        assertNull(StreamFacets.parse("Srv · 2019 · HLS").quality)
+    }
 }

@@ -43,8 +43,24 @@ internal data class StreamFacets(
     companion object {
         private const val SEPARATOR = '·'
 
-        /** `1080p`, `2160p`, or a bare `4K`. */
-        private val RESOLUTION = Regex("""^(\d{3,4})p$|^4k$""", RegexOption.IGNORE_CASE)
+        /**
+         * `1080p`, `2160p`, or a bare `4K`, with anything the source appended.
+         *
+         * Deliberately not anchored at the end. An HLS master expanded by the
+         * extension names its variants from the manifest, which yields
+         * `1080p (1920x1080) - 4.50 MB/s` rather than a bare height, and an
+         * exactly-anchored match read that as no resolution at all: every such
+         * stream was filtered out of the quality panel, which then saw one
+         * distinct quality and hid its own button. A server offering four
+         * heights looked like it offered none, and only the audio pill appeared.
+         *
+         * Still anchored at the start, so a size or bitrate elsewhere in the
+         * label cannot be mistaken for a resolution.
+         */
+        private val RESOLUTION = Regex("""^(?:(\d{3,4})p|4k)\b""", RegexOption.IGNORE_CASE)
+
+        /** The `1080p` or `4K` at the front of a resolution part, without its trailing detail. */
+        private val RESOLUTION_HEAD = Regex("""^(?:\d{3,4}p|4k)""", RegexOption.IGNORE_CASE)
 
         /**
          * Audio descriptors, as the sources word them.
@@ -76,18 +92,50 @@ internal data class StreamFacets(
             val server = parts.first()
             val rest = parts.drop(1)
 
-            val quality = rest.firstOrNull { RESOLUTION.matches(it) }
+            val qualityPart = rest.firstOrNull { RESOLUTION.containsMatchIn(it) }
+
+            // Reduced to the height alone. The part may carry the manifest's own
+            // trailing detail - `1080p (1920x1080) - 4.50 MB/s` - which is useful
+            // for telling two rows apart but not as a pill label, and grouping on
+            // the full string would make every bitrate its own "resolution".
+            //
+            // Lowercased so `1080P` and `1080p` are one choice rather than two,
+            // with 4K special-cased because it reads wrong in lower case.
+            val quality = qualityPart
+                ?.let { RESOLUTION_HEAD.find(it)?.value }
+                ?.lowercase()
+                ?.let { if (it == "4k") "4K" else it }
 
             val dub = rest.firstOrNull { part ->
-                part != quality &&
+                part != qualityPart &&
                     part.lowercase() !in NOT_AUDIO &&
                     !SUBTITLE_COUNT.matches(part) &&
                     AUDIO.containsMatchIn(part)
             }
 
-            // Whatever is left tells two same-resolution releases apart.
+            // Whatever is left tells two same-resolution releases apart. The
+            // resolution part contributes whatever followed the height, kept in
+            // its original position, so a server listing one height at several
+            // bitrates still has something to distinguish its rows by.
+            val qualityRemainder = qualityPart
+                ?.let { RESOLUTION_HEAD.replaceFirst(it, "") }
+                // Only the separator the source used to attach it is removed. A
+                // blanket trim of brackets unbalanced "(1920x1080)" into
+                // "1920x1080)", because the opening one is adjacent to the height
+                // and the closing one is not.
+                ?.trim()
+                ?.removePrefix("-")
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+
             val detail = rest
-                .filter { it != quality && it != dub }
+                .flatMap { part ->
+                    when (part) {
+                        qualityPart -> listOfNotNull(qualityRemainder)
+                        dub -> emptyList()
+                        else -> listOf(part)
+                    }
+                }
                 .joinToString(" · ")
                 .takeIf { it.isNotBlank() }
 
