@@ -10,6 +10,8 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import okhttp3.OkHttpClient
 import space.nicart.watchbox.domain.StreamOption
@@ -49,6 +51,11 @@ object PlayerFactory {
     /**
      * Builds a player whose media requests carry whatever [headerProvider]
      * returns at the moment each request is made.
+     *
+     * [onMediaSourceFactory] hands the assembled factory back to the caller. Building a
+     * merged source needs the very same chain the player uses - cache wrapper, per-request
+     * headers and all - and rebuilding it separately would read a sideloaded audio track
+     * without the Referer its CDN checks, or straight past a downloaded copy.
      */
     fun create(
         context: Context,
@@ -60,6 +67,7 @@ object PlayerFactory {
          * engine: given nothing, it behaves exactly as it did before downloads existed.
          */
         cacheWrapper: ((androidx.media3.datasource.DataSource.Factory) -> androidx.media3.datasource.DataSource.Factory)? = null,
+        onMediaSourceFactory: (DefaultMediaSourceFactory) -> Unit = {},
     ): ExoPlayer {
         val httpFactory = OkHttpDataSource.Factory { request -> okHttp.newCall(request) }
             .setUserAgent(DEFAULT_USER_AGENT)
@@ -102,8 +110,11 @@ object PlayerFactory {
                 .build()
         }
 
+        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+        onMediaSourceFactory(mediaSourceFactory)
+
         return ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+            .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .setTrackSelector(trackSelector)
             .setSeekBackIncrementMs(10_000)
@@ -165,6 +176,56 @@ object PlayerFactory {
                     .build(),
             )
             .build()
+    }
+
+    /**
+     * Wraps [item] so the stream's separate audio URLs play alongside it.
+     *
+     * Some sources deliver audio as its own playlist rather than muxed into the video -
+     * an HLS master naming `#EXT-X-MEDIA:TYPE=AUDIO` with a `URI` of its own. The video
+     * rendition then carries no audio at all, and playing the item by itself is silent.
+     * Merging attaches each audio URL as a parallel source, which both restores sound and
+     * makes the tracks selectable like any embedded one.
+     *
+     * Returns null when there is nothing to merge, so the caller keeps the plain
+     * `setMediaItem` path for the overwhelming majority of streams.
+     */
+    fun buildMergedSource(
+        item: MediaItem,
+        audioTracks: List<SubtitleOption>,
+        factory: DefaultMediaSourceFactory,
+    ): MediaSource? {
+        val usable = audioTracks.filter { it.url.isNotBlank() }
+        if (usable.isEmpty()) return null
+
+        val video = factory.createMediaSource(item)
+
+        val audio = usable.map { track ->
+            // No MIME type: an audio playlist arrives as a bare URL and the extension does
+            // not say what it is, so declaring one would override ExoPlayer's sniffing the
+            // way it used to for .mkv. The title is carried for diagnostics only - the
+            // picker names these from the source's own list, because a merged rendition's
+            // media usually has no label or language of its own.
+            val audioItem = MediaItem.Builder()
+                .setUri(android.net.Uri.parse(track.url))
+                .setMediaMetadata(
+                    androidx.media3.common.MediaMetadata.Builder()
+                        .setTitle(track.label)
+                        .build(),
+                )
+                .build()
+            factory.createMediaSource(audioItem)
+        }
+
+        // adjustPeriodTimeOffsets is off: these renditions describe the same timeline as the
+        // video, so shifting them would desync the audio. clipDurations is off as well,
+        // because an audio playlist can report a slightly different duration and clipping to
+        // the shortest would cut the end off the episode.
+        return MergingMediaSource(
+            /* adjustPeriodTimeOffsets = */ false,
+            /* clipDurations = */ false,
+            *(listOf(video) + audio).toTypedArray(),
+        )
     }
 }
 

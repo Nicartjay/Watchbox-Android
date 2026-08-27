@@ -182,11 +182,21 @@ fun PlayerScreen(
     val downloadEngine = (context.applicationContext as WatchBoxApplication)
         .container
         .downloadEngine
+    // Kept so a stream with separate audio URLs can be merged through the very same chain
+    // the player reads with - cache wrapper and per-request headers included.
+    //
+    // A plain holder rather than state: it is written once while the player is built and
+    // only ever read inside an effect, so making it observable would invite a recomposition
+    // for a value that never changes again.
+    val mediaSourceFactory = remember {
+        arrayOfNulls<androidx.media3.exoplayer.source.DefaultMediaSourceFactory>(1)
+    }
     val exoPlayer = remember {
         PlayerFactory.create(
             context = context,
             headerProvider = { headerHolder.value },
             cacheWrapper = { upstream -> downloadEngine.cacheAwareFactory(upstream) },
+            onMediaSourceFactory = { mediaSourceFactory[0] = it },
         )
     }
 
@@ -560,10 +570,12 @@ fun PlayerScreen(
     LaunchedEffect(state.selectedStream?.url) { selectedEmbeddedIndex = -1 }
 
     /**
-     * Audio tracks inside the stream, in container order.
+     * Audio tracks the player can choose between, in track-group order.
      *
-     * Unlike the text tracks there is nothing to exclude - the app never sideloads audio,
-     * so every group here came out of the file.
+     * Covers both kinds at once. A file's own tracks come first, then any the source
+     * delivered as separate playlists and this screen merged in - the merge appends its
+     * sources after the video, so the tail of the list lines up with the stream's own
+     * audio list, exactly as it does for sideloaded subtitles.
      */
     val embeddedAudioGroups = remember(tracks) {
         tracks?.groups.orEmpty()
@@ -571,16 +583,20 @@ fun PlayerScreen(
     }
 
     val audioTrackFallback = stringResource(R.string.player_audio_track)
-    val embeddedAudioTracks = remember(embeddedAudioGroups, audioTrackFallback) {
+    val sideloadedAudio = state.selectedStream?.audioTracks.orEmpty()
+    val embeddedAudioTracks = remember(embeddedAudioGroups, audioTrackFallback, sideloadedAudio) {
+        val offset = mergedAudioOffset(embeddedAudioGroups.size, sideloadedAudio.size)
+
         embeddedAudioGroups.mapIndexed { index, group ->
             val format = group.mediaTrackGroup.getFormat(0)
-            EmbeddedAudioTrack(
-                label = audioTrackLabel(
-                    rawLabel = format.label,
-                    language = format.language,
-                    fallback = "$audioTrackFallback ${index + 1}",
-                ),
-                language = format.language.orEmpty(),
+            val supplied = sideloadedAudio.getOrNull(index - offset)
+
+            mergedAudioTrack(
+                containerLabel = format.label,
+                containerLanguage = format.language,
+                suppliedLabel = supplied?.label,
+                suppliedLanguage = supplied?.language,
+                fallback = "$audioTrackFallback ${index + 1}",
             )
         }
     }
@@ -684,7 +700,12 @@ fun PlayerScreen(
     // Only for the same episode, though. Switching episode rebuilds the item too, and carrying the
     // position across meant a new episode opened at wherever the last one had reached - so the
     // position is used only when it belongs to the episode being prepared.
-    LaunchedEffect(state.selectedStream?.url, state.subtitles.map { it.url }) {
+    LaunchedEffect(
+        state.selectedStream?.url,
+        state.subtitles.map { it.url },
+        // Merged audio is part of the source, so it can only change by rebuilding it.
+        state.selectedStream?.audioTracks?.map { it.url },
+    ) {
         val stream = state.selectedStream ?: return@LaunchedEffect
         val episodeUrl = state.episode?.url
         val sameEpisode = positionEpisodeUrl != null && positionEpisodeUrl == episodeUrl
@@ -704,17 +725,32 @@ fun PlayerScreen(
         // working server look broken.
         playbackError = null
 
-        exoPlayer.setMediaItem(
-            PlayerFactory.buildMediaItem(
-                stream = stream,
-                subtitles = state.subtitles,
-                title = state.title,
-                // Present only for a downloaded episode, and the reason its bytes can be
-                // found: the cache was written under this key rather than under the URL,
-                // which has long since expired.
-                cacheKey = state.offlineCacheKey,
-            ),
+        val mediaItem = PlayerFactory.buildMediaItem(
+            stream = stream,
+            subtitles = state.subtitles,
+            title = state.title,
+            // Present only for a downloaded episode, and the reason its bytes can be
+            // found: the cache was written under this key rather than under the URL,
+            // which has long since expired.
+            cacheKey = state.offlineCacheKey,
         )
+
+        // A stream whose audio is a separate playlist has to be merged, or it plays silent:
+        // the video rendition carries no audio track of its own. Everything else takes the
+        // plain path, so the common case is untouched.
+        val merged = mediaSourceFactory[0]?.let { factory ->
+            PlayerFactory.buildMergedSource(
+                item = mediaItem,
+                audioTracks = stream.audioTracks,
+                factory = factory,
+            )
+        }
+
+        if (merged != null) {
+            exoPlayer.setMediaSource(merged)
+        } else {
+            exoPlayer.setMediaItem(mediaItem)
+        }
         exoPlayer.prepare()
         if (resumeFrom > 0) exoPlayer.seekTo(resumeFrom)
 

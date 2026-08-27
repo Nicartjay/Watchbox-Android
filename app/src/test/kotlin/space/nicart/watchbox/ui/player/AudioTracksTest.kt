@@ -156,4 +156,107 @@ class AudioTracksTest {
 
         assertEquals(0, tracks.indexOfLanguage("en"))
     }
+
+    // ------------------------------------------------- merged (sideloaded) audio
+
+    @Test
+    fun `pairs the tail of the group list with the source's audio`() {
+        // One track in the file, two merged in: the merge appends after the video, so the
+        // last two groups are the source's.
+        assertEquals(1, mergedAudioOffset(groupCount = 3, suppliedCount = 2))
+    }
+
+    @Test
+    fun `offset passes the end when every track came from the file`() {
+        // Nothing was merged, so the offset lands past the last group and every lookup for
+        // a source label misses - which is what leaves a file's own tracks named by their
+        // own metadata.
+        val offset = mergedAudioOffset(groupCount = 2, suppliedCount = 0)
+
+        assertEquals(2, offset)
+        assertEquals(-1, 1 - offset)
+    }
+
+    @Test
+    fun `offset clamps at zero before the groups arrive`() {
+        // The stream declares audio but no track group has been parsed yet. A negative
+        // offset here would pair a file's own track with someone else's label.
+        assertEquals(0, mergedAudioOffset(groupCount = 0, suppliedCount = 2))
+    }
+
+    @Test
+    fun `names a merged track from what the source said`() {
+        // The usual case for a separate audio playlist: the media carries no metadata at
+        // all, because the naming lived in the master playlist.
+        val result = mergedAudioTrack(
+            containerLabel = null,
+            containerLanguage = null,
+            suppliedLabel = "English",
+            suppliedLanguage = "English",
+            fallback = "Audio track 2",
+        )
+
+        assertEquals("English", result.label)
+        assertEquals("English", result.language)
+    }
+
+    @Test
+    fun `prefers the container over the source`() {
+        val result = mergedAudioTrack(
+            containerLabel = "Japanese 5.1",
+            containerLanguage = "ja",
+            suppliedLabel = "Japanese",
+            suppliedLanguage = "ja",
+            fallback = "Audio track 1",
+        )
+
+        assertEquals("Japanese 5.1", result.label)
+        assertEquals("ja", result.language)
+    }
+
+    @Test
+    fun `an undetermined container language does not beat the source`() {
+        // "und" is what a container writes when it does not know. Letting it win would
+        // store an unmatchable preference, and the choice would not carry to the next
+        // episode.
+        val result = mergedAudioTrack(
+            containerLabel = null,
+            containerLanguage = "und",
+            suppliedLabel = "English",
+            suppliedLanguage = "en",
+            fallback = "Audio track 1",
+        )
+
+        assertEquals("en", result.language)
+    }
+
+    @Test
+    fun `falls back when neither names the track`() {
+        val result = mergedAudioTrack(
+            containerLabel = null,
+            containerLanguage = null,
+            suppliedLabel = null,
+            suppliedLanguage = null,
+            fallback = "Audio track 3",
+        )
+
+        assertEquals("Audio track 3", result.label)
+        assertEquals("", result.language)
+    }
+
+    @Test
+    fun `a merged track stays selectable by the name the source gave it`() {
+        // End to end: the source names a track "English" with no code, so it is stored by
+        // label - and this is what finds it again on the next episode.
+        val merged = mergedAudioTrack(
+            containerLabel = null,
+            containerLanguage = null,
+            suppliedLabel = "English",
+            suppliedLanguage = "English",
+            fallback = "Audio track 2",
+        )
+        val tracks = listOf(track("Japanese", "ja"), merged)
+
+        assertEquals(1, tracks.indexOfLanguage("English"))
+    }
 }

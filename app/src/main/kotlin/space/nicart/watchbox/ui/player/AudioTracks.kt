@@ -67,3 +67,44 @@ internal fun List<EmbeddedAudioTrack>.indexOfLanguage(preferred: String): Int {
 
 private fun String.primarySubtag(): String =
     trim().substringBefore('-').substringBefore('_').lowercase()
+
+/**
+ * Names a track from the container's own metadata, falling back to what the source said.
+ *
+ * A track merged in from a separate playlist carries no label and frequently no language,
+ * because that information lived in the master playlist rather than in the media. The
+ * extension read it there, so its naming is all that identifies such a track - without
+ * this a row read "Audio track 2" for something the source called "English".
+ *
+ * [suppliedLabel] and [suppliedLanguage] are null for a track that came out of the file
+ * itself, which is why the container is consulted first.
+ */
+internal fun mergedAudioTrack(
+    containerLabel: String?,
+    containerLanguage: String?,
+    suppliedLabel: String?,
+    suppliedLanguage: String?,
+    fallback: String,
+): EmbeddedAudioTrack = EmbeddedAudioTrack(
+    label = audioTrackLabel(
+        rawLabel = containerLabel ?: suppliedLabel,
+        language = containerLanguage ?: suppliedLanguage,
+        fallback = fallback,
+    ),
+    // "und" is what a container writes when it does not know, so it must not beat a real
+    // answer from the source - otherwise the stored preference matches nothing and the
+    // choice fails to carry to the next episode.
+    language = containerLanguage?.takeIf { it.isNotBlank() && !it.equals("und", true) }
+        ?: suppliedLanguage.orEmpty(),
+)
+
+/**
+ * Index into the track-group list where the source's own audio playlists begin.
+ *
+ * Merging appends its sources after the video, so the tail of the group list lines up with
+ * the stream's audio list - the same arrangement sideloaded subtitles rely on. Clamped at
+ * zero because the groups may not have arrived yet, and a negative offset would pair a
+ * file's own track with a label belonging to something else.
+ */
+internal fun mergedAudioOffset(groupCount: Int, suppliedCount: Int): Int =
+    (groupCount - suppliedCount).coerceAtLeast(0)
