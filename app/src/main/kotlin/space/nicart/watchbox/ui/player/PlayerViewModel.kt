@@ -128,6 +128,14 @@ data class PlayerUiState(
      * only noticeable once something is being watched.
      */
     val subtitleOffsetMs: Long = 0L,
+    /**
+     * Preferred embedded-audio language as an ISO 639 code, or empty for no preference.
+     *
+     * Carries across episodes and files: a viewer who picks the English track of a dual-audio
+     * release means it for the next episode too, and only a language survives that jump
+     * because track order differs between releases.
+     */
+    val audioLanguage: String = "",
     /** In-progress two-tap sync measurement, idle when nothing has been marked. */
     val syncCalibration: SyncCalibration = SyncCalibration(),
     /**
@@ -260,6 +268,7 @@ class PlayerViewModel(
                 autoPlayNext = settings.autoPlayNext,
                 backgroundPlayback = settings.backgroundPlayback,
                 subtitleOffsetMs = settings.subtitleOffsetMs,
+                audioLanguage = settings.audioLanguage,
             )
             loadDetail()
         }
@@ -487,6 +496,21 @@ class PlayerViewModel(
                     )
                 }
         }
+    }
+
+    /**
+     * Remembers [language] as the preferred embedded-audio language.
+     *
+     * Blank clears the preference, returning the choice to Media3's own default. Stored
+     * unconditionally, unlike the subtitle equivalent: an audio track's language comes from
+     * the container rather than a scraped label, so there is no bad value to guard against.
+     */
+    fun setAudioLanguage(language: String) {
+        val code = language.trim()
+        if (code == _uiState.value.audioLanguage) return
+
+        _uiState.value = _uiState.value.copy(audioLanguage = code)
+        viewModelScope.launch { store.setAudioLanguage(code) }
     }
 
     // ---------------------------------------------------------- selections

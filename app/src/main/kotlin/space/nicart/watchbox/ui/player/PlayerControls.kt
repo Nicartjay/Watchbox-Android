@@ -218,6 +218,11 @@ fun PlayerControlsOverlay(
     playFocusRequester: FocusRequester? = null,
     /** Reports the play button's focus, so the caller's retry can stop guessing. */
     onPlayFocusChanged: (Boolean) -> Unit = {},
+    /**
+     * How many audio tracks the stream carries, used only to decide whether the audio
+     * pill is worth showing.
+     */
+    audioTrackCount: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -289,6 +294,7 @@ fun PlayerControlsOverlay(
                 onSeek = onSeek,
                 onCycleAspect = onCycleAspect,
                 onOpenPanel = onOpenPanel,
+                audioTrackCount = audioTrackCount,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
@@ -571,6 +577,8 @@ private fun ProgressControls(
     onSeek: (Long) -> Unit,
     onCycleAspect: () -> Unit,
     onOpenPanel: (PlayerPanel) -> Unit,
+    /** Audio tracks inside the stream; see [PlayerControlsOverlay]. */
+    audioTrackCount: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     val isFocusDriven = LocalLayoutMetrics.current.isFocusDriven
@@ -705,8 +713,10 @@ private fun ProgressControls(
                     // neither fits the row nor says which part is selectable.
                     //
                     // Each pill appears only when there is a choice to make: one
-                    // server means no server pill, and a server whose streams label
-                    // no audio has no dub pill.
+                    // server means no server pill, and audio needs either several
+                    // labelled streams or several tracks in the file. A dual-audio
+                    // MKV from a source offering one stream is the second case, and
+                    // counting dubs alone left its tracks unreachable.
                     val facets = state.selectedStream?.facets
                     val servers = state.streams.serverOptions()
                     // Counted as rows, not as distinct resolutions: a server
@@ -730,7 +740,7 @@ private fun ProgressControls(
                             onClick = { onOpenPanel(PlayerPanel.QUALITY) },
                         )
                     }
-                    if (dubs.size > 1) {
+                    if (dubs.size > 1 || audioTrackCount > 1) {
                         ActionPill(
                             icon = Icons.Rounded.Translate,
                             label = facets?.dub ?: stringResource(R.string.player_dub),

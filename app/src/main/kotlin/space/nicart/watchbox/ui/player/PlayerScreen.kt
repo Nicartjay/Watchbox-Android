@@ -559,6 +559,43 @@ fun PlayerScreen(
     // playing, so an index kept across a switch would point at a different track.
     LaunchedEffect(state.selectedStream?.url) { selectedEmbeddedIndex = -1 }
 
+    /**
+     * Audio tracks inside the stream, in container order.
+     *
+     * Unlike the text tracks there is nothing to exclude - the app never sideloads audio,
+     * so every group here came out of the file.
+     */
+    val embeddedAudioGroups = remember(tracks) {
+        tracks?.groups.orEmpty()
+            .filter { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO }
+    }
+
+    val audioTrackFallback = stringResource(R.string.player_audio_track)
+    val embeddedAudioTracks = remember(embeddedAudioGroups, audioTrackFallback) {
+        embeddedAudioGroups.mapIndexed { index, group ->
+            val format = group.mediaTrackGroup.getFormat(0)
+            EmbeddedAudioTrack(
+                label = audioTrackLabel(
+                    rawLabel = format.label,
+                    language = format.language,
+                    fallback = "$audioTrackFallback ${index + 1}",
+                ),
+                language = format.language.orEmpty(),
+            )
+        }
+    }
+
+    /**
+     * The active audio track, derived from the stored language rather than held as state.
+     *
+     * Keeping it derived is what makes the preference work across episodes: the next file's
+     * track list arrives, this recomputes against it, and the right track is chosen without
+     * anything having to remember an index that would not have transferred anyway.
+     */
+    val selectedAudioIndex = remember(embeddedAudioTracks, state.audioLanguage) {
+        embeddedAudioTracks.indexOfLanguage(state.audioLanguage)
+    }
+
     // --- player listener
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
@@ -805,6 +842,35 @@ fun PlayerScreen(
         }
 
         exoPlayer.trackSelectionParameters = builder.build()
+    }
+
+    // --- embedded audio track selection
+    //
+    // Overrides the group rather than setting a preferred language, because a release can tag
+    // two tracks with one language - a dub and its commentary both "eng" - and a language
+    // preference cannot separate those. The stored language picks the index; the override
+    // pins the exact group.
+    LaunchedEffect(embeddedAudioGroups, selectedAudioIndex) {
+        val group = embeddedAudioGroups.getOrNull(selectedAudioIndex)
+
+        // No preference, or a file with nothing matching it: Media3's default stands. Its
+        // choice is usually right, and overriding to track 0 here would override the
+        // original audio of every file that happens not to carry the stored language.
+        if (group == null) {
+            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                .buildUpon()
+                .clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_AUDIO)
+                .build()
+            return@LaunchedEffect
+        }
+
+        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+            .buildUpon()
+            .clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_AUDIO)
+            .addOverride(
+                androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0),
+            )
+            .build()
     }
 
     // --- position ticker + throttled history writes
@@ -1290,6 +1356,7 @@ fun PlayerScreen(
                 castDeviceName = castState.deviceName,
                 playFocusRequester = playFocusRequester,
                 onPlayFocusChanged = { playHasFocus = it },
+                audioTrackCount = embeddedAudioTracks.size,
                 onOpenCast = {
                     castPanelOpen = true
                     // Requested here rather than at startup: it is only needed for
@@ -1379,6 +1446,17 @@ fun PlayerScreen(
             selectedEmbeddedIndex = selectedEmbeddedIndex,
             onSelectEmbedded = { index ->
                 selectedEmbeddedIndex = index
+                openPanel = PlayerPanel.NONE
+            },
+            embeddedAudioTracks = embeddedAudioTracks,
+            selectedAudioIndex = selectedAudioIndex,
+            onSelectAudioTrack = { index ->
+                // Stored as a language, so the choice carries to the next episode. A track
+                // the container left untagged falls back to its label, which at least
+                // matches the same release again.
+                embeddedAudioTracks.getOrNull(index)?.let { track ->
+                    viewModel.setAudioLanguage(track.language.ifBlank { track.label })
+                }
                 openPanel = PlayerPanel.NONE
             },
             onDismiss = { openPanel = PlayerPanel.NONE },

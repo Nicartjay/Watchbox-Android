@@ -78,6 +78,7 @@ class WatchBoxStore(context: Context) {
                 ),
                 subtitleOffsetMs = prefs[Keys.SUB_OFFSET] ?: 0L,
                 subtitleLanguage = prefs[Keys.SUB_LANG] ?: "en",
+                audioLanguage = prefs[Keys.AUDIO_LANG].orEmpty(),
                 artworkLanguage = prefs[Keys.ARTWORK_LANG] ?: ARTWORK_LANGUAGE_DEFAULT,
                 subtitleProvider = enumOrDefault(
                     prefs[Keys.SUB_PROVIDER],
@@ -241,6 +242,7 @@ class WatchBoxStore(context: Context) {
         it[Keys.SUB_EDGE_WIDTH] = width.name
     }
     suspend fun setSubtitleLanguage(lang: String) = store.edit { it[Keys.SUB_LANG] = lang }
+    suspend fun setAudioLanguage(lang: String) = store.edit { it[Keys.AUDIO_LANG] = lang }
     suspend fun setSubtitleProvider(provider: SubtitleProvider) = store.edit {
         it[Keys.SUB_PROVIDER] = provider.name
     }
@@ -457,6 +459,7 @@ class WatchBoxStore(context: Context) {
         val UI_SCALE = floatPreferencesKey("ui_scale")
         val POSTER_SCALE = floatPreferencesKey("poster_scale")
         val SUB_LANG = stringPreferencesKey("subtitle_language")
+        val AUDIO_LANG = stringPreferencesKey("audio_language")
         val ARTWORK_LANG = stringPreferencesKey("artwork_language")
         val SUB_PROVIDER = stringPreferencesKey("subtitle_provider")
         val SUB_API_KEY = stringPreferencesKey("subtitle_api_key")
@@ -557,6 +560,15 @@ data class AppSettings(
     /** Multiplier applied to poster and card sizes only. */
     val posterScale: Float = 1f,
     val subtitleLanguage: String = "en",
+    /**
+     * Preferred language for embedded audio tracks, as an ISO 639 code.
+     *
+     * Empty means no preference, which leaves the choice to Media3 - the right default,
+     * since a container's first track is usually its original audio. Stored as a language
+     * rather than a track index because an index means nothing in the next file: track 2
+     * might be a commentary in one release and the only audio in another.
+     */
+    val audioLanguage: String = "",
     /**
      * Preferred language for TMDB posters and title logos.
      *

@@ -85,9 +85,11 @@ import androidx.compose.material.icons.rounded.RecordVoiceOver
  * Panels follow NuvioMobile `features/player/PlayerSidePanel.kt`: a right-edge
  * drawer capped at 520dp, `surfaceElevated` fill, 16dp leading corners, scrim at
  * `Black@34%`, slide-in 250ms / slide-out 200ms.
+ *
+ * Internal because it takes internal track types and is only used from this package.
  */
 @Composable
-fun PlayerPanels(
+internal fun PlayerPanels(
     panel: PlayerPanel,
     state: PlayerUiState,
     onDismiss: () -> Unit,
@@ -122,6 +124,18 @@ fun PlayerPanels(
     selectedEmbeddedIndex: Int = -1,
     /** Selects an embedded track by index, or -1 to turn subtitles off. */
     onSelectEmbedded: (Int) -> Unit = {},
+    /**
+     * Audio tracks carried inside the stream itself.
+     *
+     * Shown in the same panel as the source's dubs because both answer "what language am I
+     * hearing", but listed separately: choosing one of these is instant, while a dub reloads
+     * the stream.
+     */
+    embeddedAudioTracks: List<EmbeddedAudioTrack> = emptyList(),
+    /** Which embedded audio track is active, or -1 when the player's default stands. */
+    selectedAudioIndex: Int = -1,
+    /** Selects an embedded audio track by index. */
+    onSelectAudioTrack: (Int) -> Unit = {},
 ) {
     val visible = panel != PlayerPanel.NONE
     val panelFocus = remember { FocusRequester() }
@@ -242,21 +256,51 @@ fun PlayerPanels(
                         }
                     }
 
+                    // Both kinds of audio choice in one panel. The tracks in the file come
+                    // first: they apply instantly, whereas a dub row swaps the stream and
+                    // rebuffers, so the cheaper choice is the one in reach.
                     PlayerPanel.DUB -> {
                         val current = state.selectedStream?.facets
                         val dubs = state.streams.dubOptions(current?.server)
+                        // Shares the subtitle panel's wording: "in this file" means the same
+                        // thing about a track whichever kind it is.
+                        val inFileLabel = stringResource(R.string.player_subtitle_embedded)
+                        val otherLabel = stringResource(R.string.player_audio_other_streams)
+
+                        // A dub row is only distinguishable from a track row by its note, so
+                        // the notes are only worth drawing when both kinds are present.
+                        val mixed = embeddedAudioTracks.isNotEmpty() && dubs.isNotEmpty()
+
                         PanelList(
                             title = stringResource(R.string.player_dub),
-                            entries = dubs,
-                            selectedIndex = dubs.indexOf(current?.dub),
+                            entries = embeddedAudioTracks.map { it.label } + dubs,
+                            selectedIndex = when {
+                                selectedAudioIndex >= 0 -> selectedAudioIndex
+                                // Falls through to the dub rows only when no track is
+                                // overridden, so the highlight sits on whichever choice is
+                                // actually in effect.
+                                else -> dubs.indexOf(current?.dub)
+                                    .takeIf { it >= 0 }
+                                    ?.plus(embeddedAudioTracks.size)
+                                    ?: -1
+                            },
+                            secondary = if (mixed) {
+                                embeddedAudioTracks.map { inFileLabel } + dubs.map { otherLabel }
+                            } else {
+                                emptyList()
+                            },
                             onSelect = { index ->
-                                dubs.getOrNull(index)?.let { dub ->
-                                    pickStream(
-                                        streams = state.streams,
-                                        server = current?.server,
-                                        quality = current?.quality,
-                                        dub = dub,
-                                    )?.let(onSelectStream)
+                                if (index < embeddedAudioTracks.size) {
+                                    onSelectAudioTrack(index)
+                                } else {
+                                    dubs.getOrNull(index - embeddedAudioTracks.size)?.let { dub ->
+                                        pickStream(
+                                            streams = state.streams,
+                                            server = current?.server,
+                                            quality = current?.quality,
+                                            dub = dub,
+                                        )?.let(onSelectStream)
+                                    }
                                 }
                             },
                         )

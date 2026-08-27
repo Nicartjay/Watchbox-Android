@@ -169,6 +169,8 @@
     <string name="player_server_up_to">Up to %1$s</string>
     <string name="player_subtitle_embedded">In this file</string>
     <string name="player_subtitle_track">Track</string>
+    <string name="player_audio_track">Audio track</string>
+    <string name="player_audio_other_streams">Other versions</string>
     <string name="player_resolving">Finding streams…</string>
     <string name="player_resolving_slow">Still searching — %1$ds</string>
     <string name="player_servers">Servers</string>
