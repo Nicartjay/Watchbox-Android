@@ -323,9 +323,58 @@ data class StreamOption(
      * and a signed manifest URL can carry an unrelated `.m3u8` in its query.
      */
     val isDash: Boolean
-        get() = url.substringBefore('?').endsWith(".mpd", ignoreCase = true)
+        get() = url.substringBefore('?').endsWith(".mpd", ignoreCase = true) ||
+            declaredContainer == "DASH"
 
-    val isHls: Boolean get() = !isDash && url.contains(".m3u8", ignoreCase = true)
+    val isHls: Boolean
+        get() = !isDash &&
+            (url.contains(".m3u8", ignoreCase = true) || declaredContainer == "HLS")
+
+    /**
+     * The container the source named in its own label, or null when it named none.
+     *
+     * A URL is not always enough to tell. Adaptive CDNs serve manifests from paths with
+     * no extension - a bare `/m3u8?=<token>`, or a `.jpg` that is really a playlist - and
+     * a stream whose type could not be read was handed to the progressive extractor,
+     * which cannot parse a manifest and failed before a single segment was requested.
+     *
+     * Extensions know the type from their own API and print it here, so the label is the
+     * better authority when the URL is silent. Read as a whole word between the label's
+     * separators, so a title containing "hls" cannot be mistaken for a declaration.
+     *
+     * Ignored when the URL already names a container. That is what protects a remuxed
+     * download: it keeps the label it was fetched under, which may well say HLS, while
+     * what is on disk is a plain file - and declaring that a manifest would fail to open
+     * an episode that had downloaded perfectly.
+     */
+    private val declaredContainer: String?
+        get() {
+            if (urlNamesAContainer) return null
+
+            return label.split('·', '|')
+                .map { it.trim() }
+                .firstNotNullOfOrNull { part ->
+                    when {
+                        part.equals("DASH", ignoreCase = true) ||
+                            part.equals("MPD", ignoreCase = true) -> "DASH"
+                        part.equals("HLS", ignoreCase = true) ||
+                            part.equals("M3U8", ignoreCase = true) -> "HLS"
+                        else -> null
+                    }
+                }
+        }
+
+    /**
+     * True when the URL's own path ends in an extension that settles the question.
+     *
+     * A local file, a remuxed download or any plainly named media answers for itself, and
+     * the label - which describes where the stream came from rather than what is on disk -
+     * must not override it.
+     */
+    private val urlNamesAContainer: Boolean
+        get() = url.substringBefore('?').substringAfterLast('/').let { name ->
+            CONTAINER_EXTENSIONS.any { name.endsWith(it, ignoreCase = true) }
+        }
 
     /**
      * True when the stream is served by a proxy running inside the extension.
@@ -349,6 +398,16 @@ data class StreamOption(
 
     private companion object {
         val LOOPBACK_HOSTS = listOf("localhost", "127.0.0.1", "[::1]")
+
+        /**
+         * Extensions that identify the media on sight.
+         *
+         * `.jpg` and the like are deliberately absent: a source serving a playlist behind an
+         * image name is exactly the case the label is consulted for.
+         */
+        val CONTAINER_EXTENSIONS = listOf(
+            ".m3u8", ".mpd", ".mkv", ".mp4", ".webm", ".avi", ".mov", ".ts", ".m4v", ".flv",
+        )
     }
 }
 
