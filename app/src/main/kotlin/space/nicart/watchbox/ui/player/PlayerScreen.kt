@@ -252,6 +252,14 @@ fun PlayerScreen(
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(true) }
     var positionMs by remember { mutableLongStateOf(0L) }
+
+    // Which episode [positionMs] belongs to.
+    //
+    // The ticker keeps writing a position for whatever is playing, so on an episode change it
+    // still holds the previous one's - and the media effect below prefers it over the resume
+    // point, which started every new episode partway through the last one. Tracking the owner
+    // makes "carry the position over" mean the same episode rather than merely the same session.
+    var positionEpisodeUrl by remember { mutableStateOf<String?>(null) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var bufferedMs by remember { mutableLongStateOf(0L) }
     var controlsVisible by remember { mutableStateOf(true) }
@@ -635,9 +643,24 @@ fun PlayerScreen(
     // Rebuilding restarts playback from zero, so the current position is captured and restored.
     // `positionMs` is already the live ticker value, which makes this a seek back to where the
     // viewer was rather than a jump to the resume point they had passed.
+    //
+    // Only for the same episode, though. Switching episode rebuilds the item too, and carrying the
+    // position across meant a new episode opened at wherever the last one had reached - so the
+    // position is used only when it belongs to the episode being prepared.
     LaunchedEffect(state.selectedStream?.url, state.subtitles.map { it.url }) {
         val stream = state.selectedStream ?: return@LaunchedEffect
-        val resumeFrom = if (positionMs > 0) positionMs else state.resumeMs
+        val episodeUrl = state.episode?.url
+        val sameEpisode = positionEpisodeUrl != null && positionEpisodeUrl == episodeUrl
+
+        val resumeFrom = when {
+            sameEpisode && positionMs > 0 -> positionMs
+            else -> state.resumeMs
+        }
+
+        // Cleared before the seek, not after: an episode with no resume point starts at zero, and
+        // leaving the old value would let the next rebuild treat it as this episode's own.
+        if (!sameEpisode) positionMs = 0L
+        positionEpisodeUrl = episodeUrl
 
         // Cleared before preparing: the error belongs to the stream that failed,
         // and leaving it up would cover the new one's first frame and make a
@@ -1243,6 +1266,19 @@ fun PlayerScreen(
                 onSeek = transportSeekTo,
                 // Announced, so the buttons draw the same readout as a double-tap.
                 onSeekBy = ::seekByAnnounced,
+                // Null on the last episode and on a film, so the control is absent rather than
+                // present but dead - a stop on the D-pad that does nothing when pressed is worse
+                // than one that is not there.
+                onNextEpisode = if (state.hasNextEpisode) {
+                    {
+                        // Flushed first: the episode is about to change, and the position for the
+                        // one being left would otherwise be written against the new one.
+                        viewModel.flushProgress(exoPlayer.currentPosition, exoPlayer.duration)
+                        viewModel.nextEpisode()
+                    }
+                } else {
+                    null
+                },
                 onBack = {
                     viewModel.flushProgress(exoPlayer.currentPosition, exoPlayer.duration)
                     onBack()

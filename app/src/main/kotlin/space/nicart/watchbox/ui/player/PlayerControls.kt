@@ -190,6 +190,8 @@ fun PlayerControlsOverlay(
     onPlayPause: () -> Unit,
     onSeek: (Long) -> Unit,
     onSeekBy: (Long) -> Unit,
+    /** Advances to the next episode. Null on the last one, and on a film. */
+    onNextEpisode: (() -> Unit)? = null,
     onBack: () -> Unit,
     onToggleLock: () -> Unit,
     onCycleAspect: () -> Unit,
@@ -269,6 +271,7 @@ fun PlayerControlsOverlay(
                     metrics = metrics,
                     onPlayPause = onPlayPause,
                     onSeekBy = onSeekBy,
+                    onNextEpisode = onNextEpisode,
                     playFocusRequester = playFocusRequester,
                     onPlayFocusChanged = onPlayFocusChanged,
                     modifier = Modifier
@@ -448,6 +451,8 @@ private fun CenterControls(
     metrics: PlayerMetrics,
     onPlayPause: () -> Unit,
     onSeekBy: (Long) -> Unit,
+    /** Null on the last episode, and on a film, where there is nothing to advance to. */
+    onNextEpisode: (() -> Unit)? = null,
     playFocusRequester: FocusRequester? = null,
     onPlayFocusChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -460,6 +465,7 @@ private fun CenterControls(
         val backInteraction = rememberFocusInteraction()
         val playInteraction = rememberFocusInteraction()
         val forwardInteraction = rememberFocusInteraction()
+        val nextInteraction = rememberFocusInteraction()
 
         Box(
             modifier = Modifier
@@ -528,6 +534,29 @@ private fun CenterControls(
                 tint = Color.White,
                 modifier = Modifier.size(metrics.playIconSize),
             )
+        }
+
+        // Last in the row, and absent rather than disabled on the final episode: a dead control
+        // on a remote is a focus stop that does nothing when pressed.
+        if (onNextEpisode != null) {
+            Box(
+                modifier = Modifier
+                    .adaptiveFocus(nextInteraction, CircleShape)
+                    .clip(CircleShape)
+                    .clickable(
+                        interactionSource = nextInteraction,
+                        indication = LocalIndication.current,
+                        onClick = onNextEpisode,
+                    )
+                    .padding(10.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.SkipNext,
+                    contentDescription = "Next episode",
+                    tint = Color.White,
+                    modifier = Modifier.size(metrics.playIconSize),
+                )
+            }
         }
     }
 }
