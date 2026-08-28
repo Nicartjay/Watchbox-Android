@@ -203,14 +203,27 @@ class DetailViewModel(
     }
 
     /**
-     * A detail assembled from downloaded episodes, for when the source cannot be reached.
+     * The page to show when the source cannot be reached.
+     *
+     * Prefers the copy saved when a download started, which is the real page: description,
+     * genres, artwork and every episode, not just the downloaded ones. Falls back to
+     * reconstructing one from the download registry, which is all that was available for
+     * anything downloaded before pages were cached.
+     *
+     * Returns null when neither exists, so the real error is reported rather than an empty page.
+     */
+    private suspend fun offlineDetail(): AnimeDetail? =
+        store.offlineDetail(sourceId, animeUrl)?.toDetail() ?: registryDetail()
+
+    /**
+     * A detail assembled from downloaded episodes, for when no page was cached.
      *
      * Deliberately sparse. There is no overview, no artwork beyond the poster already stored
      * and no season structure, because none of that was kept - only what a download needs to be
      * listed and opened. Returns null when nothing has been downloaded for this title, so the
      * real error is reported rather than an empty page.
      */
-    private suspend fun offlineDetail(): AnimeDetail? {
+    private suspend fun registryDetail(): AnimeDetail? {
         val entries = store.currentDownloads()
             .filter { it.sourceId == sourceId && it.animeUrl == animeUrl && it.isComplete }
             .sortedBy { it.episodeNumber }
@@ -440,6 +453,12 @@ class DetailViewModel(
                             episodeUrl = episode.url,
                             episodeLabel = episode.displayName,
                             streams = streams,
+                            // Offered only when it would do something. Downloading is a
+                            // stronger statement of intent than adding to a list, so the
+                            // default is yes - but it stays an opt-out inside this step
+                            // rather than becoming a second prompt.
+                            offerWatchlist = !_uiState.value.inWatchlist,
+                            addToWatchlist = !_uiState.value.inWatchlist,
                         )
                     }
                 }
@@ -449,22 +468,33 @@ class DetailViewModel(
         }
     }
 
+    /** Records the opt-out without disturbing the step the picker is on. */
+    fun setDownloadWatchlist(add: Boolean) {
+        _picker.value = when (val current = _picker.value) {
+            is DownloadPickerState.Ready -> current.copy(addToWatchlist = add)
+            is DownloadPickerState.FindingSubtitles -> current.copy(addToWatchlist = add)
+            is DownloadPickerState.SubtitleChoice -> current.copy(addToWatchlist = add)
+            else -> return
+        }
+    }
+
     /**
      * Handles a chosen server.
      *
-     * Downloads it straight away when the stream carries its own subtitles - those were cut for
-     * this exact release, so there is nothing to ask about. Where it carries none, the prompt
-     * moves on to offering one rather than quietly downloading a video that cannot be followed.
+     * Always moves on to the subtitle step, even when the stream carries its own tracks. Those
+     * are saved either way, but skipping the step meant a stream supplying a single subtitle in
+     * a language the viewer does not read downloaded silently with no way to add one - which
+     * read as the picker offering nothing at all. The step now lists what is already included
+     * and offers to add to it.
      */
     fun confirmDownload(stream: StreamOption) {
         val pending = _picker.value as? DownloadPickerState.Ready ?: return
 
-        if (stream.subtitles.isNotEmpty()) {
-            startDownload(pending.episodeUrl, stream, subtitle = null)
-            return
-        }
-
-        _picker.value = DownloadPickerState.FindingSubtitles(pending.episodeUrl, stream)
+        _picker.value = DownloadPickerState.FindingSubtitles(
+            episodeUrl = pending.episodeUrl,
+            stream = stream,
+            addToWatchlist = pending.addToWatchlist,
+        )
 
         downloadResolveJob?.cancel()
         downloadResolveJob = viewModelScope.launch {
@@ -483,6 +513,7 @@ class DetailViewModel(
                 episodeUrl = pending.episodeUrl,
                 stream = stream,
                 results = results,
+                addToWatchlist = current.addToWatchlist,
             )
         }
     }
@@ -490,19 +521,20 @@ class DetailViewModel(
     /** Downloads the video with the chosen subtitle alongside it. */
     fun confirmDownloadWithSubtitle(result: SubtitleResult) {
         val pending = _picker.value as? DownloadPickerState.SubtitleChoice ?: return
-        startDownload(pending.episodeUrl, pending.stream, subtitle = result)
+        startDownload(pending.episodeUrl, pending.stream, result, pending.addToWatchlist)
     }
 
     /** Downloads the video on its own. */
     fun confirmDownloadWithoutSubtitle() {
         val pending = _picker.value as? DownloadPickerState.SubtitleChoice ?: return
-        startDownload(pending.episodeUrl, pending.stream, subtitle = null)
+        startDownload(pending.episodeUrl, pending.stream, null, pending.addToWatchlist)
     }
 
     private fun startDownload(
         episodeUrl: String,
         stream: StreamOption,
         subtitle: SubtitleResult?,
+        addToWatchlist: Boolean = false,
     ) {
         val detail = _uiState.value.detail ?: return
         val episode = detail.episodes.firstOrNull { it.url == episodeUrl } ?: return
@@ -516,7 +548,29 @@ class DetailViewModel(
             episode = episode,
             stream = stream,
             subtitle = subtitle,
+            // Cached so the show can still be opened with the network off. Without it a
+            // downloaded episode played but its own page failed to load, which made the
+            // library look broken in exactly the situation downloads exist for.
+            detail = detail,
         )
+
+        // Checked against the store rather than trusting the flag alone: the list can have
+        // changed since the prompt opened, and toggle would then remove what is already there.
+        if (addToWatchlist && !_uiState.value.inWatchlist) {
+            viewModelScope.launch {
+                store.toggleWatchlist(
+                    WatchlistEntry(
+                        sourceId = detail.sourceId,
+                        animeUrl = detail.url,
+                        title = detail.title,
+                        posterUrl = detail.posterUrl,
+                        sourceName = detail.sourceName,
+                        addedAt = System.currentTimeMillis(),
+                    ),
+                )
+            }
+        }
+
         _picker.value = DownloadPickerState.Hidden
     }
 

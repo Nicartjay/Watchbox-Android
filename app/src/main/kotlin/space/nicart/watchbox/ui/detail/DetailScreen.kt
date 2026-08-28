@@ -883,6 +883,7 @@ fun DetailScreen(
             },
             onPickSubtitle = viewModel::confirmDownloadWithSubtitle,
             onSkipSubtitle = viewModel::confirmDownloadWithoutSubtitle,
+            onToggleWatchlist = viewModel::setDownloadWatchlist,
             onDismiss = viewModel::dismissDownloadPicker,
         )
     }

@@ -16,11 +16,14 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -37,6 +40,7 @@ import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.data.remote.SubtitleResult
 import space.nicart.watchbox.domain.StreamOption
+import space.nicart.watchbox.domain.SubtitleOption
 
 /** What the picker is showing. */
 sealed interface DownloadPickerState {
@@ -49,10 +53,20 @@ sealed interface DownloadPickerState {
         val episodeUrl: String,
         val episodeLabel: String,
         val streams: List<StreamOption>,
+        /**
+         * Whether the show is absent from the viewer's list.
+         *
+         * Drives an opt-out inside this step rather than a prompt after it: downloading
+         * something is a stronger signal of intent than adding it to a list, so the
+         * question is worth asking, but not worth a second dialog.
+         */
+        val offerWatchlist: Boolean = false,
+        /** Whether it will be added, pre-set when offered at all. */
+        val addToWatchlist: Boolean = false,
     ) : DownloadPickerState
 
     /**
-     * Looking for subtitles, after a server was chosen that carries none.
+     * Looking for subtitles to offer alongside the stream's own.
      *
      * Its own step rather than something done in the background, because it is a decision: the
      * files on offer are matched by title and episode, not cut for this release, so which one -
@@ -61,14 +75,26 @@ sealed interface DownloadPickerState {
     data class FindingSubtitles(
         val episodeUrl: String,
         val stream: StreamOption,
+        val addToWatchlist: Boolean = false,
     ) : DownloadPickerState
 
-    /** Subtitles found for a stream that has none of its own. */
+    /**
+     * What can be saved alongside the video.
+     *
+     * Carries the stream's own tracks as well as anything found online. Those are listed
+     * rather than assumed: a stream supplying one subtitle in a language the viewer does not
+     * read used to skip this step entirely and download without asking, which looked like
+     * the picker was broken.
+     */
     data class SubtitleChoice(
         val episodeUrl: String,
         val stream: StreamOption,
         val results: List<SubtitleResult>,
-    ) : DownloadPickerState
+        val addToWatchlist: Boolean = false,
+    ) : DownloadPickerState {
+        /** The stream's own subtitles, saved whatever else is chosen here. */
+        val ownSubtitles: List<SubtitleOption> get() = stream.subtitles
+    }
 
     data class Failed(val message: String) : DownloadPickerState
 }
@@ -94,6 +120,8 @@ fun DownloadQualityDialog(
     onPickSubtitle: (SubtitleResult) -> Unit = {},
     /** Downloads the video on its own, leaving it without subtitles. */
     onSkipSubtitle: () -> Unit = {},
+    /** Toggles whether the show is added to the viewer's list when the download starts. */
+    onToggleWatchlist: (Boolean) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     if (state is DownloadPickerState.Hidden) return
@@ -201,6 +229,16 @@ fun DownloadQualityDialog(
                             StreamRow(stream = stream, onClick = { onPick(stream) })
                         }
                     }
+
+                    // Below the list, so it reads as a note on the download about to start
+                    // rather than as one of the things being chosen between.
+                    if (state.offerWatchlist) {
+                        Spacer(Modifier.height(14.dp))
+                        WatchlistCheckRow(
+                            checked = state.addToWatchlist,
+                            onCheckedChange = onToggleWatchlist,
+                        )
+                    }
                 }
 
                 is DownloadPickerState.FindingSubtitles -> {
@@ -226,26 +264,39 @@ fun DownloadQualityDialog(
                 is DownloadPickerState.SubtitleChoice -> {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        text = if (state.results.isEmpty()) {
-                            stringResource(R.string.download_no_subtitles_found)
-                        } else {
-                            stringResource(R.string.download_pick_subtitle_summary)
+                        text = when {
+                            state.ownSubtitles.isNotEmpty() ->
+                                stringResource(R.string.download_subtitle_included_summary)
+                            state.results.isEmpty() ->
+                                stringResource(R.string.download_no_subtitles_found)
+                            else -> stringResource(R.string.download_pick_subtitle_summary)
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = tokens.colors.textMuted,
                     )
 
-                    if (state.results.isNotEmpty()) {
+                    if (state.ownSubtitles.isNotEmpty() || state.results.isNotEmpty()) {
                         Spacer(Modifier.height(12.dp))
                         LazyColumn(
                             modifier = Modifier.heightIn(max = LIST_MAX_HEIGHT),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
+                            // The stream's own first, and not selectable: they are saved
+                            // regardless, so a tappable row would imply a choice that is not
+                            // being offered. Shown at all because their absence from this list
+                            // made a download that did include them look as though it had not.
+                            itemsIndexed(
+                                items = state.ownSubtitles,
+                                key = { index, _ -> "own-$index" },
+                            ) { _, subtitle ->
+                                IncludedSubtitleRow(subtitle = subtitle)
+                            }
+
                             // Indexed, not keyed by id: release names repeat across mirrors and
                             // Compose throws outright on a duplicate key.
                             itemsIndexed(
                                 items = state.results,
-                                key = { index, _ -> index },
+                                key = { index, _ -> "found-$index" },
                             ) { _, result ->
                                 SubtitleResultRow(
                                     result = result,
@@ -264,10 +315,14 @@ fun DownloadQualityDialog(
                         // addition, and not finding one must not block the download.
                         SkipButton(
                             label = stringResource(
-                                if (state.results.isEmpty()) {
-                                    R.string.download_without_subtitles
-                                } else {
-                                    R.string.download_skip_subtitles
+                                when {
+                                    // Not "without subtitles" when the stream brought its own:
+                                    // that would state the opposite of what happens.
+                                    state.ownSubtitles.isNotEmpty() ->
+                                        R.string.download_continue
+                                    state.results.isEmpty() ->
+                                        R.string.download_without_subtitles
+                                    else -> R.string.download_skip_subtitles
                                 },
                             ),
                             onClick = onSkipSubtitle,
@@ -362,10 +417,91 @@ private fun SubtitleResultRow(result: SubtitleResult, onClick: () -> Unit) {
     }
 }
 
+/**
+ * A subtitle the stream already carries, shown as a statement rather than a choice.
+ *
+ * Deliberately not clickable: these are saved whichever button ends the step, so a tappable
+ * row would offer a decision that is not being made. They are listed because leaving them out
+ * made a download that did include subtitles look as though it had none.
+ */
+@Composable
+private fun IncludedSubtitleRow(subtitle: SubtitleOption) {
+    val tokens = MaterialTheme.wb
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(tokens.colors.surfaceCard)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Check,
+            contentDescription = null,
+            tint = tokens.colors.accent,
+            modifier = Modifier.size(16.dp),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = subtitle.label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = tokens.colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = stringResource(R.string.download_subtitle_from_source),
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.colors.textMuted,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** Opt-out for adding the show to the viewer's list as the download starts. */
+@Composable
+private fun WatchlistCheckRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .adaptiveFocus(interaction, RoundedCornerShape(12.dp), scale = false)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = { onCheckedChange(!checked) },
+            )
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Checkbox(
+            checked = checked,
+            // Null so the whole row is the target: a checkbox alone is a small hit area on a
+            // phone and barely reachable with a remote.
+            onCheckedChange = null,
+            colors = CheckboxDefaults.colors(
+                checkedColor = tokens.colors.accent,
+                uncheckedColor = tokens.colors.textMuted,
+            ),
+        )
+        Text(
+            text = stringResource(R.string.download_add_to_list),
+            style = MaterialTheme.typography.bodyMedium,
+            color = tokens.colors.textSecondary,
+        )
+    }
+}
+
 /** Proceeds without a subtitle. */
 @Composable
-private fun SkipButton(label: String, onClick: () -> Unit) {
-    val tokens = MaterialTheme.wb
+private fun SkipButton(label: String, onClick: () -> Unit) {    val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
 
     Row(

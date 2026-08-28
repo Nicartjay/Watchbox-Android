@@ -241,6 +241,10 @@
     <string name="download_no_subtitles_found">No subtitles were found for this episode.</string>
     <string name="download_skip_subtitles">Download without</string>
     <string name="download_without_subtitles">Download anyway</string>
+    <string name="download_subtitle_included_summary">These come with the video. Add another to download alongside it.</string>
+    <string name="download_subtitle_from_source">Included with this server</string>
+    <string name="download_continue">Download</string>
+    <string name="download_add_to_list">Add this show to My List</string>
     <string name="download_no_streams">This source returned no downloadable streams.</string>
     <string name="download_started">Added to downloads</string>
     <string name="download_resolving">Finding streams…</string>
