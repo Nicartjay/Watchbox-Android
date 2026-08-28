@@ -193,6 +193,48 @@ fun HeroTrailerLayer(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // Keeps the screen on while the trailer is actually playing.
+    //
+    // A hero trailer is watched without being touched, so the display timeout fires
+    // mid-playback and blanks the page - the same reason the player sets this flag. Held
+    // only while something is on screen and playing, not for the whole page: a synopsis
+    // being read is exactly when the device should be allowed to sleep, and a stalled or
+    // failed trailer must not pin the display awake either.
+    //
+    // Tracked from the player rather than from `player.isPlaying`, which is not
+    // observable state and would leave this flag wherever the last recomposition put it.
+    var trailerPlaying by remember(trailer.url) { mutableStateOf(false) }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                trailerPlaying = isPlaying
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+            trailerPlaying = false
+        }
+    }
+
+    val keepAwake = trailerPlaying && hasFrame && !failed
+
+    DisposableEffect(keepAwake) {
+        val window = (context as? android.app.Activity)?.window
+
+        // Cleared on the way out rather than only when playback stops, so leaving the page
+        // mid-trailer cannot strand the flag and keep a phone awake in someone's pocket.
+        if (keepAwake) {
+            window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            if (keepAwake) {
+                window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+    }
+
     // Crossfade in only, and only after a frame exists. Fading back out on failure
     // would draw attention to it; the backdrop underneath is already correct.
     val videoAlpha by animateFloatAsState(
