@@ -19,7 +19,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import space.nicart.watchbox.data.local.DownloadEntry
 import space.nicart.watchbox.data.local.DownloadState
+import space.nicart.watchbox.data.local.OfflineDetail
 import space.nicart.watchbox.data.local.WatchBoxStore
+import space.nicart.watchbox.domain.AnimeDetail
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.domain.StreamOption
@@ -167,6 +169,13 @@ class DownloadController(
          * offer was declined.
          */
         subtitle: SubtitleResult? = null,
+        /**
+         * The title's page, cached so it can be opened with the network off.
+         *
+         * Optional because a download is still a download without it: the caller may not have
+         * a detail to hand, and failing the download over a page would be the wrong trade.
+         */
+        detail: AnimeDetail? = null,
     ) {
         // Two engines, split by format rather than by preference.
         //
@@ -185,8 +194,11 @@ class DownloadController(
         // why they stay on Media3 rather than everything moving across.
         if (stream.isLocalProxy || stream.isHls || stream.isDash) {
             enqueueViaFfmpeg(sourceId, animeUrl, title, posterUrl, sourceName, episode, stream, subtitle)
+            detail?.let { scope.launch { cacheDetail(it) } }
             return
         }
+
+        detail?.let { scope.launch { cacheDetail(it) } }
 
         scope.launch {
             val settings = store.currentSettings()
@@ -492,6 +504,69 @@ class DownloadController(
      * resume point - so pausing one cancels it outright. The UI hides the pause control for
      * those rather than offering something that silently discards the transfer.
      */
+    /**
+     * Stores [detail] so the title's page opens with the network off.
+     *
+     * Artwork is fetched here rather than left as a remote URL, since the image loader would
+     * have nothing to read offline and the page would render with blank cards - which looks
+     * broken rather than degraded. A failed fetch stores null and the page falls back to its
+     * own placeholder, so the text is still there.
+     */
+    private suspend fun cacheDetail(detail: AnimeDetail) {
+        val volumeId = store.currentSettings().downloadVolume ?: VOLUME_INTERNAL
+        val titleKey = "${detail.sourceId}::${detail.url}"
+
+        val poster = detail.posterUrl?.let { url ->
+            cacheImage(url, storage.artworkFile(volumeId, titleKey, "poster"))
+        }
+        val backdrop = detail.backdropUrl?.let { url ->
+            cacheImage(url, storage.artworkFile(volumeId, titleKey, "backdrop"))
+        }
+
+        store.saveOfflineDetail(
+            OfflineDetail.from(
+                detail = detail,
+                posterPath = poster,
+                backdropPath = backdrop,
+                savedAt = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    /**
+     * Fetches one image to [target], returning its path or null.
+     *
+     * Kept as a plain connection rather than going through the extension's client: this is a
+     * TMDB or source CDN URL needing no headers, and it must not fail the download it belongs
+     * to. Skipped when the file is already there, so re-downloading a series does not refetch
+     * the same poster for every episode.
+     */
+    private suspend fun cacheImage(url: String, target: File): String? =
+        withContext(Dispatchers.IO) {
+            if (target.exists() && target.length() > 0) return@withContext target.absolutePath
+
+            runCatching {
+                val connection = (java.net.URL(url).openConnection() as java.net.HttpURLConnection)
+                    .apply {
+                        connectTimeout = ARTWORK_TIMEOUT_MS
+                        readTimeout = ARTWORK_TIMEOUT_MS
+                        instanceFollowRedirects = true
+                    }
+
+                connection.inputStream.use { input ->
+                    target.outputStream().use { output -> input.copyTo(output) }
+                }
+                connection.disconnect()
+
+                target.absolutePath.takeIf { target.length() > 0 }
+            }.getOrElse {
+                // A partial file is worse than none: it would be stored as a valid path and
+                // render as a broken image rather than falling back.
+                target.delete()
+                null
+            }
+        }
+
     fun pause(key: String) {
         scope.launch {
             // A remuxed download has no pause. It is one ffmpeg invocation with no resume point,
@@ -664,6 +739,20 @@ class DownloadController(
             // keeps re-resolving an episode nobody is downloading any more.
             resolver.clearActive(key)
             store.removeDownload(key)
+
+            // The cached page goes with the last episode of its title, not with each one: a
+            // series downloaded episode by episode shares one copy, and removing it while
+            // others remain would leave those unopenable offline.
+            entry?.let { removed ->
+                val remaining = store.currentDownloads().any {
+                    it.sourceId == removed.sourceId && it.animeUrl == removed.animeUrl
+                }
+                if (!remaining) {
+                    val titleKey = "${removed.sourceId}::${removed.animeUrl}"
+                    storage.deleteArtwork(volumeId, titleKey)
+                    store.removeOfflineDetail(titleKey)
+                }
+            }
         }
     }
 
@@ -682,6 +771,8 @@ class DownloadController(
                     runCatching { storage.remuxFile(entry.volumeId, entry.key).delete() }
                 }
                 storage.deleteSubtitles(entry.volumeId, entry.key)
+                storage.deleteArtwork(entry.volumeId, "${entry.sourceId}::${entry.animeUrl}")
+                store.removeOfflineDetail("${entry.sourceId}::${entry.animeUrl}")
                 resolver.clearActive(entry.key)
             }
 
@@ -1073,3 +1164,12 @@ private fun Int.toDownloadState(): DownloadState = when (this) {
     // from flashing a state the user cannot act on.
     else -> DownloadState.QUEUED
 }
+
+/**
+ * Timeout for fetching a poster or backdrop.
+ *
+ * Short, because this is a nicety attached to a download that matters more: a slow CDN must
+ * delay neither the queue nor the page, and the fallback is the placeholder already shown for
+ * a title with no artwork.
+ */
+private const val ARTWORK_TIMEOUT_MS = 15_000

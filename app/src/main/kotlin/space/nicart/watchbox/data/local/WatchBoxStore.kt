@@ -366,6 +366,37 @@ class WatchBoxStore(context: Context) {
         prefs[Keys.DOWNLOADS] = json.encodeToString(entries.take(DownloadEntry.MAX_ENTRIES))
     }
 
+    /** Cached pages for downloaded titles, so they open with the network off. */
+    val offlineDetails: Flow<List<OfflineDetail>> = store.data
+        .catch { emit(androidx.datastore.preferences.core.emptyPreferences()) }
+        .map { prefs -> decodeList(prefs[Keys.OFFLINE_DETAILS]) }
+
+    /**
+     * Upsert by [OfflineDetail.key].
+     *
+     * Rewritten rather than merged, so a page cached again picks up episodes added since -
+     * a running series gains them, and a stale list would leave a downloaded episode with no
+     * row to open it from.
+     */
+    suspend fun saveOfflineDetail(detail: OfflineDetail) = store.edit { prefs ->
+        val current = decodeList<OfflineDetail>(prefs[Keys.OFFLINE_DETAILS])
+        val merged = buildList {
+            add(detail)
+            addAll(current.filter { it.key != detail.key })
+        }.take(OFFLINE_DETAIL_LIMIT)
+        prefs[Keys.OFFLINE_DETAILS] = json.encodeToString(merged)
+    }
+
+    suspend fun offlineDetail(sourceId: Long, animeUrl: String): OfflineDetail? =
+        offlineDetails.first().firstOrNull {
+            it.sourceId == sourceId && it.url == animeUrl
+        }
+
+    suspend fun removeOfflineDetail(key: String) = store.edit { prefs ->
+        val current = decodeList<OfflineDetail>(prefs[Keys.OFFLINE_DETAILS])
+        prefs[Keys.OFFLINE_DETAILS] = json.encodeToString(current.filter { it.key != key })
+    }
+
     suspend fun clearDownloads() = store.edit { it.remove(Keys.DOWNLOADS) }
 
     /** One-shot read, for the reconciler and for state transitions. */
@@ -469,6 +500,7 @@ class WatchBoxStore(context: Context) {
         val HISTORY = stringPreferencesKey("watch_history")
         val WATCHLIST = stringPreferencesKey("watchlist")
         val DOWNLOADS = stringPreferencesKey("downloads")
+        val OFFLINE_DETAILS = stringPreferencesKey("offline_details")
         val DOWNLOAD_VOLUME = stringPreferencesKey("download_volume")
         val DOWNLOAD_WIFI_ONLY = booleanPreferencesKey("download_wifi_only")
         val DOWNLOAD_CONCURRENCY = intPreferencesKey("download_concurrency")
@@ -651,3 +683,11 @@ internal const val ARTWORK_LANGUAGE_DEFAULT = "en"
  */
 internal const val DOWNLOAD_CONCURRENCY_MIN = 1
 internal const val DOWNLOAD_CONCURRENCY_MAX = 5
+
+/**
+ * How many downloaded titles keep a cached page.
+ *
+ * Generous, because an entry is small - text and two file paths - and the cost of evicting one
+ * is a downloaded show whose page will not open offline, which is the whole point of storing it.
+ */
+private const val OFFLINE_DETAIL_LIMIT = 500

@@ -97,6 +97,27 @@ class DownloadStorage(private val context: Context) {
     }
 
     /**
+     * Where a downloaded title's cached artwork is written.
+     *
+     * Keyed by the title's own key, not an episode's, so a series stores one poster however
+     * many episodes are downloaded. [kind] separates the poster from the backdrop.
+     */
+    fun artworkFile(volumeId: String?, titleKey: String, kind: String): File =
+        File(
+            File(resolveRoot(volumeId), ARTWORK_DIR).apply { mkdirs() },
+            "${titleKey.toFileName()}_$kind",
+        )
+
+    /** Deletes a title's cached artwork. Called when its last download goes. */
+    fun deleteArtwork(volumeId: String?, titleKey: String) {
+        runCatching {
+            listOf("poster", "backdrop").forEach { kind ->
+                artworkFile(volumeId, titleKey, kind).delete()
+            }
+        }
+    }
+
+    /**
      * Total bytes occupied by downloaded media across every mounted volume.
      *
      * Walked rather than summed from the registry, because the filesystem is the authority:
@@ -168,6 +189,14 @@ class DownloadStorage(private val context: Context) {
 
         /** Remuxed single-file downloads, beside the cache rather than inside it. */
         const val REMUX_DIR = "files"
+
+        /**
+         * Cached poster and backdrop for a downloaded title's page.
+         *
+         * Keyed by title rather than by episode, so a series downloaded episode by episode
+         * stores one copy of its artwork rather than one per file.
+         */
+        const val ARTWORK_DIR = "artwork"
     }
 }
 
