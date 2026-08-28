@@ -10,6 +10,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import eu.kanade.tachiyomi.animesource.ProgressiveVideoSource
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
 import kotlinx.coroutines.withTimeout
@@ -837,6 +841,67 @@ class AnimeRepository(
                 .ifEmpty { error("This source returned no playable streams.") }
         }
     }
+
+    /**
+     * Resolves streams, emitting each batch as the source finds it.
+     *
+     * A source resolving several backends in parallel has playable streams long before the
+     * slowest one answers, and [streams] cannot say so - it is one call returning one finished
+     * list, so the viewer waits on a spinner for work that is already done. A source
+     * implementing [ProgressiveVideoSource] reports them as they land instead.
+     *
+     * Every emission is cumulative and replaces the last, so a collector can treat each one as
+     * the whole list rather than merging. Blank URLs are dropped per emission, since a source
+     * may include a placeholder it later fills in.
+     *
+     * A source without the interface emits exactly once, which makes this safe to use
+     * everywhere: the caller sees the same result it would have got from [streams], just
+     * wrapped in a flow. Failure is emitted as a [Result] rather than thrown, so a collector
+     * that already has usable streams is not torn down by a later backend failing.
+     */
+    fun streamsFlow(
+        sourceId: Long,
+        episodeUrl: String,
+    ): Flow<Result<List<StreamOption>>> = flow {
+        val source = catalogueOrThrow(sourceId)
+        val stub = SEpisode.create().apply { url = episodeUrl }
+
+        if (source !is ProgressiveVideoSource) {
+            emit(streams(sourceId, episodeUrl))
+            return@flow
+        }
+
+        var emitted = false
+
+        // Collected inside runCatching rather than mapped through it: an exception raised part
+        // way through the flow must not discard the batches that already arrived.
+        val outcome = runCatching {
+            source.getVideoListFlow(stub).collect { videos ->
+                val options = videos
+                    .map { it.toStreamOption() }
+                    .filter { it.url.isNotBlank() }
+
+                // Empty emissions are dropped rather than forwarded. A source may report
+                // nothing on its first pass and find streams later, and passing that on would
+                // show "no streams" and then contradict itself.
+                if (options.isNotEmpty()) {
+                    emitted = true
+                    emit(Result.success(options))
+                }
+            }
+        }
+
+        // Only reported when nothing was ever emitted. A source whose last backend failed after
+        // three others succeeded has still done its job.
+        if (!emitted) {
+            emit(
+                Result.failure(
+                    outcome.exceptionOrNull()
+                        ?: IllegalStateException("This source returned no playable streams."),
+                ),
+            )
+        }
+    }.flowOn(Dispatchers.IO)
 
     // --------------------------------------------------------------- helpers
 

@@ -249,6 +249,7 @@
     <string name="download_no_streams">This source returned no downloadable streams.</string>
     <string name="download_started">Added to downloads</string>
     <string name="download_resolving">Finding streams…</string>
+    <string name="download_finding_more_servers">Still finding more servers…</string>
     <string name="download_state_queued">Queued</string>
     <string name="download_state_downloading">%1$d%% · %2$s</string>
     <string name="download_state_downloading_of">%1$d%% · %2$s of %3$s</string>

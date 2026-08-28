@@ -445,16 +445,21 @@ class DetailViewModel(
         _picker.value = DownloadPickerState.Resolving(episode.url)
 
         downloadResolveJob = viewModelScope.launch {
-            repository.streams(sourceId, episode.url)
+            repository.streamsFlow(sourceId, episode.url).collect { result ->
+              result
                 .onSuccess { streams ->
                     // Dropped if the prompt was dismissed while this was in flight, so a
                     // late result cannot reopen a dialog the user closed.
+                    //
+                    // Ready is accepted as well as Resolving: a progressive source emits more
+                    // than once, and the later batches arrive when the list is already up.
                     val pending = _picker.value
-                    if (pending !is DownloadPickerState.Resolving ||
-                        pending.episodeUrl != episode.url
-                    ) {
-                        return@onSuccess
+                    val episodeUrl = when (pending) {
+                        is DownloadPickerState.Resolving -> pending.episodeUrl
+                        is DownloadPickerState.Ready -> pending.episodeUrl
+                        else -> null
                     }
+                    if (episodeUrl != episode.url) return@onSuccess
 
                     // Every server is offered, including those served through a proxy inside the
                     // extension. Those used to be hidden because Media3 could not fetch them at
@@ -472,13 +477,31 @@ class DetailViewModel(
                             // default is yes - but it stays an opt-out inside this step
                             // rather than becoming a second prompt.
                             offerWatchlist = !_uiState.value.inWatchlist,
-                            addToWatchlist = !_uiState.value.inWatchlist,
+                            // Carried across a re-emission rather than reset: a viewer who
+                            // unticked this must not have it tick itself again when the next
+                            // backend reports in.
+                            addToWatchlist = (pending as? DownloadPickerState.Ready)
+                                ?.addToWatchlist
+                                ?: !_uiState.value.inWatchlist,
+                            // More may still arrive, so the list says so rather than looking
+                            // complete while a server is seconds away.
+                            isLoadingMore = true,
                         )
                     }
                 }
                 .onFailure { error ->
-                    _picker.value = DownloadPickerState.Failed(error.friendlyMessage())
+                    // Only fatal when nothing is on offer yet. A backend failing after others
+                    // succeeded must not replace a usable list with an error.
+                    if (_picker.value !is DownloadPickerState.Ready) {
+                        _picker.value = DownloadPickerState.Failed(error.friendlyMessage())
+                    }
                 }
+            }
+
+            // Nothing further is coming, so the list is complete.
+            (_picker.value as? DownloadPickerState.Ready)
+                ?.takeIf { it.episodeUrl == episode.url }
+                ?.let { _picker.value = it.copy(isLoadingMore = false) }
         }
     }
 

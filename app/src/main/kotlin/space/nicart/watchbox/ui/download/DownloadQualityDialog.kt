@@ -63,6 +63,13 @@ sealed interface DownloadPickerState {
         val offerWatchlist: Boolean = false,
         /** Whether it will be added, pre-set when offered at all. */
         val addToWatchlist: Boolean = false,
+        /**
+         * True while a progressive source may still report more servers.
+         *
+         * The list is usable already - these are real streams and any of them can be picked -
+         * so it is shown rather than withheld, with a note that more are on the way.
+         */
+        val isLoadingMore: Boolean = false,
     ) : DownloadPickerState
 
     /**
@@ -227,6 +234,28 @@ fun DownloadQualityDialog(
                             key = { index, _ -> index },
                         ) { _, stream ->
                             StreamRow(stream = stream, onClick = { onPick(stream) })
+                        }
+                    }
+
+                    // Says the list is still filling, so a viewer looking for a server that
+                    // has not arrived yet waits rather than picking a worse one.
+                    if (state.isLoadingMore) {
+                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            CircularProgressIndicator(
+                                color = tokens.colors.accent,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Text(
+                                text = stringResource(R.string.download_finding_more_servers),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = tokens.colors.textMuted,
+                            )
                         }
                     }
 

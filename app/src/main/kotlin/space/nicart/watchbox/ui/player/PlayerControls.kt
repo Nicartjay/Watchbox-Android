@@ -726,11 +726,17 @@ private fun ProgressControls(
                     val qualities = state.streams.qualityChoices(facets?.server, facets?.dub)
                     val dubs = state.streams.dubOptions(facets?.server)
 
-                    if (servers.size > 1) {
+                    // Shown while a progressive source is still reporting backends, so a
+                    // server list that is about to grow does not look complete. The pill is
+                    // offered even for a single server in that case: a second one may be
+                    // seconds away, and hiding the way in until it arrives means the control
+                    // appears from nowhere mid-playback.
+                    if (servers.size > 1 || (state.isLoadingMoreStreams && servers.isNotEmpty())) {
                         ActionPill(
                             icon = Icons.Rounded.Dns,
                             label = facets?.server ?: stringResource(R.string.player_server),
                             onClick = { onOpenPanel(PlayerPanel.SERVER) },
+                            loading = state.isLoadingMoreStreams,
                         )
                     }
                     if (qualities.size > 1) {
@@ -817,6 +823,13 @@ private fun ActionPill(
      * one is active is to go looking for it.
      */
     highlighted: Boolean = false,
+    /**
+     * Replaces the icon with a spinner while more options are still arriving.
+     *
+     * The label is left alone: it names the current choice, which is already valid, and
+     * swapping it for "Loading" would suggest nothing is selected.
+     */
+    loading: Boolean = false,
 ) {
     val type = MaterialTheme.wbType
     val interaction = rememberFocusInteraction()
@@ -840,12 +853,22 @@ private fun ActionPill(
     ) {
         val tint = if (highlighted) MaterialTheme.wb.colors.warning else Color.White
 
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            tint = tint,
-            modifier = Modifier.size(18.dp),
-        )
+        if (loading) {
+            // Same footprint as the icon it replaces, so the pill does not resize and shift
+            // its neighbours each time a backend reports in.
+            CircularProgressIndicator(
+                color = tint,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(18.dp),
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(18.dp),
+            )
+        }
         Text(
             text = label,
             style = type.labelSm,

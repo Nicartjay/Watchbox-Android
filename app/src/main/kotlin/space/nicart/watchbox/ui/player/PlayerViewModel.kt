@@ -77,6 +77,15 @@ enum class AspectMode(val label: String) {
 data class PlayerUiState(
     val isResolving: Boolean = true,
     /**
+     * True while more streams may still arrive for a stream set already being played.
+     *
+     * Distinct from [isResolving], which means "nothing is playable yet" and blanks the screen
+     * behind a spinner. A source that reports its backends as it finds them is playable long
+     * before it is finished, so this marks the picker as incomplete without hiding the video
+     * that is already running.
+     */
+    val isLoadingMoreStreams: Boolean = false,
+    /**
      * How long the current resolve has been running, in seconds.
      *
      * Drives the wording under the spinner. The source resolves every server
@@ -435,6 +444,7 @@ class PlayerViewModel(
 
         _uiState.value = _uiState.value.copy(
             isResolving = true,
+            isLoadingMoreStreams = false,
             resolveSeconds = 0,
             errorMessage = null,
             streams = emptyList(),
@@ -458,65 +468,92 @@ class PlayerViewModel(
                 .filter(Char::isDigit)
                 .toIntOrNull()
 
-            repository.streams(sourceId, episode.url)
-                .also { resolveTicker?.cancel() }
-                .onSuccess { streams ->
-                    // Nearest at or below the setting - see defaultStream for why
-                    // an exact match was wrong, and why no setting means the
-                    // source's own order is kept.
-                    val chosen = defaultStream(streams, preferredHeight)
+            // Fetched once rather than per emission: neither depends on which streams arrived,
+            // and a progressive source emits several times.
+            val subtitleLang = store.currentSettings().subtitleLanguage
+            val offlineSubtitles = store
+                .downloadFor(sourceId, animeUrl, episode.url)
+                ?.allSubtitles
+                .orEmpty()
+                .map { track ->
+                    // Same labelling as the offline path: the two lists sit in one panel, so a
+                    // track must not be named differently depending on how it got there.
+                    SubtitleOption(
+                        label = offlineSubtitleLabel(track),
+                        url = track.url,
+                        language = track.language,
+                        isExternal = true,
+                        isDownloaded = true,
+                    )
+                }
 
-                    val subtitleLang = store.currentSettings().subtitleLanguage
-                    val subtitleIndex = chosen?.subtitles
-                        ?.indexOfFirst { it.language.equals(subtitleLang, true) }
-                        ?: -1
+            var playing = false
 
-                    // A subtitle fetched when this episode was downloaded, if there was
-                    // one. Added here rather than searched for again: it is already on disk
-                    // beside the video, and an offline copy that needed the network to find
-                    // its own subtitle would not be much of an offline copy.
-                    val offlineSubtitles = store
-                        .downloadFor(sourceId, animeUrl, episode.url)
-                        ?.allSubtitles
-                        .orEmpty()
-                        .map { track ->
-                            // Same labelling as the offline path: the two lists sit in one
-                            // panel, so a track must not be named differently depending on how
-                            // it got there.
-                            SubtitleOption(
-                                label = offlineSubtitleLabel(track),
-                                url = track.url,
-                                language = track.language,
-                                isExternal = true,
-                                isDownloaded = true,
-                            )
+            repository.streamsFlow(sourceId, episode.url).collect { result ->
+                result
+                    .onSuccess { streams ->
+                        // The first batch starts playback. Later ones only widen the picker.
+                        //
+                        // Re-choosing on every emission would restart the video each time a
+                        // backend answered: a viewer watching the stream that arrived first
+                        // would be interrupted because something else turned up. The choice is
+                        // made once, from what was available then, and changing it afterwards
+                        // is the viewer's to make.
+                        if (playing) {
+                            _uiState.value = _uiState.value.copy(streams = streams)
+                            return@onSuccess
                         }
 
-                    _uiState.value = _uiState.value.copy(
-                        isResolving = false,
-                        streams = streams,
-                        selectedStream = chosen,
-                        selectedSubtitleIndex = subtitleIndex,
-                        externalSubtitles = offlineSubtitles,
-                        errorMessage = if (chosen == null) NO_STREAM else null,
-                    )
+                        resolveTicker?.cancel()
+                        playing = true
 
-                    // Loads the cues for the subtitle picked here.
-                    //
-                    // Without this a saved offset did nothing on a fresh episode: the
-                    // correction was restored from settings and shown in the panel, but the
-                    // cue list it needs was only ever fetched when the subtitle or the
-                    // offset changed. Resolution picks a subtitle without going through
-                    // either path, so the list stayed empty and the renderer fell back to
-                    // the player's own unshifted timing - the offset appeared to be ignored.
-                    refreshOffsetCues()
-                }
-                .onFailure { error ->
-                    _uiState.value = _uiState.value.copy(
-                        isResolving = false,
-                        errorMessage = error.message ?: NO_STREAM,
-                    )
-                }
+                        // Nearest at or below the setting - see defaultStream for why an exact
+                        // match was wrong, and why no setting means the source's own order is
+                        // kept.
+                        val chosen = defaultStream(streams, preferredHeight)
+                        val subtitleIndex = chosen?.subtitles
+                            ?.indexOfFirst { it.language.equals(subtitleLang, true) }
+                            ?: -1
+
+                        _uiState.value = _uiState.value.copy(
+                            isResolving = false,
+                            // Marks the picker incomplete without blanking the video: more
+                            // backends may still report in behind what is already playing.
+                            isLoadingMoreStreams = true,
+                            streams = streams,
+                            selectedStream = chosen,
+                            selectedSubtitleIndex = subtitleIndex,
+                            externalSubtitles = offlineSubtitles,
+                            errorMessage = if (chosen == null) NO_STREAM else null,
+                        )
+
+                        // Loads the cues for the subtitle picked here.
+                        //
+                        // Without this a saved offset did nothing on a fresh episode: the
+                        // correction was restored from settings and shown in the panel, but the
+                        // cue list it needs was only ever fetched when the subtitle or the
+                        // offset changed. Resolution picks a subtitle without going through
+                        // either path, so the list stayed empty and the renderer fell back to
+                        // the player's own unshifted timing - the offset appeared to be ignored.
+                        refreshOffsetCues()
+                    }
+                    .onFailure { error ->
+                        resolveTicker?.cancel()
+                        _uiState.value = _uiState.value.copy(
+                            isResolving = false,
+                            isLoadingMoreStreams = false,
+                            errorMessage = error.message ?: NO_STREAM,
+                        )
+                    }
+            }
+
+            // The flow is done, so nothing further is coming. Clearing this is what takes the
+            // spinner off the server button; a failure has already cleared it and set a message.
+            resolveTicker?.cancel()
+            _uiState.value = _uiState.value.copy(
+                isResolving = false,
+                isLoadingMoreStreams = false,
+            )
         }
     }
 
