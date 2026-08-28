@@ -24,6 +24,7 @@ import space.nicart.watchbox.domain.SubtitleRepository
 import androidx.media3.common.util.UnstableApi
 import space.nicart.watchbox.download.DownloadEngine
 import space.nicart.watchbox.data.local.DownloadEntry
+import space.nicart.watchbox.data.local.DownloadedSubtitle
 import space.nicart.watchbox.data.remote.SubtitleApi.Companion.toIso639_1
 
 /**
@@ -283,8 +284,20 @@ class PlayerViewModel(
         val offline = offlineEntry()
         if (offline != null) {
             playOffline(offline)
-            // The detail is still fetched, because episode navigation and the skip markers
-            // need it - but it is no longer on the path to playing, so failing is survivable.
+
+            // The page saved when this was downloaded, before any network call. Without it the
+            // title came from a detail that only ever arrived online, so an offline episode
+            // played as "Untitled" - the name was on disk the whole time.
+            store.offlineDetail(sourceId, animeUrl)?.toDetail()?.let { cached ->
+                _uiState.value = _uiState.value.copy(
+                    detail = cached,
+                    episode = cached.episodes.firstOrNull { it.url == initialEpisodeUrl }
+                        ?: _uiState.value.episode,
+                )
+            }
+
+            // Still fetched, because episode navigation and the skip markers want the live
+            // list - but it is no longer the only source of a title, so failing is survivable.
             repository.detail(sourceId, animeUrl).onSuccess { detail ->
                 _uiState.value = _uiState.value.copy(
                     detail = detail,
@@ -312,6 +325,18 @@ class PlayerViewModel(
                 }
             }
             .onFailure { error ->
+                // A cached page still lets an episode be named and navigated, which matters for
+                // a title whose other episodes are downloaded even when this one is not.
+                val cached = store.offlineDetail(sourceId, animeUrl)?.toDetail()
+                val episode = cached?.episodes?.firstOrNull { it.url == initialEpisodeUrl }
+                    ?: cached?.episodes?.firstOrNull()
+
+                if (cached != null && episode != null) {
+                    _uiState.value = _uiState.value.copy(detail = cached, episode = episode)
+                    resolve(episode)
+                    return@onFailure
+                }
+
                 _uiState.value = _uiState.value.copy(
                     isResolving = false,
                     errorMessage = error.message ?: "Could not load this title.",
@@ -373,17 +398,16 @@ class PlayerViewModel(
                 else -> entry.episodeUrl
             },
             headers = emptyMap(),
-            // Language recovered from the filename, which the downloader encodes as
-            // `src-<index>-<lang>.<ext>`. Labelling every track "Downloaded" in the viewer's
-            // own language was fine while there could only be one, but a source may supply
-            // several - and identical rows in the panel are unpickable.
-            subtitles = entry.subtitlePaths.map { path ->
-                val lang = offlineSubtitleLanguage(path) ?: subtitleLanguage
+            // Named by what it was downloaded as, which is the only thing that identifies it to
+            // the viewer. The "Downloaded" note goes underneath as a secondary line rather than
+            // into the name, so a release name is not competing with a badge for the same row.
+            subtitles = entry.allSubtitles.map { track ->
                 SubtitleOption(
-                    label = offlineSubtitleLabel(lang),
-                    url = path,
-                    language = lang,
+                    label = offlineSubtitleLabel(track),
+                    url = track.url,
+                    language = track.language,
                     isExternal = true,
+                    isDownloaded = true,
                 )
             },
             audioTracks = emptyList(),
@@ -453,18 +477,18 @@ class PlayerViewModel(
                     // its own subtitle would not be much of an offline copy.
                     val offlineSubtitles = store
                         .downloadFor(sourceId, animeUrl, episode.url)
-                        ?.subtitlePaths
+                        ?.allSubtitles
                         .orEmpty()
-                        .map { path ->
-                            // Same labelling as the offline path, and read from the filename
-                            // for the same reason: the two lists sit in one panel, so a track
-                            // must not be named differently depending on how it got there.
-                            val lang = offlineSubtitleLanguage(path) ?: subtitleLanguage
+                        .map { track ->
+                            // Same labelling as the offline path: the two lists sit in one
+                            // panel, so a track must not be named differently depending on how
+                            // it got there.
                             SubtitleOption(
-                                label = offlineSubtitleLabel(lang),
-                                url = path,
-                                language = lang,
+                                label = offlineSubtitleLabel(track),
+                                url = track.url,
+                                language = track.language,
                                 isExternal = true,
+                                isDownloaded = true,
                             )
                         }
 
@@ -1002,12 +1026,27 @@ private const val TAG = "WbPlayer"
  * to decode it, and the codes stored here come from a source's own labels, so several are not
  * obvious even to someone who knows the language.
  */
-private fun offlineSubtitleLabel(language: String): String {
-    val name = LANGUAGE_NAMES[language.lowercase()]
-        ?: language.takeIf { it.isNotBlank() }?.uppercase()
-        ?: return OFFLINE_SUBTITLE_SUFFIX
-    return "$name ($OFFLINE_SUBTITLE_SUFFIX)"
+/**
+ * Names a downloaded subtitle by what it was saved as.
+ *
+ * Prefers the label the viewer chose it under - a release name, or the source's own track name.
+ * Falls back to the language, then to a generic word, because an entry written before names
+ * were stored has only what its filename gave up.
+ *
+ * The "Downloaded" note is deliberately not part of this. It goes on a second line under the
+ * row, so a release name is not competing with a badge for the same space, and a row is never
+ * reduced to the badge alone - which is how a track came to read "OFF (Downloaded)" when the
+ * stored subtitle preference was used as its language.
+ */
+internal fun offlineSubtitleLabel(track: DownloadedSubtitle): String {
+    track.label.takeIf { it.isNotBlank() }?.let { return it }
+
+    val language = track.language.takeIf { it.isNotBlank() } ?: return GENERIC_SUBTITLE_LABEL
+    return LANGUAGE_NAMES[language.lowercase()] ?: language.uppercase()
 }
+
+/** Shown when neither a name nor a language survived. */
+internal const val GENERIC_SUBTITLE_LABEL = "Subtitle"
 
 private const val OFFLINE_SUBTITLE_SUFFIX = "Downloaded"
 
@@ -1016,7 +1055,7 @@ private const val OFFLINE_SUBTITLE_SUFFIX = "Downloaded"
  *
  * Mirrors the set the subtitle API maps, so anything that can be searched for can be named.
  */
-private val LANGUAGE_NAMES = mapOf(
+internal val LANGUAGE_NAMES = mapOf(
     "en" to "English", "es" to "Spanish", "fr" to "French", "de" to "German",
     "it" to "Italian", "pt" to "Portuguese", "ru" to "Russian", "ja" to "Japanese",
     "ko" to "Korean", "zh" to "Chinese", "ar" to "Arabic", "hi" to "Hindi",
@@ -1029,16 +1068,3 @@ private val LANGUAGE_NAMES = mapOf(
 
 /** Shown in the quality panel for a stream being played from disk. */
 private const val OFFLINE_STREAM_LABEL = "Downloaded"
-
-/**
- * The language a downloaded subtitle file was saved under.
- *
- * Read back from the name the downloader gave it - `src-<index>-<lang>.<ext>` - because nothing
- * else records it per file. Null for a file that predates the scheme, or for one fetched by the
- * online fallback, where the language is the viewer's own preference anyway.
- */
-private fun offlineSubtitleLanguage(path: String): String? {
-    val name = path.substringAfterLast('/').substringBeforeLast('.')
-    if (!name.startsWith("src-")) return null
-    return name.substringAfterLast('-').takeIf { it.isNotBlank() && it != "sub" }
-}

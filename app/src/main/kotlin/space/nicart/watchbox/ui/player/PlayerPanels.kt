@@ -316,6 +316,7 @@ internal fun PlayerPanels(
                         // download and are what a file arrives with.
                         val offLabel = stringResource(R.string.player_subtitles_off)
                         val embeddedLabel = stringResource(R.string.player_subtitle_embedded)
+                        val downloadedLabel = stringResource(R.string.player_subtitle_downloaded)
                         PanelList(
                             title = stringResource(R.string.player_subtitles),
                             entries = listOf(offLabel) +
@@ -328,10 +329,14 @@ internal fun PlayerPanels(
                                 else -> 0
                             },
                             // Says where a track came from, so an embedded one is not
-                            // mistaken for a download that failed to appear.
+                            // mistaken for a download that failed to appear, and a
+                            // downloaded one keeps the name it was saved under rather
+                            // than having a badge folded into it.
                             secondary = listOf(null) +
                                 embeddedSubtitles.map { embeddedLabel } +
-                                state.subtitles.map { null },
+                                state.subtitles.map { subtitle ->
+                                    downloadedLabel.takeIf { subtitle.isDownloaded }
+                                },
                             onSelect = { index ->
                                 when {
                                     index == 0 -> {

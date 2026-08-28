@@ -72,8 +72,24 @@ data class DownloadEntry(
      * and what the Library shows beside each row.
      */
     val sizeBytes: Long = 0L,
-    /** Subtitle files fetched alongside the video, as paths relative to the download root. */
+    /**
+     * Subtitle files fetched alongside the video, as paths relative to the download root.
+     *
+     * Superseded by [subtitleTracks], which carries the name as well. Kept because entries
+     * written before that existed hold only paths, and dropping the field would lose their
+     * subtitles entirely. New downloads leave it empty.
+     */
     val subtitlePaths: List<String> = emptyList(),
+    /**
+     * Subtitle files with the name they were downloaded under.
+     *
+     * The name has to be captured here, at download time, because nothing on disk carries it:
+     * a searched file is named by its provider id and a source track by its index, both
+     * deliberately, since release names contain characters that are not safe in a path. Read
+     * back from the filename the label became a language code at best - and the stored subtitle
+     * preference at worst, which is how a track came to be listed as "OFF".
+     */
+    val subtitleTracks: List<DownloadedSubtitle> = emptyList(),
     val createdAt: Long = 0L,
     val completedAt: Long = 0L,
 ) {
@@ -84,6 +100,17 @@ data class DownloadEntry(
     val titleKey: String get() = "$sourceId::$animeUrl"
 
     val isComplete: Boolean get() = state == DownloadState.COMPLETED
+
+    /**
+     * Every saved subtitle, whichever field it was recorded in.
+     *
+     * Legacy paths are named from what the filename gives up - a language where the source
+     * track encoded one, nothing for a searched file named by provider id. Deliberately not
+     * migrated on disk: the original names were never written, so a rewrite could not recover
+     * them and would only touch the user's files for no gain.
+     */
+    val allSubtitles: List<DownloadedSubtitle>
+        get() = subtitleTracks + subtitlePaths.map(DownloadedSubtitle::fromLegacyPath)
 
     companion object {
         /**
@@ -110,4 +137,43 @@ enum class DownloadState {
     PAUSED,
     COMPLETED,
     FAILED,
+}
+
+/**
+ * One subtitle saved with a download.
+ *
+ * Carries the name it was offered under, so the panel can show what the user actually chose
+ * rather than a code recovered from a filename.
+ */
+@Serializable
+data class DownloadedSubtitle(
+    /** A `file://` URI on disk. */
+    val url: String,
+    /**
+     * The name this was downloaded under - a release name for a searched file, the source's
+     * own track label otherwise. Blank when it could not be recovered from a legacy entry.
+     */
+    val label: String = "",
+    /** ISO code where known, blank otherwise. Never a preference value. */
+    val language: String = "",
+) {
+    companion object {
+        /**
+         * Best effort for an entry stored before names were kept.
+         *
+         * A source track was written as `src-<index>-<lang>.<ext>`, so its language survives.
+         * A searched file was written as `sub-<id>.<ext>` and gives up nothing, which is
+         * why the label may come back blank - the caller shows a generic name for those.
+         */
+        fun fromLegacyPath(path: String): DownloadedSubtitle {
+            val name = path.substringAfterLast('/').substringBeforeLast('.')
+            val language = name
+                .takeIf { it.startsWith("src-") }
+                ?.substringAfterLast('-')
+                ?.takeIf { it.isNotBlank() && it != "sub" }
+                .orEmpty()
+
+            return DownloadedSubtitle(url = path, label = "", language = language)
+        }
+    }
 }

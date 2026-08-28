@@ -423,6 +423,13 @@ data class SubtitleOption(
      * than nothing on a different one.
      */
     val isExternal: Boolean = false,
+    /**
+     * True for a track read from disk beside a downloaded episode.
+     *
+     * Drives the note under its row in the panel. Separate from [isExternal] because a
+     * downloaded track may be either: the source's own, or one fetched from a search.
+     */
+    val isDownloaded: Boolean = false,
 )
 
 // ------------------------------------------------------------------ mapping

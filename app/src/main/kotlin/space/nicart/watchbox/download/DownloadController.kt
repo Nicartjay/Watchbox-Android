@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import space.nicart.watchbox.data.local.DownloadEntry
 import space.nicart.watchbox.data.local.DownloadState
+import space.nicart.watchbox.data.local.DownloadedSubtitle
 import space.nicart.watchbox.data.local.OfflineDetail
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.domain.AnimeDetail
@@ -324,7 +325,18 @@ class DownloadController(
                 targetDir = storage.subtitleDir(entry.volumeId, entry.key),
             ) ?: return@runCatching
 
-            appendSubtitles(entry.key, listOf(option.url))
+            // The release name the viewer picked from the search, not the provider id the file
+            // is stored under - that is unreadable and identifies nothing to a person.
+            appendSubtitles(
+                entry.key,
+                listOf(
+                    DownloadedSubtitle(
+                        url = option.url,
+                        label = option.label,
+                        language = option.language,
+                    ),
+                ),
+            )
         }
     }
 
@@ -342,7 +354,7 @@ class DownloadController(
         entry: DownloadEntry,
         tracks: List<SubtitleOption>,
         streamHeaders: Map<String, String>,
-    ): List<String> {
+    ): List<DownloadedSubtitle> {
         if (tracks.isEmpty()) return emptyList()
 
         val dir = storage.subtitleDir(entry.volumeId, entry.key)
@@ -359,21 +371,28 @@ class DownloadController(
                 val safeLang = track.language.filter(Char::isLetterOrDigit).ifBlank { "sub" }
                 val file = File(dir, "src-$index-$safeLang.$extension")
                 file.writeText(text)
-                file.toURI().toString()
+
+                // The source's own label is kept as it was given. The filename cannot hold it -
+                // that is what the record is for.
+                DownloadedSubtitle(
+                    url = file.toURI().toString(),
+                    label = track.label,
+                    language = track.language,
+                )
             }.getOrNull()
         }
     }
 
     /**
-     * Adds subtitle paths to a download's record.
+     * Adds saved subtitles to a download's record.
      *
      * Re-read rather than using an entry captured earlier: the download may have started, or
      * finished, while these were being fetched.
      */
-    private suspend fun appendSubtitles(key: String, paths: List<String>) {
-        if (paths.isEmpty()) return
+    private suspend fun appendSubtitles(key: String, tracks: List<DownloadedSubtitle>) {
+        if (tracks.isEmpty()) return
         val current = entryFor(key) ?: return
-        store.saveDownload(current.copy(subtitlePaths = current.subtitlePaths + paths))
+        store.saveDownload(current.copy(subtitleTracks = current.subtitleTracks + tracks))
     }
 
     /**
