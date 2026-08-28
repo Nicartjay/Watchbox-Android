@@ -254,9 +254,7 @@ class PlayerViewModel(
             val stored = settings.subtitleLanguage
             subtitleLanguage = when {
                 stored.equals("off", ignoreCase = true) -> stored
-                stored.toIso639_1().isNotBlank() -> stored.toIso639_1()
-                // Unrecognisable, so the default is better than a value known to fail.
-                else -> DEFAULT_SUBTITLE_LANGUAGE
+                else -> SubtitleQuery.normaliseLanguage(stored)
             }
 
             // Written back only when it actually changed, so this costs nothing on a device
@@ -640,26 +638,23 @@ class PlayerViewModel(
         val state = _uiState.value
         val detail = state.detail
         val episode = state.episode
-        val isSeries = detail != null && !detail.isMovie
 
-        // Read from the last known settings rather than awaited: this runs on a click, and
-        // "off" is a real stored value meaning the user turned subtitles off - not a language
-        // to search for.
-        val language = subtitleLanguage.takeIf { it.isNotBlank() && !it.equals("off", true) }
-            ?: DEFAULT_SUBTITLE_LANGUAGE
-
-        val query = SubtitleQuery(
+        // Built through the shared helper, so the download flow's own search cannot drift from
+        // this one. `subtitleLanguage` is the already-repaired field rather than the raw
+        // setting; normalising again is harmless and keeps the two paths identical.
+        val query = SubtitleQuery.forEpisode(
             imdbId = detail?.imdbId,
             tmdbId = detail?.tmdbId,
-            // A film is a single entry with no season. Sending season/episode for one filters
-            // every result away, because the catalogue has no such entry to match.
-            season = if (isSeries) episode?.season ?: 1 else null,
-            episode = if (isSeries) episode?.number?.toInt() else null,
-            language = language,
             title = state.title,
+            // Absent detail is treated as a series: season and episode are then null anyway,
+            // and a film wrongly sent them would filter every result away.
+            isMovie = detail?.isMovie ?: false,
+            season = episode?.season,
+            episodeNumber = episode?.number,
+            storedLanguage = subtitleLanguage,
         )
 
-        if (query.isUnusable) {
+        if (query == null) {
             _uiState.value = state.copy(subtitleSearch = SubtitleSearchState.Unsupported)
             return
         }

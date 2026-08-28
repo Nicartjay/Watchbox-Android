@@ -583,22 +583,20 @@ class DetailViewModel(
     private suspend fun findSubtitles(episodeUrl: String): List<SubtitleResult> {
         val detail = _uiState.value.detail ?: return emptyList()
         val episode = detail.episodes.firstOrNull { it.url == episodeUrl } ?: return emptyList()
-        val language = store.currentSettings().subtitleLanguage
-            .takeIf { it.isNotBlank() && !it.equals("off", ignoreCase = true) }
-            ?: return emptyList()
 
-        val isSeries = !detail.isMovie
-        val query = SubtitleQuery(
+        // Built through the shared helper so this cannot drift from the player's own search
+        // again. It used to read the stored language raw, which returned nothing whenever the
+        // preference held a track label rather than a code - the player normalised it and
+        // found results for the very same episode.
+        val query = SubtitleQuery.forEpisode(
             imdbId = detail.imdbId,
             tmdbId = detail.tmdbId,
-            // Null for a film: the catalogue holds one as a single entry with no season, and
-            // sending either field filters every result away.
-            season = if (isSeries) episode.season ?: 1 else null,
-            episode = if (isSeries) episode.number.takeIf { it >= 0f }?.toInt() else null,
-            language = language,
             title = detail.title,
-        )
-        if (query.isUnusable) return emptyList()
+            isMovie = detail.isMovie,
+            season = episode.season,
+            episodeNumber = episode.number,
+            storedLanguage = store.currentSettings().subtitleLanguage,
+        ) ?: return emptyList()
 
         return runCatching { subtitleRepository.search(query) }.getOrDefault(emptyList())
     }

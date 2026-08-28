@@ -435,6 +435,62 @@ data class SubtitleQuery(
 ) {
     /** True when neither provider could do anything with this query. */
     val isUnusable: Boolean get() = imdbId.isNullOrBlank() && tmdbId == null
+
+    companion object {
+        /** Searched for when the stored preference names no usable language. */
+        const val DEFAULT_LANGUAGE = "en"
+
+        /**
+         * Reduces a stored preference to something a provider will accept.
+         *
+         * Repaired on read rather than trusted, because earlier builds stored a source's own
+         * track label here - "English", "Portuguese (Brazil)" - and a device carrying one
+         * would keep searching for a language no catalogue indexes, however the write path is
+         * fixed. An unrecognisable value becomes [DEFAULT_LANGUAGE], since a default that
+         * returns results beats one known to return none.
+         *
+         * "off" is not special here. It means the viewer does not want subtitles *shown*,
+         * which is a playback preference and no reason to refuse to look for a file they
+         * asked to download.
+         */
+        fun normaliseLanguage(stored: String): String =
+            with(SubtitleApi) { stored.toIso639_1() }
+                .takeIf { it.isNotBlank() }
+                ?: DEFAULT_LANGUAGE
+
+        /**
+         * Builds the query for one episode, or null when nothing could be searched.
+         *
+         * Shared so the player and the download flow cannot disagree about it. They had
+         * drifted: the player normalised the stored language and fell back to English, while
+         * the download flow passed the raw value straight through and abandoned the search
+         * outright when it was "off". A device whose preference held a label - the common
+         * case, since selecting an embedded track used to store one - got three results in
+         * the player and "none found" when downloading the same episode.
+         */
+        fun forEpisode(
+            imdbId: String?,
+            tmdbId: Int?,
+            title: String,
+            isMovie: Boolean,
+            season: Int?,
+            episodeNumber: Float?,
+            storedLanguage: String,
+        ): SubtitleQuery? {
+            val query = SubtitleQuery(
+                imdbId = imdbId,
+                tmdbId = tmdbId,
+                // Null for a film: the catalogue holds one as a single entry with no season,
+                // and sending either field filters every result away.
+                season = if (isMovie) null else season ?: 1,
+                episode = if (isMovie) null else episodeNumber?.takeIf { it >= 0f }?.toInt(),
+                language = normaliseLanguage(storedLanguage),
+                title = title,
+            )
+
+            return query.takeUnless { it.isUnusable }
+        }
+    }
 }
 
 /** One search hit, before it has been downloaded. */
