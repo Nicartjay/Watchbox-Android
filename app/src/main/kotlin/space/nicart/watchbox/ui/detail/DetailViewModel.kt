@@ -159,6 +159,20 @@ class DetailViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
 
+            // The page saved when something was downloaded, shown before the network is tried.
+            //
+            // Offline this used to be reached only after the request had failed, so opening a
+            // downloaded show from the Library meant waiting out a timeout in front of a
+            // spinner. Painting it first means the page is there immediately and the network
+            // result, when it comes, upgrades it.
+            store.offlineDetail(sourceId, animeUrl)?.toDetail()?.let { cached ->
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    detail = cached,
+                    errorMessage = null,
+                )
+            }
+
             repository.detail(sourceId, animeUrl)
                 .onSuccess { detail ->
                     _uiState.value = _uiState.value.copy(
