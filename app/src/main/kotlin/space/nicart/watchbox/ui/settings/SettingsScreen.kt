@@ -569,7 +569,21 @@ fun SettingsScreen(
                                 stringResource(R.string.settings_subtitle_provider_free_note)
                             SubtitleProvider.OPEN_SUBTITLES_API ->
                                 stringResource(R.string.settings_subtitle_provider_api_note)
+                            SubtitleProvider.SUBS_BRIGHT ->
+                                stringResource(R.string.settings_subtitle_provider_bright_note)
                         },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tokens.colors.textMuted,
+                    )
+
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        // Stated because the behaviour is otherwise invisible: a search that
+                        // succeeds may not have used the provider named above, and someone
+                        // choosing one would reasonably assume it was the only one tried.
+                        text = stringResource(
+                            R.string.settings_subtitle_provider_fallback_note,
+                        ),
                         style = MaterialTheme.typography.labelSmall,
                         color = tokens.colors.textMuted,
                     )

@@ -3,6 +3,7 @@ package space.nicart.watchbox.domain
 import android.content.Context
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.data.remote.SubtitleApi
+import space.nicart.watchbox.data.remote.SubtitleProvider
 import space.nicart.watchbox.data.remote.SubtitleQuery
 import space.nicart.watchbox.data.remote.SubtitleResult
 import kotlinx.coroutines.Dispatchers
@@ -29,16 +30,59 @@ class SubtitleRepository(
 ) {
 
     /** Searches using whichever provider and language the user has configured. */
+    /**
+     * Searches every usable provider until one answers, starting with the chosen one.
+     *
+     * The providers index differently and none is a superset: the legacy endpoint needs an IMDb
+     * id, the REST one a key, and the aggregator covers releases the others miss. A single miss
+     * therefore says little about whether a subtitle exists, and reporting "none found" from one
+     * provider while another had six was the behaviour this replaces.
+     *
+     * The user's choice is tried first and still decides what is normally used - the others are
+     * a fallback, not a merge. Merging would be worse: the same file appears in several
+     * catalogues under different names, and the list would fill with near-duplicates that all
+     * have to be tried to tell apart.
+     */
     suspend fun search(query: SubtitleQuery): List<SubtitleResult> {
         if (query.isUnusable) return emptyList()
 
         val settings = store.currentSettings()
-        return api.search(
-            query = query,
-            provider = settings.subtitleProvider,
-            apiKey = settings.subtitleApiKey,
-        )
+
+        // Chosen first, then the rest in their declared order. A provider that cannot run at all
+        // is skipped rather than attempted: the REST one without a key returns empty, which
+        // would otherwise look like a genuine miss and consume a step of the fallback.
+        val providers = buildList {
+            add(settings.subtitleProvider)
+            addAll(SubtitleProvider.entries - settings.subtitleProvider)
+        }.filter { it.isUsable(query, settings.subtitleApiKey) }
+
+        for (provider in providers) {
+            val results = api.search(
+                query = query,
+                provider = provider,
+                apiKey = settings.subtitleApiKey,
+            )
+            if (results.isNotEmpty()) return results
+        }
+
+        return emptyList()
     }
+
+    /**
+     * Whether [provider] could return anything for this query at all.
+     *
+     * Checked up front so a provider that is structurally unable to answer - no key, or no id of
+     * the kind it indexes by - does not absorb a fallback step and mask a provider that could
+     * have succeeded.
+     */
+    private fun SubtitleProvider.isUsable(query: SubtitleQuery, apiKey: String): Boolean =
+        when (this) {
+            // Positional path keyed by IMDb id; a TMDB id is of no use to it.
+            SubtitleProvider.OPEN_SUBTITLES_LEGACY -> !query.imdbId.isNullOrBlank()
+            SubtitleProvider.OPEN_SUBTITLES_API -> apiKey.isNotBlank()
+            // Takes either id, so it is usable whenever the query is.
+            SubtitleProvider.SUBS_BRIGHT -> true
+        }
 
     /**
      * Downloads [result] and returns it as a playable track.
