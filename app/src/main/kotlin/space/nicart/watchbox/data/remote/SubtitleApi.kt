@@ -52,6 +52,7 @@ class SubtitleApi(private val client: HttpClient) {
             when (provider) {
                 SubtitleProvider.OPEN_SUBTITLES_LEGACY -> searchLegacy(query)
                 SubtitleProvider.OPEN_SUBTITLES_API -> searchRest(query, apiKey)
+                SubtitleProvider.SUBS_BRIGHT -> searchBright(query)
             }
         }.onFailure {
             android.util.Log.w(TAG, "subtitle search failed: ${it::class.java.simpleName}: ${it.message}")
@@ -92,9 +93,52 @@ class SubtitleApi(private val client: HttpClient) {
             .ranked()
     }
 
+    /**
+     * The keyless aggregator, keyed by either id.
+     *
+     * Takes a TMDB id or an `tt`-prefixed IMDb one in the same `id` parameter, so a title
+     * matched by either is searchable - unlike the legacy endpoint, which needs IMDb. Season
+     * and episode are omitted for a film, which is what the endpoint expects rather than
+     * something it tolerates.
+     *
+     * The language is filtered server-side. Sending it unfiltered returned every language at
+     * once - eighty-one results for one episode - and the picker would have been unusable.
+     */
+    private suspend fun searchBright(query: SubtitleQuery): List<SubtitleResult> {
+        // Either id works, TMDB preferred: it is the one this app resolves for every title,
+        // where an IMDb id is only present when TMDB happened to carry one.
+        val id = query.tmdbId?.toString()
+            ?: query.imdbId?.takeIf { it.isNotBlank() }
+            ?: return emptyList()
+
+        // A two-letter code, which is what this endpoint indexes by. Refused rather than sent
+        // unfiltered, since an unrecognised value would otherwise return every language.
+        val lang = query.language.toIso639_1()
+        if (lang.isBlank()) return emptyList()
+
+        val params = buildList {
+            add("id=$id")
+            query.season?.let { add("season=$it") }
+            query.episode?.let { add("episode=$it") }
+            add("language=$lang")
+        }
+
+        val response = client.get("$BRIGHT_BASE/search?${params.joinToString("&")}") {
+            // The endpoint is a CORS API for a web player and checks Origin. Verified against
+            // the live service: the search needs it, and the download URLs it hands back serve
+            // without any header at all.
+            header("Origin", BRIGHT_ORIGIN)
+            header("User-Agent", LEGACY_AGENT)
+        }
+        if (!response.status.isSuccess()) return emptyList()
+
+        return json.decodeFromString<List<BrightSubtitle>>(response.bodyAsText())
+            .mapNotNull { it.toResult() }
+            .ranked()
+    }
+
     /** The modern REST API, keyed by TMDB id so it needs no IMDb match. */
-    private suspend fun searchRest(query: SubtitleQuery, apiKey: String): List<SubtitleResult> {
-        if (apiKey.isBlank()) return emptyList()
+    private suspend fun searchRest(query: SubtitleQuery, apiKey: String): List<SubtitleResult> {        if (apiKey.isBlank()) return emptyList()
 
         val params = buildList {
             query.tmdbId?.let { add("tmdb_id=$it") }
@@ -288,6 +332,16 @@ class SubtitleApi(private val client: HttpClient) {
 
         private const val LEGACY_BASE = "https://rest.opensubtitles.org"
         private const val REST_BASE = "https://api.opensubtitles.com/api/v1"
+        private const val BRIGHT_BASE = "https://subs.bright67.online"
+
+        /**
+         * Origin the aggregator checks on a search.
+         *
+         * It is a CORS API for a web player, so it wants the player's own origin. Verified
+         * against the live service: the search needs this, and the download URLs it returns
+         * serve with no headers whatever.
+         */
+        private const val BRIGHT_ORIGIN = "https://cinesrc.st"
 
         /** The legacy endpoint refuses requests without a recognisable agent. */
         private const val LEGACY_AGENT = "WatchBox"
@@ -417,6 +471,15 @@ enum class SubtitleProvider {
 
     /** Modern REST API. Needs a free key, accepts TMDB ids. */
     OPEN_SUBTITLES_API,
+
+    /**
+     * Keyless aggregator, accepting either a TMDB or an IMDb id.
+     *
+     * Indexes OpenSubtitles but answers with far more per release than the legacy endpoint -
+     * sync confidence, release group, trusted and machine-translated flags - and needs no key,
+     * so it is usable without setup while still being ranked properly.
+     */
+    SUBS_BRIGHT,
 }
 
 /**

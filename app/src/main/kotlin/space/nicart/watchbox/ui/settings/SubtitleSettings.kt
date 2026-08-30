@@ -198,6 +198,8 @@ fun SubtitleProviderRow(
                             R.string.settings_subtitle_provider_free
                         SubtitleProvider.OPEN_SUBTITLES_API ->
                             R.string.settings_subtitle_provider_api
+                        SubtitleProvider.SUBS_BRIGHT ->
+                            R.string.settings_subtitle_provider_bright
                     },
                 ),
                 selected = provider == selected,
