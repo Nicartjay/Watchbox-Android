@@ -178,7 +178,8 @@ class SubtitleApi(private val client: HttpClient) {
     }
 
     /** The modern REST API, keyed by TMDB id so it needs no IMDb match. */
-    private suspend fun searchRest(query: SubtitleQuery, apiKey: String): List<SubtitleResult> {        if (apiKey.isBlank()) return emptyList()
+    private suspend fun searchRest(query: SubtitleQuery, apiKey: String): List<SubtitleResult> {
+        if (apiKey.isBlank()) return emptyList()
 
         val params = buildList {
             query.tmdbId?.let { add("tmdb_id=$it") }
@@ -630,4 +631,19 @@ data class SubtitleResult(
      * files.
      */
     fun cacheFileName(): String = "sub-${id.filter { it.isLetterOrDigit() }}.${format.ifBlank { "srt" }}"
+}
+
+/**
+ * Short name for a provider, for a section heading or a settings toggle.
+ *
+ * Separate from the settings chip labels, which describe the trade-off a viewer is choosing
+ * between ("Free (no key)"). A heading over a list of results wants to say which catalogue the
+ * rows came from, and "Free (no key)" says nothing about that.
+ */
+@androidx.annotation.StringRes
+fun SubtitleProvider.labelRes(): Int = when (this) {
+    SubtitleProvider.OPEN_SUBTITLES_LEGACY -> space.nicart.watchbox.R.string.subtitle_source_legacy
+    SubtitleProvider.OPEN_SUBTITLES_API -> space.nicart.watchbox.R.string.subtitle_source_api
+    SubtitleProvider.SUBS_BRIGHT -> space.nicart.watchbox.R.string.subtitle_source_bright
+    SubtitleProvider.VIDFAST_WYZIE -> space.nicart.watchbox.R.string.subtitle_source_wyzie
 }

@@ -253,8 +253,20 @@ class SettingsViewModel(
         viewModelScope.launch { store.setSubtitleBackgroundOpacity(opacity) }
     }
 
-    fun setSubtitleProvider(provider: SubtitleProvider) {
-        viewModelScope.launch { store.setSubtitleProvider(provider) }
+    /**
+     * Turns one catalogue on or off for the online search.
+     *
+     * Toggled rather than set, so the row can be a checkbox per provider. Turning the last one
+     * off stores an empty set, which is read back as every provider - a search button that can
+     * do nothing would be worse than one that ignores an unhelpful choice.
+     */
+    fun toggleSubtitleProvider(provider: SubtitleProvider, enabled: Boolean) {
+        viewModelScope.launch {
+            val current = store.currentSettings().subtitleProviders
+            store.setSubtitleProviders(
+                if (enabled) current + provider else current - provider,
+            )
+        }
     }
 
     /**

@@ -20,6 +20,7 @@ import space.nicart.watchbox.domain.StreamOption
 import space.nicart.watchbox.domain.SubtitleOption
 import space.nicart.watchbox.data.remote.SkipInterval
 import space.nicart.watchbox.domain.SkipRepository
+import space.nicart.watchbox.domain.SubtitleGroup
 import space.nicart.watchbox.domain.SubtitleRepository
 import androidx.media3.common.util.UnstableApi
 import space.nicart.watchbox.download.DownloadEngine
@@ -47,7 +48,19 @@ sealed interface SubtitleSearchState {
      */
     data object Applied : SubtitleSearchState
     data object Searching : SubtitleSearchState
-    data class Results(val results: List<SubtitleResult>) : SubtitleSearchState
+
+    /**
+     * What each provider found, kept apart rather than merged.
+     *
+     * The catalogues overlap heavily - the same file appears in several under different release
+     * names - so a flat list fills with near-duplicates that have to be downloaded one at a time
+     * to tell apart. Sections also show plainly which catalogue a row came from, which is the
+     * only way to learn that one of them suits your releases.
+     */
+    data class Results(val groups: List<SubtitleGroup>) : SubtitleSearchState {
+        /** Every result across every group, for anything that just needs to look one up. */
+        val all: List<SubtitleResult> get() = groups.flatMap { it.results }
+    }
 
     /**
      * Downloading a chosen result.
@@ -56,7 +69,7 @@ sealed interface SubtitleSearchState {
      * can keep showing the results with a spinner on one of them. Without the list the panel
      * would have to blank itself mid-download and hide what the user had just picked.
      */
-    data class Downloading(val id: String, val previous: List<SubtitleResult>) : SubtitleSearchState
+    data class Downloading(val id: String, val previous: List<SubtitleGroup>) : SubtitleSearchState
     data object Empty : SubtitleSearchState
 
     /** The title has no id either provider can search by, so there is nothing to try. */
@@ -723,12 +736,12 @@ class PlayerViewModel(
         _uiState.value = state.copy(subtitleSearch = SubtitleSearchState.Searching)
 
         subtitleJob = viewModelScope.launch {
-            val results = subtitles.search(query)
+            val groups = subtitles.searchGrouped(query)
             _uiState.value = _uiState.value.copy(
-                subtitleSearch = if (results.isEmpty()) {
+                subtitleSearch = if (groups.isEmpty()) {
                     SubtitleSearchState.Empty
                 } else {
-                    SubtitleSearchState.Results(results)
+                    SubtitleSearchState.Results(groups)
                 },
             )
         }
@@ -745,7 +758,7 @@ class PlayerViewModel(
 
         subtitleJob = viewModelScope.launch {
             val shown = (_uiState.value.subtitleSearch as? SubtitleSearchState.Results)
-                ?.results
+                ?.groups
                 .orEmpty()
 
             _uiState.value = _uiState.value.copy(

@@ -178,19 +178,26 @@ fun SubtitleSizeRow(
 }
 
 /**
- * Which online catalogue the player searches.
+ * Which online catalogues the player searches.
  *
- * Two chips rather than a toggle: the labels have to name the providers, because the
- * difference between them is not a degree of the same thing.
+ * A chip per provider, toggled rather than chosen between: they index differently and none is a
+ * superset, so searching several and grouping the answers is more useful than picking one. The
+ * labels have to name the providers, because the difference between them is not a degree of the
+ * same thing.
+ *
+ * A chip reads as on when its provider is enabled, so the default - all of them - shows every
+ * chip selected.
  */
 @Composable
 fun SubtitleProviderRow(
-    selected: SubtitleProvider,
-    onSelect: (SubtitleProvider) -> Unit,
+    enabled: Set<SubtitleProvider>,
+    onToggle: (SubtitleProvider, Boolean) -> Unit,
 ) {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(SubtitleProvider.entries.size) { index ->
             val provider = SubtitleProvider.entries[index]
+            val isOn = provider in enabled
+
             WbChip(
                 label = stringResource(
                     when (provider) {
@@ -204,8 +211,8 @@ fun SubtitleProviderRow(
                             R.string.settings_subtitle_provider_wyzie
                     },
                 ),
-                selected = provider == selected,
-                onClick = { onSelect(provider) },
+                selected = isOn,
+                onClick = { onToggle(provider, !isOn) },
             )
         }
     }

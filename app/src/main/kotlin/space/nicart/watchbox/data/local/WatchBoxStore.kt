@@ -80,6 +80,17 @@ class WatchBoxStore(context: Context) {
                 subtitleLanguage = prefs[Keys.SUB_LANG] ?: "en",
                 audioLanguage = prefs[Keys.AUDIO_LANG].orEmpty(),
                 artworkLanguage = prefs[Keys.ARTWORK_LANG] ?: ARTWORK_LANGUAGE_DEFAULT,
+                // An empty stored set means every provider, not none: that is what a fresh
+                // install reads, and refusing to search anything would look like a broken
+                // button rather than a default.
+                subtitleProviders = prefs[Keys.SUB_PROVIDERS]
+                    ?.split(',')
+                    ?.mapNotNull { name ->
+                        SubtitleProvider.entries.firstOrNull { it.name == name.trim() }
+                    }
+                    ?.toSet()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: SubtitleProvider.entries.toSet(),
                 subtitleProvider = enumOrDefault(
                     prefs[Keys.SUB_PROVIDER],
                     SubtitleProvider.OPEN_SUBTITLES_LEGACY,
@@ -245,6 +256,17 @@ class WatchBoxStore(context: Context) {
     suspend fun setAudioLanguage(lang: String) = store.edit { it[Keys.AUDIO_LANG] = lang }
     suspend fun setSubtitleProvider(provider: SubtitleProvider) = store.edit {
         it[Keys.SUB_PROVIDER] = provider.name
+    }
+
+    /**
+     * Replaces the set of catalogues the online search queries.
+     *
+     * An empty set is stored as empty and read back as every provider. Turning the last one off
+     * therefore restores the default rather than disabling search - deliberate, since a search
+     * button that can do nothing is worse than one that ignores an unhelpful choice.
+     */
+    suspend fun setSubtitleProviders(providers: Set<SubtitleProvider>) = store.edit {
+        it[Keys.SUB_PROVIDERS] = providers.joinToString(",") { provider -> provider.name }
     }
     suspend fun setSubtitleApiKey(key: String) = store.edit { it[Keys.SUB_API_KEY] = key.trim() }
     suspend fun setCastForceProxy(enabled: Boolean) = store.edit {
@@ -493,6 +515,7 @@ class WatchBoxStore(context: Context) {
         val AUDIO_LANG = stringPreferencesKey("audio_language")
         val ARTWORK_LANG = stringPreferencesKey("artwork_language")
         val SUB_PROVIDER = stringPreferencesKey("subtitle_provider")
+        val SUB_PROVIDERS = stringPreferencesKey("subtitle_providers_enabled")
         val SUB_API_KEY = stringPreferencesKey("subtitle_api_key")
         val CAST_FORCE_PROXY = booleanPreferencesKey("cast_force_proxy")
         val LAST_SERVER = stringPreferencesKey("last_server_id")
@@ -610,7 +633,23 @@ data class AppSettings(
      */
     val artworkLanguage: String = ARTWORK_LANGUAGE_DEFAULT,
     /** Which online catalogue the subtitle search uses. */
+    /**
+     * The single provider older builds searched.
+     *
+     * Superseded by [subtitleProviders]. Kept only so the stored value still decodes for anyone
+     * downgrading; nothing reads it to decide what to search.
+     */
+    @Deprecated("Use subtitleProviders.")
     val subtitleProvider: SubtitleProvider = SubtitleProvider.OPEN_SUBTITLES_LEGACY,
+    /**
+     * Which catalogues the online search queries.
+     *
+     * Every one by default: they index differently and none is a superset, so searching them all
+     * and grouping the answers is strictly more useful than picking one and hoping. A provider
+     * turned off here is not queried at all, which is the point - a slow or unwanted service
+     * should not hold up the others.
+     */
+    val subtitleProviders: Set<SubtitleProvider> = SubtitleProvider.entries.toSet(),
     /** Key for the OpenSubtitles REST API. Empty means that provider is unavailable. */
     val subtitleApiKey: String = "",
     /**

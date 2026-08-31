@@ -549,50 +549,29 @@ fun SettingsScreen(
             item(key = "subtitle-online") {
                 SettingsCard {
                     Text(
-                        text = stringResource(R.string.settings_subtitle_provider),
+                        text = stringResource(R.string.settings_subtitle_sources),
                         style = MaterialTheme.typography.labelMedium,
                         color = tokens.colors.textMuted,
                     )
                     Spacer(Modifier.height(6.dp))
                     SubtitleProviderRow(
-                        selected = settings.subtitleProvider,
-                        onSelect = viewModel::setSubtitleProvider,
+                        enabled = settings.subtitleProviders,
+                        onToggle = viewModel::toggleSubtitleProvider,
                     )
 
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        // The trade-off is stated rather than left to be discovered: one
-                        // provider needs no setup but misses titles, the other covers more
-                        // but has to be registered for and is rate-limited.
-                        text = when (settings.subtitleProvider) {
-                            SubtitleProvider.OPEN_SUBTITLES_LEGACY ->
-                                stringResource(R.string.settings_subtitle_provider_free_note)
-                            SubtitleProvider.OPEN_SUBTITLES_API ->
-                                stringResource(R.string.settings_subtitle_provider_api_note)
-                            SubtitleProvider.SUBS_BRIGHT ->
-                                stringResource(R.string.settings_subtitle_provider_bright_note)
-                            SubtitleProvider.VIDFAST_WYZIE ->
-                                stringResource(R.string.settings_subtitle_provider_wyzie_note)
-                        },
+                        // Stated because neither half is guessable from the chips: that all of
+                        // them are searched together, and that turning the last one off is not a
+                        // way to disable the feature.
+                        text = stringResource(R.string.settings_subtitle_sources_note),
                         style = MaterialTheme.typography.labelSmall,
                         color = tokens.colors.textMuted,
                     )
 
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        // Stated because the behaviour is otherwise invisible: a search that
-                        // succeeds may not have used the provider named above, and someone
-                        // choosing one would reasonably assume it was the only one tried.
-                        text = stringResource(
-                            R.string.settings_subtitle_provider_fallback_note,
-                        ),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = tokens.colors.textMuted,
-                    )
-
-                    // The key field only appears for the provider that needs one, so the
-                    // keyless path stays a single choice with nothing else to fill in.
-                    if (settings.subtitleProvider == SubtitleProvider.OPEN_SUBTITLES_API) {
+                    // The key field only appears while the provider that needs one is enabled,
+                    // so the keyless catalogues have nothing extra to fill in.
+                    if (SubtitleProvider.OPEN_SUBTITLES_API in settings.subtitleProviders) {
                         Spacer(Modifier.height(14.dp))
                         SubtitleApiKeyField(
                             saved = settings.subtitleApiKey,

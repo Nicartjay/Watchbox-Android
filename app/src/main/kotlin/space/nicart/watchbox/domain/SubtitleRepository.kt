@@ -7,6 +7,8 @@ import space.nicart.watchbox.data.remote.SubtitleProvider
 import space.nicart.watchbox.data.remote.SubtitleQuery
 import space.nicart.watchbox.data.remote.SubtitleResult
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import space.nicart.watchbox.ui.player.SubtitleCue
 import space.nicart.watchbox.ui.player.SubtitleParser
@@ -29,44 +31,59 @@ class SubtitleRepository(
     private val store: WatchBoxStore,
 ) {
 
-    /** Searches using whichever provider and language the user has configured. */
     /**
-     * Searches every usable provider until one answers, starting with the chosen one.
+     * Searches every enabled provider at once, keeping the answers grouped by their source.
      *
-     * The providers index differently and none is a superset: the legacy endpoint needs an IMDb
-     * id, the REST one a key, and the aggregator covers releases the others miss. A single miss
-     * therefore says little about whether a subtitle exists, and reporting "none found" from one
-     * provider while another had six was the behaviour this replaces.
+     * Grouped rather than merged. The same file appears in several catalogues under different
+     * names, so a merged list fills with near-duplicates that all have to be downloaded to tell
+     * apart - where a grouped one lets a viewer who knows a provider suits their releases go
+     * straight to it, and shows plainly which catalogues had nothing.
      *
-     * The user's choice is tried first and still decides what is normally used - the others are
-     * a fallback, not a merge. Merging would be worse: the same file appears in several
-     * catalogues under different names, and the list would fill with near-duplicates that all
-     * have to be tried to tell apart.
+     * Run in parallel because the slowest provider would otherwise set the wait for all of them.
+     * A provider that cannot answer at all is skipped rather than queried: the REST one without
+     * a key, the legacy one for a title with no IMDb match. Both return empty, and an empty
+     * section for a provider that was never able to answer is misleading.
+     *
+     * Groups are returned in the enum's own order so the sections do not reshuffle between
+     * searches according to which service happened to answer first.
      */
-    suspend fun search(query: SubtitleQuery): List<SubtitleResult> {
+    suspend fun searchGrouped(query: SubtitleQuery): List<SubtitleGroup> {
         if (query.isUnusable) return emptyList()
 
         val settings = store.currentSettings()
+        val enabled = SubtitleProvider.entries
+            .filter { it in settings.subtitleProviders }
+            .filter { it.isUsable(query, settings.subtitleApiKey) }
 
-        // Chosen first, then the rest in their declared order. A provider that cannot run at all
-        // is skipped rather than attempted: the REST one without a key returns empty, which
-        // would otherwise look like a genuine miss and consume a step of the fallback.
-        val providers = buildList {
-            add(settings.subtitleProvider)
-            addAll(SubtitleProvider.entries - settings.subtitleProvider)
-        }.filter { it.isUsable(query, settings.subtitleApiKey) }
+        if (enabled.isEmpty()) return emptyList()
 
-        for (provider in providers) {
-            val results = api.search(
-                query = query,
-                provider = provider,
-                apiKey = settings.subtitleApiKey,
-            )
-            if (results.isNotEmpty()) return results
+        return coroutineScope {
+            enabled
+                .map { provider ->
+                    provider to async {
+                        api.search(
+                            query = query,
+                            provider = provider,
+                            apiKey = settings.subtitleApiKey,
+                        )
+                    }
+                }
+                .map { (provider, task) -> SubtitleGroup(provider, task.await()) }
+                // A provider that found nothing is dropped rather than shown empty: four empty
+                // headings say less than one line reporting that nothing was found anywhere,
+                // which is what the panel shows when every group is gone.
+                .filter { it.results.isNotEmpty() }
         }
-
-        return emptyList()
     }
+
+    /**
+     * Flattened results, for callers that only need a subtitle rather than a choice of them.
+     *
+     * Used by the download prompt, where the grouping would be noise: that flow asks for one
+     * file to save beside the video, and the provider it came from does not change what it is.
+     */
+    suspend fun search(query: SubtitleQuery): List<SubtitleResult> =
+        searchGrouped(query).flatMap { it.results }
 
     /**
      * Whether [provider] could return anything for this query at all.
@@ -237,3 +254,16 @@ class SubtitleRepository(
         const val TAG = "WbSubtitles"
     }
 }
+
+/**
+ * One provider's answer to a search, kept apart from the others.
+ *
+ * Grouped rather than merged because the catalogues overlap: the same file is listed in several
+ * of them under different release names, and a flat list of near-duplicates has to be downloaded
+ * one by one to tell apart. Keeping the source visible also lets a viewer who has learnt that one
+ * catalogue suits their releases go straight to it.
+ */
+data class SubtitleGroup(
+    val provider: SubtitleProvider,
+    val results: List<SubtitleResult>,
+)

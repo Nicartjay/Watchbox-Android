@@ -72,8 +72,10 @@ import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.core.ui.wbType
 import space.nicart.watchbox.data.remote.SubtitleResult
+import space.nicart.watchbox.data.remote.labelRes
 import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.domain.StreamOption
+import space.nicart.watchbox.domain.SubtitleGroup
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.border
 import androidx.compose.material.icons.rounded.Subtitles
@@ -516,7 +518,7 @@ private fun SubtitleSearchPanel(
             )
 
             is SubtitleSearchState.Results -> SubtitleResultList(
-                results = search.results,
+                groups = search.groups,
                 downloadingId = null,
                 onApply = onApply,
             )
@@ -525,7 +527,7 @@ private fun SubtitleSearchPanel(
             // replacing it with a bare spinner would hide what was picked, and the download is
             // brief enough that the flash of an empty panel is worse than the wait.
             is SubtitleSearchState.Downloading -> SubtitleResultList(
-                results = search.previous,
+                groups = search.previous,
                 downloadingId = search.id,
                 onApply = onApply,
             )
@@ -539,10 +541,17 @@ private fun SubtitleSearchPanel(
     }
 }
 
-/** One tappable search result. */
+/**
+ * Search results, in a section per provider.
+ *
+ * Sectioned rather than merged because the catalogues overlap: the same file is listed in
+ * several under different release names, so a flat list fills with near-duplicates that have to
+ * be downloaded one at a time to tell apart. The heading is also the only way to learn which
+ * catalogue suits your releases.
+ */
 @Composable
 private fun SubtitleResultList(
-    results: List<SubtitleResult>,
+    groups: List<SubtitleGroup>,
     downloadingId: String?,
     onApply: (SubtitleResult) -> Unit,
 ) {
@@ -552,7 +561,18 @@ private fun SubtitleResultList(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        items(results, key = { it.id }) { result ->
+        groups.forEach { group ->
+            // Keyed by provider rather than by index, so a section does not adopt another's
+            // scroll position when one of them is turned off in settings.
+            item(key = "header-${group.provider.name}") {
+                PanelSectionLabel(
+                    text = stringResource(group.provider.labelRes()),
+                )
+            }
+
+            // Prefixed with the provider: the same file in two catalogues carries the same id,
+            // and Compose throws outright on a duplicate key.
+            items(group.results, key = { "${group.provider.name}-${it.id}" }) { result ->
             val interaction = rememberFocusInteraction()
             val busy = result.id == downloadingId
 
@@ -601,6 +621,7 @@ private fun SubtitleResultList(
                         strokeWidth = 2.dp,
                         modifier = Modifier.size(18.dp),
                     )
+                }
                 }
             }
         }
