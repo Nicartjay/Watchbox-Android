@@ -53,6 +53,7 @@ class SubtitleApi(private val client: HttpClient) {
                 SubtitleProvider.OPEN_SUBTITLES_LEGACY -> searchLegacy(query)
                 SubtitleProvider.OPEN_SUBTITLES_API -> searchRest(query, apiKey)
                 SubtitleProvider.SUBS_BRIGHT -> searchBright(query)
+                SubtitleProvider.VIDFAST_WYZIE -> searchWyzie(query)
             }
         }.onFailure {
             android.util.Log.w(TAG, "subtitle search failed: ${it::class.java.simpleName}: ${it.message}")
@@ -89,6 +90,45 @@ class SubtitleApi(private val client: HttpClient) {
         if (!response.status.isSuccess()) return emptyList()
 
         return json.decodeFromString<List<LegacyDto>>(response.bodyAsText())
+            .mapNotNull { it.toResult() }
+            .ranked()
+    }
+
+    /**
+     * The keyless curated list, keyed by either id.
+     *
+     * No language parameter: the service ignores one and returns every language it has, so the
+     * filtering is done here. That is acceptable because the reply is one entry per language -
+     * around twenty for a film, forty for an episode - rather than the eighty-odd competing
+     * releases the aggregator sends.
+     *
+     * A series must carry season and episode. Omitting them answers 404 rather than falling
+     * back to the title, which is worth relying on: a silent wrong answer would be worse.
+     */
+    private suspend fun searchWyzie(query: SubtitleQuery): List<SubtitleResult> {
+        // Either id works, TMDB preferred: it is the one this app resolves for every title.
+        val id = query.tmdbId?.toString()
+            ?: query.imdbId?.takeIf { it.isNotBlank() }
+            ?: return emptyList()
+
+        val lang = query.language.toIso639_1()
+        if (lang.isBlank()) return emptyList()
+
+        val params = buildList {
+            add("id=$id")
+            query.season?.let { add("season=$it") }
+            query.episode?.let { add("episode=$it") }
+        }
+
+        val response = client.get("$WYZIE_BASE/wyzie?${params.joinToString("&")}") {
+            header("User-Agent", LEGACY_AGENT)
+        }
+        if (!response.status.isSuccess()) return emptyList()
+
+        return json.decodeFromString<List<WyzieSubtitle>>(response.bodyAsText())
+            // Filtered client-side, and on the leading subtag so a stored "pt" still matches the
+            // "pb" and "pt" this service distinguishes between.
+            .filter { it.language?.startsWith(lang, ignoreCase = true) == true }
             .mapNotNull { it.toResult() }
             .ranked()
     }
@@ -333,6 +373,7 @@ class SubtitleApi(private val client: HttpClient) {
         private const val LEGACY_BASE = "https://rest.opensubtitles.org"
         private const val REST_BASE = "https://api.opensubtitles.com/api/v1"
         private const val BRIGHT_BASE = "https://subs.bright67.online"
+        private const val WYZIE_BASE = "https://vidfast.vc"
 
         /**
          * Origin the aggregator checks on a search.
@@ -471,6 +512,15 @@ enum class SubtitleProvider {
 
     /** Modern REST API. Needs a free key, accepts TMDB ids. */
     OPEN_SUBTITLES_API,
+
+    /**
+     * Keyless curated list, accepting either a TMDB or an IMDb id.
+     *
+     * Returns one hand-picked subtitle per language rather than competing releases, so it is a
+     * short list with nothing to choose between - useful when the catalogues offer a dozen cuts
+     * of the same episode and none is obviously right.
+     */
+    VIDFAST_WYZIE,
 
     /**
      * Keyless aggregator, accepting either a TMDB or an IMDb id.

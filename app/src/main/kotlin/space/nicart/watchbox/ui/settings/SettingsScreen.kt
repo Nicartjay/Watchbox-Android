@@ -571,6 +571,8 @@ fun SettingsScreen(
                                 stringResource(R.string.settings_subtitle_provider_api_note)
                             SubtitleProvider.SUBS_BRIGHT ->
                                 stringResource(R.string.settings_subtitle_provider_bright_note)
+                            SubtitleProvider.VIDFAST_WYZIE ->
+                                stringResource(R.string.settings_subtitle_provider_wyzie_note)
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = tokens.colors.textMuted,

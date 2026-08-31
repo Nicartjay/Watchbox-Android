@@ -80,8 +80,9 @@ class SubtitleRepository(
             // Positional path keyed by IMDb id; a TMDB id is of no use to it.
             SubtitleProvider.OPEN_SUBTITLES_LEGACY -> !query.imdbId.isNullOrBlank()
             SubtitleProvider.OPEN_SUBTITLES_API -> apiKey.isNotBlank()
-            // Takes either id, so it is usable whenever the query is.
+            // Both take either id, so they are usable whenever the query is.
             SubtitleProvider.SUBS_BRIGHT -> true
+            SubtitleProvider.VIDFAST_WYZIE -> true
         }
 
     /**

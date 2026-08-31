@@ -196,7 +196,9 @@
     <string name="settings_subtitle_provider_free_note">Searches by IMDb id. Works without setup, but only covers titles with an IMDb match.</string>
     <string name="settings_subtitle_provider_api_note">Larger catalogue and searches by TMDB id, so it also covers titles with no IMDb match. Needs a free API key and limits downloads per day.</string>
     <string name="settings_subtitle_provider_bright">Aggregator (no key)</string>
+    <string name="settings_subtitle_provider_wyzie">Curated (no key)</string>
     <string name="settings_subtitle_provider_bright_note">Searches by TMDB or IMDb id and reports how well each file matches. Works without setup.</string>
+    <string name="settings_subtitle_provider_wyzie_note">One picked subtitle per language, so there is nothing to choose between. Works without setup, but covers fewer titles.</string>
     <string name="settings_subtitle_provider_fallback_note">Whichever you pick is tried first. If it finds nothing, the others are searched automatically.</string>
     <string name="settings_subtitle_api_key">API key</string>
     <string name="settings_subtitle_api_key_hint">Paste your OpenSubtitles API key</string>
