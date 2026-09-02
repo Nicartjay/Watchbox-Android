@@ -58,6 +58,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -142,6 +143,31 @@ internal fun PlayerPanels(
     val visible = panel != PlayerPanel.NONE
     val panelFocus = remember { FocusRequester() }
 
+    // Whether focus is anywhere inside the panel, so the retry loop below can stop asking.
+    var panelHasFocus by remember { mutableStateOf(false) }
+
+    /**
+     * Changes whenever the panel gains something focus can land on.
+     *
+     * The search panel is the reason this exists. It opens while the request is in flight,
+     * drawing a notice with nothing focusable in it, so the retries below all fail and the loop
+     * ends. Results arrive hundreds of milliseconds later - longer now that four catalogues are
+     * queried at once - and nothing asked for focus again, leaving rows that were perfectly
+     * focusable with no way to reach them from a remote.
+     *
+     * Deliberately does not change while a download is running. That state keeps the same list
+     * on screen with a spinner on one row, so re-homing focus would drag the viewer off whatever
+     * they had moved to.
+     */
+    val focusableContent = when {
+        panel != PlayerPanel.SUBTITLE_SEARCH -> null
+        state.subtitleSearch is SubtitleSearchState.Results -> "results"
+        // Both draw a retry button, which is focusable and is the only thing to press.
+        state.subtitleSearch is SubtitleSearchState.Empty -> "empty"
+        state.subtitleSearch is SubtitleSearchState.Failed -> "failed"
+        else -> null
+    }
+
     // Pull focus into the panel when it opens, so the D-pad acts on it rather than the
     // controls behind it, which stay laid out and focusable. Without this the panel could
     // be opened but never used with a remote: it is not adjacent to the controls in any
@@ -151,10 +177,21 @@ internal fun PlayerPanels(
     // another re-homes focus instead of leaving it on the row that was just replaced.
     // Retried because requestFocus reports success even when its target has no node yet,
     // which it does while the panel is still animating in.
-    LaunchedEffect(panel) {
+    //
+    // Stops as soon as focus lands. The loop used to run its full 720ms regardless, which
+    // meant a viewer who moved down a list quickly was yanked back to the first row by a
+    // later retry.
+    LaunchedEffect(panel, focusableContent) {
         if (!visible) return@LaunchedEffect
+
+        // Cleared before retrying, not trusted from the last panel. Swapping content removes the
+        // focused node and onFocusChanged reports it, but not necessarily before this runs - and
+        // a stale `true` would skip the request entirely, which is the very bug being fixed.
+        panelHasFocus = false
+
         repeat(PANEL_FOCUS_ATTEMPTS) {
             withFrameNanos { }
+            if (panelHasFocus) return@LaunchedEffect
             runCatching { panelFocus.requestFocus() }
             delay(PANEL_FOCUS_RETRY_MS)
         }
@@ -179,7 +216,10 @@ internal fun PlayerPanels(
         exit = slideOutHorizontally(tween(200)) { it },
     ) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
-            PlayerPanelSurface(panelFocus = panelFocus) {
+            PlayerPanelSurface(
+                panelFocus = panelFocus,
+                onFocusPresent = { panelHasFocus = it },
+            ) {
                 when (panel) {
                     // The three axes below all end in the same place: a stream is
                     // chosen, not a track. Changing one axis carries the other two
@@ -448,6 +488,8 @@ internal fun PlayerPanels(
 @Composable
 private fun PlayerPanelSurface(
     panelFocus: FocusRequester,
+    /** Reports whether focus is inside the panel, so the caller can stop requesting it. */
+    onFocusPresent: (Boolean) -> Unit,
     content: @Composable () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
@@ -461,6 +503,9 @@ private fun PlayerPanelSurface(
             // out and focusable, and a remote has no pointer to dismiss with, so focus
             // escaping the panel would leave no way back into it. Back closes it.
             .focusRequester(panelFocus)
+            // hasFocus rather than isFocused: focus lands on a row inside the group, not on
+            // the group itself, so isFocused would report false the whole time.
+            .onFocusChanged { onFocusPresent(it.hasFocus) }
             .focusProperties { exit = { FocusRequester.Cancel } }
             .focusGroup()
             .padding(24.dp),
