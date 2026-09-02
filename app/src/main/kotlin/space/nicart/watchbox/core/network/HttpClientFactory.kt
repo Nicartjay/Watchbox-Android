@@ -27,7 +27,14 @@ object HttpClientFactory {
         coerceInputValues = true
     }
 
-    /** Chrome UA, matching the one the Worker spoofs (`stream-helpers.js:6`). */
+    /**
+     * Chrome UA sent on every first-party request.
+     *
+     * Deliberately kept identical to the value [NetworkHelper] hands extensions
+     * and to the one the WatchBox Next web front end's stream proxy spoofs, so a
+     * host that accepts one accepts all three. Changing it here without changing
+     * it there reintroduces the class of 403 that only appears on one client.
+     */
     const val USER_AGENT: String =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
