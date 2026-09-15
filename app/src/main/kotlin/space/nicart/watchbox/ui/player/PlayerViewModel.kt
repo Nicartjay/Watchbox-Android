@@ -785,6 +785,18 @@ class PlayerViewModel(
                 selectedSubtitleIndex = sourceCount + external.lastIndex,
                 subtitleSearch = SubtitleSearchState.Applied,
             )
+
+            // Loads the cues for the track just applied.
+            //
+            // Without this an offset already set did nothing to a subtitle downloaded
+            // afterwards: this path changes the selection directly rather than going through
+            // selectSubtitle, so nothing refetched, and offsetCues stayed empty or held the
+            // previous track's list. The panel kept showing the correction while the renderer
+            // fell back to the player's own unshifted timing.
+            //
+            // Order-dependent, which is what made it look intermittent: setting the offset
+            // after applying worked, because setSubtitleOffset does refresh.
+            refreshOffsetCues()
         }
     }
 
