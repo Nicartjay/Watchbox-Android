@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -105,6 +106,7 @@ fun WbNavigationBar(
     onSelect: (AppTab) -> Unit,
     modifier: Modifier = Modifier,
     scrollState: WbNavBarScrollState = rememberWbNavBarScrollState(),
+    browseUpdateCount: Int = 0,
 ) {
     val tokens = MaterialTheme.wb
     val labelsVisible = scrollState.labelsVisible
@@ -147,6 +149,7 @@ fun WbNavigationBar(
                     tab = tab,
                     selected = tab == selected,
                     labelFraction = labelFraction,
+                    badgeCount = browseUpdateCount.takeIf { tab == AppTab.BROWSE } ?: 0,
                     onClick = { onSelect(tab) },
                     modifier = Modifier.weight(1f),
                 )
@@ -160,6 +163,7 @@ private fun WbNavItem(
     tab: AppTab,
     selected: Boolean,
     labelFraction: Float,
+    badgeCount: Int,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -191,12 +195,23 @@ private fun WbNavItem(
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(
-            imageVector = tab.icon,
-            contentDescription = stringResource(tab.labelRes),
-            tint = tint,
-            modifier = Modifier.size(28.dp),
-        )
+        Box(
+            modifier = Modifier.size(32.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = tab.icon,
+                contentDescription = stringResource(tab.labelRes),
+                tint = tint,
+                modifier = Modifier.size(28.dp),
+            )
+            NavigationUpdateBadge(
+                count = badgeCount,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 5.dp, y = (-4).dp),
+            )
+        }
 
         // 14dp-tall slot scaled by the collapse fraction, so hiding the label
         // shrinks the pill instead of leaving a gap.

@@ -345,6 +345,8 @@ private fun TabShell(
     val stateHolder = rememberSaveableStateHolder()
     val navScrollState = rememberWbNavBarScrollState()
     val metrics = LocalLayoutMetrics.current
+    val extensionUpdateCount by container.extensionManager.updateCount
+        .collectAsStateWithLifecycle()
 
     val openSaved: (WatchlistEntry) -> Unit = { entry ->
         onOpenAnime(
@@ -408,14 +410,11 @@ private fun TabShell(
                         key = "sources",
                         factory = SourceListViewModel.factory(container.extensionManager),
                     )
-                    val updateCount by container.extensionManager.updateCount
-                        .collectAsStateWithLifecycle()
-
                     SourceListScreen(
                         viewModel = viewModel,
                         onOpenSource = { onOpenSource(it.id, it.name) },
                         onOpenExtensions = onOpenExtensions,
-                        updateCount = updateCount,
+                        updateCount = extensionUpdateCount,
                     )
                 }
 
@@ -466,6 +465,7 @@ private fun TabShell(
                 // Always labelled here: unlike a TV there is no focus to expand on,
                 // and a tablet has the width to spare.
                 expanded = true,
+                browseUpdateCount = extensionUpdateCount,
                 modifier = Modifier.align(Alignment.CenterStart),
             )
         } else {
@@ -476,6 +476,7 @@ private fun TabShell(
                     navScrollState.reveal()
                 },
                 scrollState = navScrollState,
+                browseUpdateCount = extensionUpdateCount,
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }

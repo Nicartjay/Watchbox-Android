@@ -78,6 +78,8 @@ fun TvTabShell(
     // drawer is covering it so the hero carousel can hold still, and it is a sibling that
     // cannot see this state.
     val pickerOpen by sourceViewModel.pickerOpen.collectAsStateWithLifecycle()
+    val extensionUpdateCount by container.extensionManager.updateCount
+        .collectAsStateWithLifecycle()
 
     var selectedTab by remember { mutableStateOf(AppTab.HOME) }
     var railFocused by remember { mutableStateOf(false) }
@@ -190,6 +192,7 @@ fun TvTabShell(
                 selected = selectedTab,
                 onSelect = { selectedTab = it },
                 expanded = railFocused,
+                browseUpdateCount = extensionUpdateCount,
                 footer = { expanded ->
                     TvRailSourceButton(
                         source = selectedSource,

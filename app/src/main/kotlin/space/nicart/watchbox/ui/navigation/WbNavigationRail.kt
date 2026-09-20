@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -62,6 +63,7 @@ fun WbNavigationRail(
     onSelect: (AppTab) -> Unit,
     modifier: Modifier = Modifier,
     expanded: Boolean = false,
+    browseUpdateCount: Int = 0,
     /**
      * Optional content pinned to the bottom of the rail.
      *
@@ -109,6 +111,7 @@ fun WbNavigationRail(
                 tab = tab,
                 selected = tab == selected,
                 showLabel = expanded,
+                badgeCount = browseUpdateCount.takeIf { tab == AppTab.BROWSE } ?: 0,
                 onClick = { onSelect(tab) },
             )
         }
@@ -126,6 +129,7 @@ private fun RailItem(
     tab: AppTab,
     selected: Boolean,
     showLabel: Boolean,
+    badgeCount: Int,
     onClick: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
@@ -156,12 +160,23 @@ private fun RailItem(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Icon(
-            imageVector = tab.icon,
-            contentDescription = stringResource(tab.labelRes),
-            tint = if (selected) tokens.colors.onAccent else tokens.colors.textSecondary,
-            modifier = Modifier.size(24.dp),
-        )
+        Box(
+            modifier = Modifier.size(28.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = tab.icon,
+                contentDescription = stringResource(tab.labelRes),
+                tint = if (selected) tokens.colors.onAccent else tokens.colors.textSecondary,
+                modifier = Modifier.size(24.dp),
+            )
+            NavigationUpdateBadge(
+                count = badgeCount,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 5.dp, y = (-4).dp),
+            )
+        }
 
         if (showLabel) {
             Text(
