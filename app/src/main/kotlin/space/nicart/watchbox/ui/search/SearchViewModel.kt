@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.AnimeRow
+import space.nicart.watchbox.domain.friendlyMessage
 import space.nicart.watchbox.extension.ExtensionManager
 
 data class SearchUiState(
@@ -22,6 +23,7 @@ data class SearchUiState(
     val isLoading: Boolean = false,
     val hasSearched: Boolean = false,
     val hasNoSources: Boolean = false,
+    val errorMessage: String? = null,
     /** Every installed source, for the scope picker. */
     val sources: List<SearchSource> = emptyList(),
     /** Null means search every source. */
@@ -30,6 +32,20 @@ data class SearchUiState(
 
 /** One source the search can be narrowed to. */
 data class SearchSource(val id: Long, val name: String)
+
+/**
+ * The source a search should actually query directly.
+ *
+ * A single installed source is not a multi-source search just because the "All" scope is
+ * represented by null. Treating it as one sent the phone through [AnimeRepository.searchAll],
+ * while TV explicitly selected Rentaro and used [AnimeRepository.search]. Besides doing
+ * unnecessary fan-out bookkeeping, the all-source path has a per-source timeout intended to
+ * protect a group from one slow extension. With Rentaro as the only source that timeout merely
+ * turned a slow response into an empty result, which is why the same extension worked on TV but
+ * appeared not to search on a phone.
+ */
+internal fun SearchUiState.effectiveSourceId(): Long? =
+    selectedSourceId ?: sources.singleOrNull()?.id
 
 class SearchViewModel(
     private val repository: AnimeRepository,
@@ -102,6 +118,7 @@ class SearchViewModel(
                 results = emptyList(),
                 isLoading = false,
                 hasSearched = false,
+                errorMessage = null,
             )
             return
         }
@@ -124,18 +141,18 @@ class SearchViewModel(
     }
 
     private suspend fun runSearch(query: String) {
-        _uiState.value = _uiState.value.copy(isLoading = true)
+        val sourceId = _uiState.value.effectiveSourceId()
+        _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
 
-        val sourceId = _uiState.value.selectedSourceId
+        var errorMessage: String? = null
         val rows = if (sourceId == null) {
             repository.searchAll(query)
         } else {
             // Wrapped in the same row shape so the results list renders
             // identically whether one source or all were queried.
-            repository.search(sourceId, query)
-                .getOrNull()
-                ?.takeIf { it.isNotEmpty() }
-                ?.let { items ->
+            repository.search(sourceId, query).fold(
+                onSuccess = { items ->
+                    if (items.isEmpty()) return@fold emptyList()
                     val name = _uiState.value.sources
                         .firstOrNull { it.id == sourceId }?.name ?: ""
                     listOf(
@@ -146,15 +163,34 @@ class SearchViewModel(
                             items = items,
                         ),
                     )
-                }
-                .orEmpty()
+                },
+                onFailure = { error ->
+                    errorMessage = error.friendlyMessage()
+                    emptyList()
+                },
+            )
         }
+
+        // Extension calls are blocking and some compatibility wrappers catch cancellation.
+        // A result can therefore arrive after the query or source changed. Never let that stale
+        // response replace the newer request's screen.
+        val current = _uiState.value
+        if (current.query != query || current.effectiveSourceId() != sourceId) return
 
         _uiState.value = _uiState.value.copy(
             results = rows,
             isLoading = false,
             hasSearched = true,
+            errorMessage = errorMessage,
         )
+    }
+
+    fun retry() {
+        val query = _uiState.value.query
+        if (query.isBlank()) return
+
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch { runSearch(query) }
     }
 
     fun clearRecent() {

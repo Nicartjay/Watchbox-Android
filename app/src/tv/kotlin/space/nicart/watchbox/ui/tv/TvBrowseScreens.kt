@@ -242,7 +242,7 @@ fun TvSourceBrowseScreen(
         derivedStateOf {
             val last = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
             val total = gridState.layoutInfo.totalItemsCount
-            total > 0 && last >= total - POSTER_COLUMNS * 2
+            total > 0 && last >= total - TV_POSTER_GRID_COLUMNS * 2
         }
     }
     LaunchedEffect(shouldAppend) {
@@ -263,7 +263,8 @@ fun TvSourceBrowseScreen(
             else -> LazyVerticalGrid(
                 state = gridState,
                 columns = GridCells.Fixed(
-                    (POSTER_COLUMNS / LocalPosterScale.current).toInt().coerceAtLeast(2),
+                    (TV_POSTER_GRID_COLUMNS / LocalPosterScale.current).toInt()
+                        .coerceAtLeast(2),
                 ),
                 contentPadding = PaddingValues(
                     start = TV_CONTENT_START,
@@ -288,7 +289,7 @@ fun TvSourceBrowseScreen(
                 }
 
                 items(items = state.items, key = { it.key }) { card ->
-                    TvGridPoster(
+                    TvPosterGridCard(
                         card = artwork[card.key] ?: card,
                         onClick = { onOpenAnime(card) },
                     )
@@ -413,7 +414,7 @@ private fun TvBrowseHeader(
 }
 
 @Composable
-private fun TvGridPoster(card: AnimeCard, onClick: () -> Unit) {
+internal fun TvPosterGridCard(card: AnimeCard, onClick: () -> Unit) {
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
 
@@ -421,7 +422,7 @@ private fun TvGridPoster(card: AnimeCard, onClick: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(POSTER_ASPECT)
+                .aspectRatio(TV_POSTER_ASPECT)
                 // Before clip: clipping first would cut the scaled edge and the outline.
                 .tvFocusable(interaction, RoundedCornerShape(12.dp))
                 .clip(RoundedCornerShape(12.dp))
@@ -452,10 +453,10 @@ private fun TvGridPoster(card: AnimeCard, onClick: () -> Unit) {
 /** Fewer columns than the phone grid: each D-pad press crosses one tile. */
 private const val TILE_COLUMNS = 5
 /** Portrait posters, so the same count as the home screen's Latest grid. */
-private const val POSTER_COLUMNS = 6
+internal const val TV_POSTER_GRID_COLUMNS = 6
 
 /** 16:9, matching the backdrop it displays. */
 private const val CARD_ASPECT = 1.777f
 
 /** 2:3, matching the portrait posters on the home screen. */
-private const val POSTER_ASPECT = 0.667f
+internal const val TV_POSTER_ASPECT = 0.667f

@@ -18,6 +18,10 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -136,11 +140,59 @@ fun SearchScreen(
                         modifier = Modifier.align(Alignment.TopCenter),
                     )
 
+                    state.hasSearched &&
+                        state.results.isEmpty() &&
+                        state.errorMessage != null -> WbEmptyState(
+                        title = stringResource(R.string.empty_search_title),
+                        body = state.errorMessage,
+                        actionLabel = stringResource(R.string.action_retry),
+                        onAction = viewModel::retry,
+                        modifier = Modifier.align(Alignment.TopCenter),
+                    )
+
                     state.hasSearched && state.results.isEmpty() -> WbEmptyState(
                         title = stringResource(R.string.empty_search_title),
                         body = "Try a different title.",
                         modifier = Modifier.align(Alignment.TopCenter),
                     )
+
+                    // With one source there is no grouping to preserve, so use the poster grid
+                    // this screen was designed for. The old horizontal shelf hid most of
+                    // Rentaro's result set behind a sideways gesture on a phone.
+                    state.results.size == 1 -> {
+                        val row = state.results.single()
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(columns),
+                            contentPadding = PaddingValues(
+                                start = padding,
+                                end = padding,
+                                bottom = 18.dp + NavOverlayPadding,
+                            ),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxSize(),
+                        ) {
+                            item(key = "source-${row.sourceId}", span = {
+                                GridItemSpan(maxLineSpan)
+                            }) {
+                                Text(
+                                    text = row.title,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = tokens.colors.textPrimary,
+                                    modifier = Modifier.padding(bottom = 2.dp),
+                                )
+                            }
+
+                            gridItems(items = row.items, key = { it.key }) { card ->
+                                WbPosterCard(
+                                    card = card,
+                                    width = null,
+                                    onClick = { onOpenAnime(card) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    }
 
                     // One rail per source: a merged list would bury good matches
                     // behind whichever source happened to return most rows.

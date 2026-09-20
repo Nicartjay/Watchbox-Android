@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,6 +35,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import space.nicart.watchbox.ui.components.WbSearchField
+import space.nicart.watchbox.core.ui.LocalPosterScale
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.ui.components.WbEmptyState
@@ -60,14 +63,21 @@ fun TvSearchScreen(
 
     val fieldFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+    val cards = state.results
+        .flatMap { it.items }
+        .distinctBy { it.key }
 
-    LazyColumn(
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(
+            (TV_POSTER_GRID_COLUMNS / LocalPosterScale.current).toInt().coerceAtLeast(2),
+        ),
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = TV_CONTENT_START, end = 48.dp, top = 40.dp, bottom = 48.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        item(key = "header") {
-            Column {
+        item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
+            Column(modifier = Modifier.padding(bottom = 4.dp)) {
                 Text(
                     text = stringResource(R.string.title_search),
                     style = MaterialTheme.typography.displaySmall,
@@ -115,26 +125,38 @@ fun TvSearchScreen(
         }
 
         when {
-            state.isLoading -> item(key = "loading") {
+            state.isLoading -> item(key = "loading", span = { GridItemSpan(maxLineSpan) }) {
                 Box(modifier = Modifier.fillMaxWidth().height(240.dp)) { WbLoading() }
             }
 
-            state.hasNoSources -> item(key = "no-sources") {
+            state.hasNoSources -> item(
+                key = "no-sources",
+                span = { GridItemSpan(maxLineSpan) },
+            ) {
                 WbEmptyState(
                     title = stringResource(R.string.empty_no_sources_title),
                     body = stringResource(R.string.empty_no_sources_body),
                 )
             }
 
-            state.hasSearched && state.results.isEmpty() -> item(key = "empty") {
-                WbEmptyState(title = stringResource(R.string.empty_search_title))
+            state.hasSearched && cards.isEmpty() -> item(
+                key = "empty",
+                span = { GridItemSpan(maxLineSpan) },
+            ) {
+                WbEmptyState(
+                    title = stringResource(R.string.empty_search_title),
+                    body = state.errorMessage,
+                    actionLabel = state.errorMessage?.let {
+                        stringResource(R.string.action_retry)
+                    },
+                    onAction = state.errorMessage?.let { viewModel::retry },
+                )
             }
 
-            else -> items(items = state.results, key = { it.sourceId }) { row ->
-                TvPortraitRow(
-                    title = row.title,
-                    items = row.items,
-                    onClick = onOpenAnime,
+            else -> items(items = cards, key = { it.key }) { card ->
+                TvPosterGridCard(
+                    card = card,
+                    onClick = { onOpenAnime(card) },
                 )
             }
         }
