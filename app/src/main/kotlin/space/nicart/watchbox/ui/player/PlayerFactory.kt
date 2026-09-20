@@ -201,19 +201,21 @@ object PlayerFactory {
         val video = factory.createMediaSource(item)
 
         val audio = usable.map { track ->
-            // No MIME type: an audio playlist arrives as a bare URL and the extension does
-            // not say what it is, so declaring one would override ExoPlayer's sniffing the
-            // way it used to for .mkv. The title is carried for diagnostics only - the
-            // picker names these from the source's own list, because a merged rendition's
-            // media usually has no label or language of its own.
-            val audioItem = MediaItem.Builder()
+            // MovieBox serves its separate AAC rendition from an extensionless `/api?...`
+            // URL. Rentaro appends `#.m3u8`, but Media3's URI inference reads the path rather
+            // than the fragment and creates a progressive source. That source tries to parse
+            // the playlist as audio bytes and the whole MergingMediaSource fails, including
+            // the otherwise-valid video. Honour only explicit adaptive hints here; unknown
+            // URLs still keep Media3's normal sniffing instead of being forced to HLS.
+            val audioItemBuilder = MediaItem.Builder()
                 .setUri(android.net.Uri.parse(track.url))
                 .setMediaMetadata(
                     androidx.media3.common.MediaMetadata.Builder()
                         .setTitle(track.label)
                         .build(),
                 )
-                .build()
+            adaptiveMimeType(track.url)?.let(audioItemBuilder::setMimeType)
+            val audioItem = audioItemBuilder.build()
             factory.createMediaSource(audioItem)
         }
 
@@ -226,6 +228,22 @@ object PlayerFactory {
             /* clipDurations = */ false,
             *(listOf(video) + audio).toTypedArray(),
         )
+    }
+}
+
+/**
+ * Adaptive container declared by a real extension or a client-only URL fragment.
+ *
+ * A fragment is never transmitted, making `#.m3u8` safe for extensionless signed URLs. Null
+ * deliberately leaves progressive files and unknown containers to Media3's own inference.
+ */
+internal fun adaptiveMimeType(url: String): String? {
+    val path = url.substringBefore('#').substringBefore('?').lowercase()
+    val hint = url.substringAfter('#', "").substringBefore('?').lowercase()
+    return when {
+        path.endsWith(".m3u8") || hint.endsWith(".m3u8") -> MimeTypes.APPLICATION_M3U8
+        path.endsWith(".mpd") || hint.endsWith(".mpd") -> MimeTypes.APPLICATION_MPD
+        else -> null
     }
 }
 
