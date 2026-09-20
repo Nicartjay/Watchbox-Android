@@ -100,6 +100,8 @@ class SubtitleRepository(
             // Both take either id, so they are usable whenever the query is.
             SubtitleProvider.SUBS_BRIGHT -> true
             SubtitleProvider.VIDFAST_WYZIE -> true
+            // Wing only indexes by TMDB id.
+            SubtitleProvider.WING_SUBTITLES -> query.tmdbId != null
         }
 
     /**

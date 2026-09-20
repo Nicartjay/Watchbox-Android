@@ -229,14 +229,29 @@ object PlayerFactory {
     }
 }
 
-/** Picks a subtitle MIME type from the file extension. */
-private fun subtitleMimeType(url: String): String {
-    val path = url.substringBefore('?').lowercase()
+/**
+ * Picks a subtitle MIME type from the file extension or a client-only fragment hint.
+ *
+ * Wing serves SubRip from extensionless `/sub/<token>` URLs. Without a hint Media3 assumes
+ * WebVTT, so the track appears in the picker but every cue fails to parse. Rentaro now appends
+ * `#.srt`; the host check keeps already-installed extension builds working as well.
+ */
+internal fun subtitleMimeType(url: String): String {
+    val path = url.substringBefore('#').substringBefore('?').lowercase()
+    val hint = url.substringAfter('#', "").substringBefore('?').lowercase()
     return when {
-        path.endsWith(".vtt") -> MimeTypes.TEXT_VTT
-        path.endsWith(".srt") -> MimeTypes.APPLICATION_SUBRIP
-        path.endsWith(".ass") || path.endsWith(".ssa") -> MimeTypes.TEXT_SSA
-        path.endsWith(".ttml") || path.endsWith(".dfxp") -> MimeTypes.APPLICATION_TTML
+        path.endsWith(".vtt") || hint.endsWith(".vtt") -> MimeTypes.TEXT_VTT
+        path.endsWith(".srt") ||
+            hint.endsWith(".srt") ||
+            path.startsWith("https://subs.wing.st/sub/") -> MimeTypes.APPLICATION_SUBRIP
+        path.endsWith(".ass") ||
+            path.endsWith(".ssa") ||
+            hint.endsWith(".ass") ||
+            hint.endsWith(".ssa") -> MimeTypes.TEXT_SSA
+        path.endsWith(".ttml") ||
+            path.endsWith(".dfxp") ||
+            hint.endsWith(".ttml") ||
+            hint.endsWith(".dfxp") -> MimeTypes.APPLICATION_TTML
         // Most sources serve WebVTT without an extension.
         else -> MimeTypes.TEXT_VTT
     }

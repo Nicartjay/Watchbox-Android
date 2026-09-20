@@ -54,6 +54,7 @@ class SubtitleApi(private val client: HttpClient) {
                 SubtitleProvider.OPEN_SUBTITLES_API -> searchRest(query, apiKey)
                 SubtitleProvider.SUBS_BRIGHT -> searchBright(query)
                 SubtitleProvider.VIDFAST_WYZIE -> searchWyzie(query)
+                SubtitleProvider.WING_SUBTITLES -> searchWing(query)
             }
         }.onFailure {
             android.util.Log.w(TAG, "subtitle search failed: ${it::class.java.simpleName}: ${it.message}")
@@ -173,6 +174,42 @@ class SubtitleApi(private val client: HttpClient) {
         if (!response.status.isSuccess()) return emptyList()
 
         return json.decodeFromString<List<BrightSubtitle>>(response.bodyAsText())
+            .mapNotNull { it.toResult() }
+            .ranked()
+    }
+
+    /**
+     * The keyless Wing catalogue, keyed by TMDB id.
+     *
+     * Unlike the other keyless providers, it needs to know explicitly whether the id is a film
+     * or a series. A television request is only valid with both season and episode, while a film
+     * omits both. The endpoint returns every language, so filtering is done locally.
+     */
+    private suspend fun searchWing(query: SubtitleQuery): List<SubtitleResult> {
+        val tmdbId = query.tmdbId ?: return emptyList()
+        val lang = query.language.toIso639_1()
+        if (lang.isBlank()) return emptyList()
+
+        val isTv = query.season != null || query.episode != null
+        if (isTv && (query.season == null || query.episode == null)) return emptyList()
+
+        val params = buildList {
+            add("type=${if (isTv) "tv" else "movie"}")
+            add("tmdb=$tmdbId")
+            query.season?.let { add("season=$it") }
+            query.episode?.let { add("episode=$it") }
+        }
+
+        val response = client.get("$WING_BASE/subtitles?${params.joinToString("&")}") {
+            header("User-Agent", LEGACY_AGENT)
+        }
+        if (!response.status.isSuccess()) return emptyList()
+
+        return json.decodeFromString<WingSubtitleResponse>(response.bodyAsText())
+            .subtitles
+            .filter { subtitle ->
+                subtitle.language.orEmpty().toIso639_1() == lang
+            }
             .mapNotNull { it.toResult() }
             .ranked()
     }
@@ -375,6 +412,7 @@ class SubtitleApi(private val client: HttpClient) {
         private const val REST_BASE = "https://api.opensubtitles.com/api/v1"
         private const val BRIGHT_BASE = "https://subs.bright67.online"
         private const val WYZIE_BASE = "https://vidfast.vc"
+        private const val WING_BASE = "https://subs.wing.st"
 
         /**
          * Origin the aggregator checks on a search.
@@ -531,6 +569,14 @@ enum class SubtitleProvider {
      * so it is usable without setup while still being ranked properly.
      */
     SUBS_BRIGHT,
+
+    /**
+     * Keyless Wing catalogue, indexed by TMDB id.
+     *
+     * Returns release-specific SubRip files. The download links have no extension, so their
+     * declared format must be kept when they are cached for playback.
+     */
+    WING_SUBTITLES,
 }
 
 /**
@@ -646,4 +692,5 @@ fun SubtitleProvider.labelRes(): Int = when (this) {
     SubtitleProvider.OPEN_SUBTITLES_API -> space.nicart.watchbox.R.string.subtitle_source_api
     SubtitleProvider.SUBS_BRIGHT -> space.nicart.watchbox.R.string.subtitle_source_bright
     SubtitleProvider.VIDFAST_WYZIE -> space.nicart.watchbox.R.string.subtitle_source_wyzie
+    SubtitleProvider.WING_SUBTITLES -> space.nicart.watchbox.R.string.subtitle_source_wing
 }
