@@ -52,7 +52,7 @@ val tmdbApiKey = secret("TMDB_API_KEY", "d8cd4489c203c5e8c8efb70aa8e33565")
 
 // Version. `appVersionName` is the source of truth; CI may override both so a
 // tag push (v1.2.3) produces a matching APK without editing this file.
-val appVersionName = secret("WATCHBOX_VERSION_NAME", "4.14.5")
+val appVersionName = secret("WATCHBOX_VERSION_NAME", "4.14.6")
 val appVersionCode = secret("WATCHBOX_VERSION_CODE", "1").toIntOrNull() ?: 1
 
 android {
@@ -312,6 +312,13 @@ dependencies {
     implementation(libs.media3.datasource.okhttp)
     implementation(libs.media3.ui)
     implementation(libs.media3.common)
+    // Software audio decoding for the Dolby and DTS tracks most MKV releases carry. Many
+    // tablets (the Huawei MatePad included) have no AC-3/E-AC-3/DTS MediaCodec, and playback
+    // failed outright with DECODER_INIT_FAILED on the first such track.
+    implementation(libs.media3.decoder)
+    implementation(libs.media3.ffmpeg.decoder) {
+        exclude(group = "androidx.media3")
+    }
 
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)

@@ -608,8 +608,18 @@ fun PlayerScreen(
      * track list arrives, this recomputes against it, and the right track is chosen without
      * anything having to remember an index that would not have transferred anyway.
      */
-    val selectedAudioIndex = remember(embeddedAudioTracks, state.audioLanguage) {
-        embeddedAudioTracks.indexOfLanguage(state.audioLanguage)
+    // The exact row picked in this file. A language alone cannot tell two tracks apart - a
+    // release can carry "Hindi 5.1" and "Hindi 2.0", or "English DTS" and "English DD" - so
+    // choosing the second one snapped straight back to the first. The pick wins while it
+    // still matches the stored language; a new file resets it and the language decides.
+    var pickedAudioIndex by remember(state.selectedStream?.url) { mutableIntStateOf(-1) }
+    val selectedAudioIndex = remember(embeddedAudioTracks, state.audioLanguage, pickedAudioIndex) {
+        val picked = embeddedAudioTracks.getOrNull(pickedAudioIndex)
+        if (picked != null && (picked.language.ifBlank { picked.label }) == state.audioLanguage) {
+            pickedAudioIndex
+        } else {
+            embeddedAudioTracks.indexOfLanguage(state.audioLanguage)
+        }
     }
 
     // --- player listener
@@ -1491,6 +1501,7 @@ fun PlayerScreen(
                 // the container left untagged falls back to its label, which at least
                 // matches the same release again.
                 embeddedAudioTracks.getOrNull(index)?.let { track ->
+                    pickedAudioIndex = index
                     viewModel.setAudioLanguage(track.language.ifBlank { track.label })
                 }
                 openPanel = PlayerPanel.NONE

@@ -14,6 +14,10 @@ androidx-lifecycle = "2.9.0"
 androidx-navigation = "2.9.0"
 androidx-datastore = "1.1.7"
 androidx-media3 = "1.6.1"
+# Jellyfin's prebuilt Media3 FFmpeg audio decoder (AC-3, E-AC-3, DTS, TrueHD, ...). The 1.6.1
+# builds are compiled against Media3 1.6.1 but their POM declares 1.7.1, so the app excludes
+# those transitive modules and keeps its own 1.6.1 set.
+media3-ffmpeg-decoder = "1.6.1+2"
 androidx-palette = "1.0.0"
 
 # Video download muxer. jmir1's fork is the one the Aniyomi family uses; the upstream
@@ -89,6 +93,8 @@ media3-datasource-okhttp = { module = "androidx.media3:media3-datasource-okhttp"
 media3-ui = { module = "androidx.media3:media3-ui", version.ref = "androidx-media3" }
 media3-session = { module = "androidx.media3:media3-session", version.ref = "androidx-media3" }
 media3-common = { module = "androidx.media3:media3-common", version.ref = "androidx-media3" }
+media3-decoder = { module = "androidx.media3:media3-decoder", version.ref = "androidx-media3" }
+media3-ffmpeg-decoder = { module = "org.jellyfin.media3:media3-ffmpeg-decoder", version.ref = "media3-ffmpeg-decoder" }
 
 # Coil
 coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }

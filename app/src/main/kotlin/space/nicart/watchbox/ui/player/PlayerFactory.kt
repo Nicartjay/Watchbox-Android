@@ -8,6 +8,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
@@ -113,7 +114,14 @@ object PlayerFactory {
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
         onMediaSourceFactory(mediaSourceFactory)
 
-        return ExoPlayer.Builder(context)
+        // The FFmpeg extension renderer only takes a track the platform decoders cannot:
+        // EXTENSION_RENDERER_MODE_ON ranks it after MediaCodec, so hardware decoding is kept
+        // wherever it exists. Decoder fallback lets a failing hardware decoder hand over too.
+        val renderersFactory = DefaultRenderersFactory(context)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            .setEnableDecoderFallback(true)
+
+        return ExoPlayer.Builder(context, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .setTrackSelector(trackSelector)
