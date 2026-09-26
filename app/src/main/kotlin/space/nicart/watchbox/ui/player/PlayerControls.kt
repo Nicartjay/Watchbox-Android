@@ -276,6 +276,7 @@ fun PlayerControlsOverlay(
                     metrics = metrics,
                     onPlayPause = onPlayPause,
                     onSeekBy = onSeekBy,
+                    canSeek = state.selectedStream?.canSeek != false,
                     onNextEpisode = onNextEpisode,
                     playFocusRequester = playFocusRequester,
                     onPlayFocusChanged = onPlayFocusChanged,
@@ -457,6 +458,8 @@ private fun CenterControls(
     metrics: PlayerMetrics,
     onPlayPause: () -> Unit,
     onSeekBy: (Long) -> Unit,
+    /** False for a no-seek stream: the ±10 s buttons are left out rather than dead. */
+    canSeek: Boolean = true,
     /** Null on the last episode, and on a film, where there is nothing to advance to. */
     onNextEpisode: (() -> Unit)? = null,
     playFocusRequester: FocusRequester? = null,
@@ -473,7 +476,7 @@ private fun CenterControls(
         val forwardInteraction = rememberFocusInteraction()
         val nextInteraction = rememberFocusInteraction()
 
-        Box(
+        if (canSeek) Box(
             modifier = Modifier
                 .adaptiveFocus(backInteraction, CircleShape)
                 .clip(CircleShape)
@@ -524,7 +527,7 @@ private fun CenterControls(
             }
         }
 
-        Box(
+        if (canSeek) Box(
             modifier = Modifier
                 .adaptiveFocus(forwardInteraction, CircleShape)
                 .clip(CircleShape)
@@ -603,6 +606,8 @@ private fun ProgressControls(
             )
 
         Slider(
+            // A no-seek stream shows progress but cannot be dragged or D-pad driven.
+            enabled = state.selectedStream?.canSeek != false,
             value = if (durationMs > 0) {
                 (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
             } else {

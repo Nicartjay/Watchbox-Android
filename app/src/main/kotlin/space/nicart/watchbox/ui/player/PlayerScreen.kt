@@ -403,7 +403,9 @@ fun PlayerScreen(
         if (transportIsPlaying()) transportPause() else transportPlay()
     }
 
-    val transportSeekTo: (Long) -> Unit = { target ->
+    val transportSeekTo: (Long) -> Unit = seek@{ target ->
+        // A no-seek stream would restart its download from byte 0 on every jump.
+        if (state.selectedStream?.canSeek == false) return@seek
         // Clamped against whichever duration is known. A receiver rejects a seek past the end
         // outright, and DLNA renderers in particular can drop the session over it.
         val limit = durationMs.coerceAtLeast(0L)
@@ -438,6 +440,8 @@ fun PlayerScreen(
      * invoked.
      */
     fun seekByAnnounced(delta: Long) {
+        // No readout either: announcing a seek that did not happen would read as a fault.
+        if (state.selectedStream?.canSeek == false) return
         transportSeekBy(delta)
         seekTapAccumulatedMs = accumulateSeekTap(seekTapAccumulatedMs, delta)
         seekTapOnLeft = delta < 0
@@ -721,6 +725,8 @@ fun PlayerScreen(
         val sameEpisode = positionEpisodeUrl != null && positionEpisodeUrl == episodeUrl
 
         val resumeFrom = when {
+            // Always from the start: resuming is a seek, which this host cannot serve.
+            !stream.canSeek -> 0L
             sameEpisode && positionMs > 0 -> positionMs
             else -> state.resumeMs
         }

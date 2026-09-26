@@ -317,6 +317,15 @@ data class StreamOption(
     val resolution: Int,
 ) {
     /**
+     * False when the source marks the stream "no seek": a host that ignores Range requests
+     * (Google's `video-downloads`, for one) answers every seek from byte 0, so jumping ahead
+     * in a 20 GB file means downloading everything before the target and the player sits
+     * loading. Such a stream is played straight through from the start.
+     */
+    val canSeek: Boolean
+        get() = !label.contains("no seek", ignoreCase = true)
+
+    /**
      * A DASH manifest, matched on the path only.
      *
      * Checked before [isHls] everywhere, because that one is a substring test
