@@ -68,6 +68,9 @@ class SettingsViewModel(
     fun refreshStorage() {
         viewModelScope.launch {
             val used = withContext(Dispatchers.IO) { downloadStorage.usedBytes() }
+            val videoCache = withContext(Dispatchers.IO) {
+                space.nicart.watchbox.ui.player.ProgressiveTempFile.cacheSize(downloadStorage.cacheDir)
+            }
             val volumeId = store.currentSettings().downloadVolume
             val volumes = withContext(Dispatchers.IO) { downloadStorage.volumes() }
             _storage.value = StorageUiState(
@@ -77,7 +80,21 @@ class SettingsViewModel(
                     ?: 0L,
                 volumes = volumes,
                 selectedVolume = volumeId ?: volumes.firstOrNull()?.id,
+                videoCacheBytes = videoCache,
             )
+        }
+    }
+
+    /**
+     * Deletes leftover "no seek" temp files. The player removes its own on exit and clears any
+     * left by a crash when it next opens, so this is for reclaiming space without playing.
+     */
+    fun clearVideoCache() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                space.nicart.watchbox.ui.player.ProgressiveTempFile.clearStale(downloadStorage.cacheDir)
+            }
+            refreshStorage()
         }
     }
 
@@ -356,4 +373,6 @@ data class StorageUiState(
     val freeBytes: Long = 0L,
     val volumes: List<DownloadVolume> = emptyList(),
     val selectedVolume: String? = null,
+    /** Bytes held by "no seek" temp files. */
+    val videoCacheBytes: Long = 0L,
 )

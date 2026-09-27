@@ -40,6 +40,9 @@ object PlayerFactory {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+    /** Shared with [ProgressiveTempFile], so a temp download uses the same connection pool. */
+    internal val sharedHttp: OkHttpClient get() = okHttp
+
     private val okHttp: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)

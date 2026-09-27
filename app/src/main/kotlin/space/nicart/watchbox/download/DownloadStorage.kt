@@ -124,6 +124,9 @@ class DownloadStorage(private val context: Context) {
      * a partial download, an orphan left by a crash and a file the user deleted by hand all
      * make the registry's own figures a claim rather than a measurement.
      */
+    /** App cache directory, where the player keeps "no seek" temp files. */
+    val cacheDir: File get() = context.cacheDir
+
     fun usedBytes(): Long = volumes()
         .map { File(it.path, DIR) }
         .filter { it.isDirectory }

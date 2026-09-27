@@ -407,6 +407,67 @@ class DownloadController(
      * downloaded is that the extension's proxy is alive now and will not be later, so holding it
      * behind a slot would mean waiting for the thing that makes it possible to disappear.
      */
+    /**
+     * Keeps a fully downloaded "no seek" temp file as a regular download.
+     *
+     * The player already fetched the whole file to play it; this moves that file into the
+     * download folder and records it as a finished, plain-file download (the same shape an
+     * FFmpeg download ends in), so nothing is downloaded twice.
+     *
+     * @return true when the file was moved and recorded
+     */
+    suspend fun adoptTempFile(
+        tempFile: java.io.File,
+        sourceId: Long,
+        animeUrl: String,
+        title: String,
+        posterUrl: String?,
+        sourceName: String,
+        episode: EpisodeEntry,
+        stream: StreamOption,
+        detail: AnimeDetail? = null,
+    ): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        if (!tempFile.isFile || tempFile.length() == 0L) return@withContext false
+        val settings = store.currentSettings()
+        val volumeId = settings.downloadVolume ?: VOLUME_INTERNAL
+
+        val entry = DownloadEntry(
+            sourceId = sourceId,
+            animeUrl = animeUrl,
+            episodeUrl = episode.url,
+            title = title,
+            episodeName = episode.name,
+            episodeNumber = episode.number,
+            posterUrl = posterUrl,
+            sourceName = sourceName,
+            streamLabel = stream.label,
+            isAdaptive = false,
+            isRemuxed = true,
+            volumeId = volumeId,
+            state = DownloadState.COMPLETED,
+            createdAt = System.currentTimeMillis(),
+        )
+        val target = storage.remuxFile(volumeId, entry.key)
+        // A rename when both sit on one volume; a copy when the downloads folder is elsewhere.
+        val moved = tempFile.renameTo(target) || runCatching {
+            tempFile.copyTo(target, overwrite = true)
+            tempFile.delete()
+            true
+        }.getOrDefault(false)
+        if (!moved) return@withContext false
+
+        store.saveDownload(
+            entry.copy(
+                sizeBytes = target.length(),
+                downloadUri = target.toURI().toString(),
+                completedAt = System.currentTimeMillis(),
+            ),
+        )
+        detail?.let { cacheDetail(it) }
+        fetchSubtitles(entry, emptyList(), null, stream.headers)
+        true
+    }
+
     private fun enqueueViaFfmpeg(
         sourceId: Long,
         animeUrl: String,

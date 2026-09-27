@@ -30,6 +30,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -190,6 +192,32 @@ fun PlayerScreen(
     // for a value that never changes again.
     val mediaSourceFactory = remember {
         arrayOfNulls<androidx.media3.exoplayer.source.DefaultMediaSourceFactory>(1)
+    }
+
+    // A "no seek" stream is downloaded front to back into a temporary file and played from it,
+    // so everything already downloaded can be sought to. One at a time; replaced (and its file
+    // deleted) when the stream changes, and closed with the screen.
+    var tempStream by remember { mutableStateOf<ProgressiveTempFile?>(null) }
+    val tempProgress = tempStream?.progress?.collectAsStateWithLifecycle()?.value
+    DisposableEffect(Unit) {
+        ProgressiveTempFile.clearStale(context.cacheDir)
+        onDispose { tempStream?.close() }
+    }
+    // Asked on exit when a no-seek stream's temp file finished downloading: keep it as a
+    // download, or clear it. Null while no question is pending.
+    var keepTempPrompt by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val keepScope = rememberCoroutineScope()
+    val downloadController = (context.applicationContext as WatchBoxApplication).container.downloadController
+
+    /** Runs [leave] now, or first asks what to do with a completed temp download. */
+    fun leaveAfterTempCheck(leave: () -> Unit) {
+        val temp = tempStream
+        if (temp != null && temp.progress.value.done && temp.file.length() > 0) {
+            // Playback is paused by the effect watching keepTempPrompt, below the player.
+            keepTempPrompt = leave
+        } else {
+            leave()
+        }
     }
     val exoPlayer = remember {
         PlayerFactory.create(
@@ -403,9 +431,19 @@ fun PlayerScreen(
         if (transportIsPlaying()) transportPause() else transportPlay()
     }
 
-    val transportSeekTo: (Long) -> Unit = seek@{ target ->
-        // A no-seek stream would restart its download from byte 0 on every jump.
-        if (state.selectedStream?.canSeek == false) return@seek
+    val transportSeekTo: (Long) -> Unit = seek@{ requested ->
+        // A no-seek stream playing over the network would restart its download from byte 0
+        // on every jump. Played from its temp file it can seek, but only as far as has been
+        // downloaded: the target is clamped a few seconds short of that edge.
+        val temp = tempStream
+        val target = if (temp != null) {
+            val limit = tempSeekLimitMs(tempProgress, durationMs)
+            if (limit <= 0L) return@seek
+            requested.coerceAtMost(limit)
+        } else {
+            if (state.selectedStream?.canSeek == false) return@seek
+            requested
+        }
         // Clamped against whichever duration is known. A receiver rejects a seek past the end
         // outright, and DLNA renderers in particular can drop the session over it.
         val limit = durationMs.coerceAtLeast(0L)
@@ -441,7 +479,7 @@ fun PlayerScreen(
      */
     fun seekByAnnounced(delta: Long) {
         // No readout either: announcing a seek that did not happen would read as a fault.
-        if (state.selectedStream?.canSeek == false) return
+        if (tempStream == null && state.selectedStream?.canSeek == false) return
         transportSeekBy(delta)
         seekTapAccumulatedMs = accumulateSeekTap(seekTapAccumulatedMs, delta)
         seekTapOnLeft = delta < 0
@@ -724,9 +762,11 @@ fun PlayerScreen(
         val episodeUrl = state.episode?.url
         val sameEpisode = positionEpisodeUrl != null && positionEpisodeUrl == episodeUrl
 
+        // A no-seek stream starts from 0: its temp file is empty until the download begins, and
+        // a resume point would sit waiting for everything before it to arrive.
+        val usesTempFile = !stream.canSeek && !stream.isHls && !stream.isDash
         val resumeFrom = when {
-            // Always from the start: resuming is a seek, which this host cannot serve.
-            !stream.canSeek -> 0L
+            usesTempFile || !stream.canSeek -> 0L
             sameEpisode && positionMs > 0 -> positionMs
             else -> state.resumeMs
         }
@@ -762,7 +802,31 @@ fun PlayerScreen(
             )
         }
 
-        if (merged != null) {
+        tempStream?.close()
+        tempStream = null
+
+        if (usesTempFile) {
+            val temp = ProgressiveTempFile(
+                url = stream.url,
+                headers = stream.headers,
+                client = PlayerFactory.sharedHttp,
+                cacheDir = context.cacheDir,
+            ).also { it.start() }
+            tempStream = temp
+            // Most MKV releases keep their seek index (Cues) at the very end, and the extractor
+            // jumps there before the first frame. With a file that is still downloading that
+            // jump waits for 100%, so playback would not start until the download finished.
+            // Skipping it lets playback start at once; seeking then works from the clusters
+            // read so far, which is exactly the downloaded part.
+            // Without the index the file reports itself unseekable and every seek goes back to
+            // zero, so an even-bitrate seek map is substituted; see TempFileExtractorsFactory.
+            val extractors = TempFileExtractorsFactory(totalBytes = { temp.progress.value.total })
+            val source = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                temp.dataSourceFactory(),
+                extractors,
+            ).createMediaSource(mediaItem)
+            exoPlayer.setMediaSource(source)
+        } else if (merged != null) {
             exoPlayer.setMediaSource(merged)
         } else {
             exoPlayer.setMediaItem(mediaItem)
@@ -962,7 +1026,8 @@ fun PlayerScreen(
                 if (castState.isRemotePlaying) viewModel.onProgress(positionMs, durationMs)
             } else {
                 positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
-                bufferedMs = exoPlayer.bufferedPosition.coerceAtLeast(0L)
+                bufferedMs = tempStream?.let { tempDownloadedMs(tempProgress, durationMs) }
+                    ?: exoPlayer.bufferedPosition.coerceAtLeast(0L)
                 if (exoPlayer.duration > 0) durationMs = exoPlayer.duration
                 if (isPlaying) viewModel.onProgress(positionMs, durationMs)
             }
@@ -1005,12 +1070,44 @@ fun PlayerScreen(
             openPanel != PlayerPanel.NONE -> openPanel = PlayerPanel.NONE
             state.locked -> viewModel.setLocked(false)
             controlsAreABackLayer -> controlsVisible = false
+            keepTempPrompt != null -> keepTempPrompt = null
             else -> {
                 viewModel.flushProgress(exoPlayer.currentPosition, exoPlayer.duration)
-                onBack()
+                leaveAfterTempCheck(onBack)
             }
         }
     }
+
+    LaunchedEffect(keepTempPrompt != null) {
+        if (keepTempPrompt != null) exoPlayer.pause()
+    }
+
+    space.nicart.watchbox.ui.download.KeepTempDownloadDialog(
+        visible = keepTempPrompt != null,
+        sizeBytes = tempStream?.file?.length() ?: 0L,
+        onKeep = {
+            val leave = keepTempPrompt
+            val temp = tempStream
+            keepTempPrompt = null
+            keepScope.launch {
+                if (temp != null) {
+                    // Detached first so closing the screen does not delete the file mid-move.
+                    tempStream = null
+                    val kept = viewModel.keepTempDownload(temp.file, downloadController)
+                    temp.detach(deleteFile = !kept)
+                }
+                leave?.invoke()
+            }
+        },
+        onClear = {
+            val leave = keepTempPrompt
+            keepTempPrompt = null
+            tempStream?.close()
+            tempStream = null
+            leave?.invoke()
+        },
+        onDismiss = { keepTempPrompt = null },
+    )
 
     BoxWithConstraints(
         modifier = modifier
@@ -1377,6 +1474,14 @@ fun PlayerScreen(
                 isBuffering = isBuffering && !castState.isCasting && playbackError == null,
                 // The error message is centred, and so is the transport row.
                 hideTransport = playbackError != null,
+                // A temp-file stream seeks within what has downloaded.
+                seekable = tempStream != null || state.selectedStream?.canSeek != false,
+                downloadPercent = tempProgress
+                    ?.takeIf { tempStream != null && !it.done && it.total > 0 }
+                    ?.let { (it.fraction * 100).toInt().coerceIn(0, 99) },
+                downloadFraction = tempProgress
+                    ?.takeIf { tempStream != null && it.total > 0 }
+                    ?.let { if (it.done) 1f else it.fraction },
                 positionMs = positionMs,
                 durationMs = durationMs,
                 bufferedMs = bufferedMs,
@@ -1399,7 +1504,7 @@ fun PlayerScreen(
                 },
                 onBack = {
                     viewModel.flushProgress(exoPlayer.currentPosition, exoPlayer.duration)
-                    onBack()
+                    leaveAfterTempCheck(onBack)
                 },
                 onToggleLock = { viewModel.setLocked(true) },
                 onCycleAspect = viewModel::cycleAspect,
@@ -1717,3 +1822,22 @@ private fun playerErrorMessage(error: PlaybackException): Int = when (error.erro
  * navigation-gesture area; claiming those makes the player fight the system UI.
  */
 private const val SYSTEM_EDGE_EXCLUSION_DP = 48
+
+/** How much of a temp-file stream is on disk, as a playback position. */
+internal fun tempDownloadedMs(progress: ProgressiveTempFile.Progress?, durationMs: Long): Long {
+    if (progress == null || durationMs <= 0) return 0L
+    if (progress.done) return durationMs
+    return (progress.fraction * durationMs).toLong()
+}
+
+/**
+ * The furthest a temp-file stream can be sought to: a little short of the downloaded edge, so
+ * the player lands on bytes that are already there rather than waiting at the very end.
+ */
+internal fun tempSeekLimitMs(progress: ProgressiveTempFile.Progress?, durationMs: Long): Long {
+    val downloaded = tempDownloadedMs(progress, durationMs)
+    if (progress?.done == true) return downloaded
+    return (downloaded - TEMP_SEEK_MARGIN_MS).coerceAtLeast(0L)
+}
+
+private const val TEMP_SEEK_MARGIN_MS = 5_000L

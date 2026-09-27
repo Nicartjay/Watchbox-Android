@@ -315,6 +315,11 @@ data class StreamOption(
     val subtitles: List<SubtitleOption>,
     val audioTracks: List<SubtitleOption>,
     val resolution: Int,
+    /**
+     * True when the bytes are already on this device (a finished download). The "no seek"
+     * limit is about a remote host ignoring Range, so it never applies to a local copy.
+     */
+    val isLocal: Boolean = false,
 ) {
     /**
      * False when the source marks the stream "no seek": a host that ignores Range requests
@@ -323,7 +328,7 @@ data class StreamOption(
      * loading. Such a stream is played straight through from the start.
      */
     val canSeek: Boolean
-        get() = !label.contains("no seek", ignoreCase = true)
+        get() = isLocal || !label.contains("no seek", ignoreCase = true)
 
     /**
      * A DASH manifest, matched on the path only.

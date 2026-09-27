@@ -70,6 +70,12 @@ class WatchBoxApplication : Application(), ImageLoaderFactory {
 
         container = AppContainer(this, networkHelper)
 
+        // A "no seek" temp file only outlives its player if the app was killed or crashed
+        // mid-playback. Nothing can be playing yet at launch, so any found now is an orphan.
+        Thread {
+            space.nicart.watchbox.ui.player.ProgressiveTempFile.clearStale(cacheDir)
+        }.start()
+
         // Checks for extension updates on every launch. The repository list is
         // supplied lazily because the store is read from disk, which must not
         // happen on the main thread during onCreate.

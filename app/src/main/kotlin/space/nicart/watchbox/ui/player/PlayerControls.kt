@@ -209,6 +209,16 @@ fun PlayerControlsOverlay(
      */
     hideTransport: Boolean = false,
     /**
+     * Whether seeking is possible right now. False for a "no seek" stream played over the
+     * network; true for one played from its temp file, where the seek is clamped to what has
+     * downloaded.
+     */
+    seekable: Boolean = state.selectedStream?.canSeek != false,
+    /** Temp-file download progress for a no-seek stream, 0-99; null otherwise. */
+    downloadPercent: Int? = null,
+    /** Temp-file download fraction, 0..1; null when the stream is not a temp download. */
+    downloadFraction: Float? = null,
+    /**
      * Claims focus for the play button when the controls appear.
      *
      * Supplied by the caller because the controls are wrapped in an
@@ -276,7 +286,7 @@ fun PlayerControlsOverlay(
                     metrics = metrics,
                     onPlayPause = onPlayPause,
                     onSeekBy = onSeekBy,
-                    canSeek = state.selectedStream?.canSeek != false,
+                    canSeek = seekable,
                     onNextEpisode = onNextEpisode,
                     playFocusRequester = playFocusRequester,
                     onPlayFocusChanged = onPlayFocusChanged,
@@ -293,6 +303,9 @@ fun PlayerControlsOverlay(
                 durationMs = durationMs,
                 bufferedMs = bufferedMs,
                 onSeek = onSeek,
+                seekable = seekable,
+                downloadPercent = downloadPercent,
+                downloadFraction = downloadFraction,
                 onCycleAspect = onCycleAspect,
                 onOpenPanel = onOpenPanel,
                 audioTrackCount = audioTrackCount,
@@ -578,6 +591,11 @@ private fun ProgressControls(
     durationMs: Long,
     bufferedMs: Long,
     onSeek: (Long) -> Unit,
+    seekable: Boolean = true,
+    /** 0-99 while a no-seek stream's temp file is downloading, otherwise null. */
+    downloadPercent: Int? = null,
+    /** The same as a 0..1 fraction, for the bar; null when there is no temp download. */
+    downloadFraction: Float? = null,
     onCycleAspect: () -> Unit,
     onOpenPanel: (PlayerPanel) -> Unit,
     /** Audio tracks inside the stream; see [PlayerControlsOverlay]. */
@@ -586,6 +604,13 @@ private fun ProgressControls(
 ) {
     val isFocusDriven = LocalLayoutMetrics.current.isFocusDriven
     val sliderInteraction = rememberFocusInteraction()
+    // A download fraction wins when there is one: it is known before the duration is, which an
+    // MKV with its index at the end does not report until that end has been read.
+    val bufferedFraction = when {
+        downloadFraction != null -> downloadFraction
+        durationMs > 0 && bufferedMs > positionMs -> (bufferedMs.toFloat() / durationMs).coerceIn(0f, 1f)
+        else -> 0f
+    }
 
     Column(modifier = modifier) {
         // Skip segments marked on the timeline, drawn behind the slider.
@@ -607,7 +632,7 @@ private fun ProgressControls(
 
         Slider(
             // A no-seek stream shows progress but cannot be dragged or D-pad driven.
-            enabled = state.selectedStream?.canSeek != false,
+            enabled = seekable,
             value = if (durationMs > 0) {
                 (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
             } else {
@@ -620,7 +645,8 @@ private fun ProgressControls(
             colors = SliderDefaults.colors(
                 thumbColor = Color.White,
                 activeTrackColor = Color.White,
-                inactiveTrackColor = Color.White.copy(alpha = 0.30f),
+                // Fainter, so the buffered stretch drawn over it reads as a distinct band.
+                inactiveTrackColor = Color.White.copy(alpha = 0.20f),
             ),
             modifier = Modifier
                 .fillMaxWidth()
@@ -673,6 +699,26 @@ private fun ProgressControls(
                 )
                 .graphicsLayer { scaleY = metrics.sliderScaleY },
         )
+
+            // How much is buffered - for a no-seek stream, how much of its temp file has
+            // downloaded, which is exactly how far it can be sought. Drawn after the slider so
+            // its opaque track does not cover it; translucent, so the playhead still shows.
+            if (bufferedFraction > 0f) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .padding(horizontal = SLIDER_THUMB_INSET),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(bufferedFraction)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Color.White.copy(alpha = 0.30f)),
+                    )
+                }
+            }
         }
 
         Row(
@@ -683,6 +729,8 @@ private fun ProgressControls(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             TimePill(formatTimecode(positionMs))
+            // A no-seek stream's temp download, so it is clear how far ahead can be reached.
+            downloadPercent?.let { TimePill("Downloaded $it%") }
             TimePill(formatTimecode(durationMs))
         }
 

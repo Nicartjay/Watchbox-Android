@@ -435,6 +435,8 @@ class PlayerViewModel(
             },
             audioTracks = emptyList(),
             resolution = 0,
+            // Played from disk, so seeking works whatever the original host allowed.
+            isLocal = true,
         )
 
         _uiState.value = _uiState.value.copy(
@@ -1037,6 +1039,31 @@ class PlayerViewModel(
         if (now - lastHistoryWrite < 10_000L) return
         lastHistoryWrite = now
         writeHistory(positionMs, durationMs)
+    }
+
+    /**
+     * Moves a finished "no seek" temp file into Downloads, so it need not be fetched again.
+     * Returns false when there is no detail or episode to file it under, or the move failed.
+     */
+    suspend fun keepTempDownload(
+        file: java.io.File,
+        downloads: space.nicart.watchbox.download.DownloadController,
+    ): Boolean {
+        val state = _uiState.value
+        val detail = state.detail ?: return false
+        val episode = state.episode ?: return false
+        val stream = state.selectedStream ?: return false
+        return downloads.adoptTempFile(
+            tempFile = file,
+            sourceId = detail.sourceId,
+            animeUrl = detail.url,
+            title = detail.title,
+            posterUrl = detail.posterUrl,
+            sourceName = detail.sourceName,
+            episode = episode,
+            stream = stream,
+            detail = detail,
+        )
     }
 
     fun flushProgress(positionMs: Long, durationMs: Long) {

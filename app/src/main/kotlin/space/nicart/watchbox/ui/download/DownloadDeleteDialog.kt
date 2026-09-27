@@ -152,6 +152,63 @@ fun DownloadDeleteDialog(
 }
 
 /**
+ * Asked when leaving the player after a "no seek" stream's temp file finished downloading.
+ *
+ * The whole file is already on the device, so keeping it costs nothing and saves fetching it
+ * again; clearing it frees the space. Dismissing (Back, tapping outside) stays in the player.
+ */
+@Composable
+fun KeepTempDownloadDialog(
+    visible: Boolean,
+    sizeBytes: Long,
+    onKeep: () -> Unit,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    if (!visible) return
+    val tokens = MaterialTheme.wb
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = DIALOG_MAX_WIDTH)
+                .clip(RoundedCornerShape(20.dp))
+                .background(tokens.colors.surfaceDialog)
+                .padding(20.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.player_temp_keep_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = tokens.colors.textPrimary,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = stringResource(R.string.player_temp_keep_body, formatBytes(sizeBytes)),
+                style = MaterialTheme.typography.bodyMedium,
+                color = tokens.colors.textSecondary,
+            )
+            Spacer(Modifier.height(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+            ) {
+                DialogButton(
+                    label = stringResource(R.string.player_temp_keep_clear),
+                    emphasised = false,
+                    onClick = onClear,
+                )
+                DialogButton(
+                    label = stringResource(R.string.player_temp_keep_confirm),
+                    emphasised = true,
+                    onClick = onKeep,
+                )
+            }
+        }
+    }
+}
+
+/**
  * What a pending deletion is about.
  *
  * Carries the label and size so the prompt can name them, rather than the dialog reaching back

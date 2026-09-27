@@ -636,6 +636,18 @@ fun SettingsScreen(
                 }
             }
 
+            item(key = "clear-video-cache") {
+                SettingsActionRow(
+                    title = stringResource(R.string.settings_video_cache_clear),
+                    subtitle = if (storageState.videoCacheBytes > 0L) {
+                        space.nicart.watchbox.ui.download.formatBytes(storageState.videoCacheBytes)
+                    } else {
+                        stringResource(R.string.settings_video_cache_empty)
+                    },
+                    onClick = viewModel::clearVideoCache,
+                )
+            }
+
             item(key = "clear-downloads") {
                 SettingsActionRow(
                     title = stringResource(R.string.settings_clear_downloads),
@@ -970,7 +982,7 @@ private fun SettingsToggleRow(
 }
 
 @Composable
-private fun SettingsActionRow(title: String, onClick: () -> Unit) {
+private fun SettingsActionRow(title: String, onClick: () -> Unit, subtitle: String? = null) {
     val interaction = remember { MutableInteractionSource() }
     val tokens = MaterialTheme.wb
     Row(
@@ -991,7 +1003,15 @@ private fun SettingsActionRow(title: String, onClick: () -> Unit) {
             text = title,
             style = MaterialTheme.typography.titleMedium,
             color = tokens.colors.textPrimary,
+            modifier = Modifier.weight(1f),
         )
+        subtitle?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodyMedium,
+                color = tokens.colors.textMuted,
+            )
+        }
     }
 }
 
