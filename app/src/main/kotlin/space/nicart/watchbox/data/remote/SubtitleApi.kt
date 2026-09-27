@@ -1,6 +1,7 @@
 package space.nicart.watchbox.data.remote
 
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -49,14 +50,21 @@ class SubtitleApi(private val client: HttpClient) {
      */
     suspend fun search(query: SubtitleQuery, provider: SubtitleProvider, apiKey: String): List<SubtitleResult> =
         runCatching {
+            // A hard cap per provider on top of the request timeout: the client retries a
+            // timed-out request twice, so without it one stalled source took ~90 s to give up.
+            kotlinx.coroutines.withTimeout(SEARCH_TIMEOUT_MS + 3_000L) {
             when (provider) {
                 SubtitleProvider.OPEN_SUBTITLES_LEGACY -> searchLegacy(query)
                 SubtitleProvider.OPEN_SUBTITLES_API -> searchRest(query, apiKey)
                 SubtitleProvider.SUBS_BRIGHT -> searchBright(query)
                 SubtitleProvider.VIDFAST_WYZIE -> searchWyzie(query)
                 SubtitleProvider.WING_SUBTITLES -> searchWing(query)
+                SubtitleProvider.VIDLOVE -> searchVidLove(query)
+            }
             }
         }.onFailure {
+            // A cancelled search (panel closed, new search) is not a provider failure.
+            if (it is kotlinx.coroutines.CancellationException && it !is kotlinx.coroutines.TimeoutCancellationException) throw it
             android.util.Log.w(TAG, "subtitle search failed: ${it::class.java.simpleName}: ${it.message}")
         }.getOrDefault(emptyList())
 
@@ -123,6 +131,9 @@ class SubtitleApi(private val client: HttpClient) {
 
         val response = client.get("$WYZIE_BASE/wyzie?${params.joinToString("&")}") {
             header("User-Agent", LEGACY_AGENT)
+            // Answers in under a second when it works. The client default (30 s, retried
+            // twice on timeout) held the whole Wyzie section for about a minute and a half.
+            timeout { requestTimeoutMillis = SEARCH_TIMEOUT_MS }
         }
         if (!response.status.isSuccess()) return emptyList()
 
@@ -214,6 +225,58 @@ class SubtitleApi(private val client: HttpClient) {
             .ranked()
     }
 
+    /**
+     * VidLove's keyless catalogue (the subtitles the Rentaro extension's Yoru server carries).
+     *
+     * `api.vidlove.cc/subtitles/{movie|tv}/<tmdb>[/<season>/<episode>]` returns every language
+     * as WebVTT behind its own `/subtitle?url=` proxy - often several cuts per language, labelled
+     * "English", "English 2", "English3" - so it adds alternatives the other catalogues lack.
+     * Languages are names rather than codes, and the trailing number is dropped to match them.
+     */
+    private suspend fun searchVidLove(query: SubtitleQuery): List<SubtitleResult> {
+        val tmdbId = query.tmdbId ?: return emptyList()
+        val lang = query.language.toIso639_1()
+        if (lang.isBlank()) return emptyList()
+
+        val isTv = query.season != null || query.episode != null
+        if (isTv && (query.season == null || query.episode == null)) return emptyList()
+
+        val path = if (isTv) "tv/$tmdbId/${query.season}/${query.episode}" else "movie/$tmdbId"
+        val response = client.get("$VIDLOVE_BASE/subtitles/$path") {
+            timeout { requestTimeoutMillis = SEARCH_TIMEOUT_MS }
+        }
+        if (!response.status.isSuccess()) return emptyList()
+
+        return json.decodeFromString<List<VidLoveSubtitle>>(response.bodyAsText())
+            .mapNotNull { subtitle ->
+                val link = subtitle.file?.takeIf { it.startsWith("http") } ?: return@mapNotNull null
+                val label = subtitle.label?.trim().orEmpty()
+                val languageName = label
+                    .replace(VIDLOVE_CUT_SUFFIX, "")
+                    .replace(VIDLOVE_HI_SUFFIX, "")
+                    .trim()
+                if (languageName.toIso639_1() != lang) return@mapNotNull null
+                SubtitleResult(
+                    id = link,
+                    name = label.ifBlank { languageName },
+                    language = lang,
+                    languageName = languageName,
+                    downloadUrl = link,
+                    format = subtitle.type?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: "vtt",
+                    downloads = 0L,
+                    hearingImpaired = VIDLOVE_HI_SUFFIX.containsMatchIn(label),
+                )
+            }
+            .distinctBy { it.downloadUrl }
+    }
+
+    @Serializable
+    private data class VidLoveSubtitle(
+        val label: String? = null,
+        val file: String? = null,
+        val type: String? = null,
+    )
+
     /** The modern REST API, keyed by TMDB id so it needs no IMDb match. */
     private suspend fun searchRest(query: SubtitleQuery, apiKey: String): List<SubtitleResult> {
         if (apiKey.isBlank()) return emptyList()
@@ -268,7 +331,12 @@ class SubtitleApi(private val client: HttpClient) {
         }
 
         val response = client.get(url) { header("User-Agent", LEGACY_AGENT) }
-        if (!response.status.isSuccess()) return null
+        if (!response.status.isSuccess()) {
+            // Logged with the status: Wyzie's file proxy answers 503 for a title whose upstream
+            // is down, and without this a failed download was indistinguishable from a bug.
+            android.util.Log.w(TAG, "subtitle download HTTP ${response.status.value}: ${url.take(60)}")
+            return null
+        }
 
         val target = File(dir, result.cacheFileName())
         val bytes = response.bodyAsChannel().toInputStream().use { it.readBytes() }
@@ -284,7 +352,7 @@ class SubtitleApi(private val client: HttpClient) {
         target.writeBytes(decoded)
         target
     }.onFailure {
-        android.util.Log.w(TAG, "subtitle download failed: ${it::class.java.simpleName}")
+        android.util.Log.w(TAG, "subtitle download failed: ${it::class.java.simpleName}: ${it.message}")
     }.getOrNull()
 
     /**
@@ -408,11 +476,21 @@ class SubtitleApi(private val client: HttpClient) {
     companion object {
         private const val TAG = "WbSubtitles"
 
+        /** Per-provider search budget, so one slow source cannot hold the panel. */
+        private const val SEARCH_TIMEOUT_MS = 12_000L
+
         private const val LEGACY_BASE = "https://rest.opensubtitles.org"
         private const val REST_BASE = "https://api.opensubtitles.com/api/v1"
         private const val BRIGHT_BASE = "https://subs.bright67.online"
         private const val WYZIE_BASE = "https://vidfast.vc"
         private const val WING_BASE = "https://subs.wing.st"
+        private const val VIDLOVE_BASE = "https://api.vidlove.cc"
+
+        /** "English 2", "English3": alternative cuts of one language. */
+        private val VIDLOVE_CUT_SUFFIX = Regex("\\s*\\d+$")
+
+        /** "Arabic Hi5": a hearing-impaired cut. */
+        private val VIDLOVE_HI_SUFFIX = Regex("\\s+Hi\\d*$", RegexOption.IGNORE_CASE)
 
         /**
          * Origin the aggregator checks on a search.
@@ -577,6 +655,12 @@ enum class SubtitleProvider {
      * declared format must be kept when they are cached for playback.
      */
     WING_SUBTITLES,
+
+    /**
+     * Keyless VidLove catalogue, indexed by TMDB id. Every language as WebVTT, usually with
+     * several alternative cuts per language. The same source the Rentaro Yoru server uses.
+     */
+    VIDLOVE,
 }
 
 /**
@@ -676,7 +760,13 @@ data class SubtitleResult(
      * that are not safe in a path, and two providers can return the same name for different
      * files.
      */
-    fun cacheFileName(): String = "sub-${id.filter { it.isLetterOrDigit() }}.${format.ifBlank { "srt" }}"
+    fun cacheFileName(): String {
+        // Wyzie ids are whole signed URLs, 300+ characters, which overflows the 255-byte file
+        // name limit and fails the write. A short hash keeps names unique and bounded.
+        val safe = id.filter { it.isLetterOrDigit() }
+        val stem = if (safe.length <= 80) safe else safe.take(40) + "-" + safe.hashCode().toUInt().toString(16)
+        return "sub-$stem.${format.ifBlank { "srt" }}"
+    }
 }
 
 /**
@@ -693,4 +783,5 @@ fun SubtitleProvider.labelRes(): Int = when (this) {
     SubtitleProvider.SUBS_BRIGHT -> space.nicart.watchbox.R.string.subtitle_source_bright
     SubtitleProvider.VIDFAST_WYZIE -> space.nicart.watchbox.R.string.subtitle_source_wyzie
     SubtitleProvider.WING_SUBTITLES -> space.nicart.watchbox.R.string.subtitle_source_wing
+    SubtitleProvider.VIDLOVE -> space.nicart.watchbox.R.string.subtitle_source_vidlove
 }

@@ -211,6 +211,8 @@ fun SubtitleProviderRow(
                             R.string.settings_subtitle_provider_wyzie
                         SubtitleProvider.WING_SUBTITLES ->
                             R.string.settings_subtitle_provider_wing
+                        SubtitleProvider.VIDLOVE ->
+                            R.string.settings_subtitle_provider_vidlove
                     },
                 ),
                 selected = isOn,

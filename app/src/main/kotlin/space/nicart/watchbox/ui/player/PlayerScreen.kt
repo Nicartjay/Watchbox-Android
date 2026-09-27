@@ -1497,6 +1497,7 @@ fun PlayerScreen(
             },
             selectedEmbeddedIndex = selectedEmbeddedIndex,
             onSelectEmbedded = { index ->
+                if (index != selectedEmbeddedIndex) viewModel.resetSubtitleTiming()
                 selectedEmbeddedIndex = index
                 openPanel = PlayerPanel.NONE
             },

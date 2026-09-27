@@ -46,7 +46,10 @@ object SubtitleParser {
     )
 
     /** Inline markup both formats allow: `<i>`, `<b>`, `{\an8}`. */
-    private val MARKUP = Regex("""</?[a-zA-Z][^>]*>|\{[^}]*}""")
+    // The closing brace is escaped on purpose. Desktop Java accepts a bare `}` here, so the
+    // unit tests passed, but Android's ICU regex rejects it: the object failed to initialise on
+    // every device, no subtitle ever parsed, and timing corrections silently did nothing.
+    private val MARKUP = Regex("""</?[a-zA-Z][^>]*>|\{[^}]*\}""")
 
     /**
      * Parses [content] into cues, or returns an empty list when the format is not one of

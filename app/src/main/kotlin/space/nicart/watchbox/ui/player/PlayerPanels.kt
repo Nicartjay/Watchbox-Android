@@ -610,9 +610,23 @@ private fun SubtitleResultList(
             // Keyed by provider rather than by index, so a section does not adopt another's
             // scroll position when one of them is turned off in settings.
             item(key = "header-${group.provider.name}") {
-                PanelSectionLabel(
-                    text = stringResource(group.provider.labelRes()),
-                )
+                // A spinner beside a section that has not answered yet, so a slow provider
+                // reads as "still coming" while the finished ones above are already usable.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    PanelSectionLabel(
+                        text = stringResource(group.provider.labelRes()),
+                    )
+                    if (group.loading) {
+                        Spacer(Modifier.width(8.dp))
+                        CircularProgressIndicator(
+                            color = tokens.colors.textMuted,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier
+                                .padding(top = 10.dp)
+                                .size(12.dp),
+                        )
+                    }
+                }
             }
 
             // Prefixed with the provider: the same file in two catalogues carries the same id,

@@ -90,6 +90,16 @@ class WatchBoxStore(context: Context) {
                     }
                     ?.toSet()
                     ?.takeIf { it.isNotEmpty() }
+                    // A stored list predates any provider added since, which would otherwise
+                    // stay off for everyone who had ever touched the setting. Each later addition
+                    // is switched on until the list is saved again with it present or absent.
+                    ?.let { stored ->
+                        // Providers the stored list was saved knowing about. Anything newer is
+                        // on by default until the next save records a choice for it.
+                        val seen = prefs[Keys.SUB_PROVIDERS_SEEN]?.split(',')?.toSet()
+                            ?: LEGACY_SUBTITLE_PROVIDERS
+                        stored + SubtitleProvider.entries.filter { it.name !in seen }
+                    }
                     ?: SubtitleProvider.entries.toSet(),
                 subtitleProvider = enumOrDefault(
                     prefs[Keys.SUB_PROVIDER],
@@ -267,6 +277,7 @@ class WatchBoxStore(context: Context) {
      */
     suspend fun setSubtitleProviders(providers: Set<SubtitleProvider>) = store.edit {
         it[Keys.SUB_PROVIDERS] = providers.joinToString(",") { provider -> provider.name }
+        it[Keys.SUB_PROVIDERS_SEEN] = SubtitleProvider.entries.joinToString(",") { provider -> provider.name }
     }
     suspend fun setSubtitleApiKey(key: String) = store.edit { it[Keys.SUB_API_KEY] = key.trim() }
     suspend fun setCastForceProxy(enabled: Boolean) = store.edit {
@@ -516,6 +527,9 @@ class WatchBoxStore(context: Context) {
         val ARTWORK_LANG = stringPreferencesKey("artwork_language")
         val SUB_PROVIDER = stringPreferencesKey("subtitle_provider")
         val SUB_PROVIDERS = stringPreferencesKey("subtitle_providers_enabled")
+
+        /** Every provider that existed when [SUB_PROVIDERS] was last saved. */
+        val SUB_PROVIDERS_SEEN = stringPreferencesKey("subtitle_providers_seen")
         val SUB_API_KEY = stringPreferencesKey("subtitle_api_key")
         val CAST_FORCE_PROXY = booleanPreferencesKey("cast_force_proxy")
         val LAST_SERVER = stringPreferencesKey("last_server_id")
@@ -692,6 +706,15 @@ data class AppSettings(
 }
 
 /** Default subtitle colour: opaque white. */
+/** The providers that existed before [WatchBoxStore]'s provider list tracked what it had seen. */
+private val LEGACY_SUBTITLE_PROVIDERS = setOf(
+    "OPEN_SUBTITLES_LEGACY",
+    "OPEN_SUBTITLES_API",
+    "VIDFAST_WYZIE",
+    "SUBS_BRIGHT",
+    "WING_SUBTITLES",
+)
+
 internal const val SUBTITLE_DEFAULT_COLOR: Int = 0xFFFFFFFF.toInt()
 
 /**

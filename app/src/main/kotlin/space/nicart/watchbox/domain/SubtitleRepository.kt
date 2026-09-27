@@ -9,6 +9,8 @@ import space.nicart.watchbox.data.remote.SubtitleResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import space.nicart.watchbox.ui.player.SubtitleCue
 import space.nicart.watchbox.ui.player.SubtitleParser
@@ -47,6 +49,46 @@ class SubtitleRepository(
      * Groups are returned in the enum's own order so the sections do not reshuffle between
      * searches according to which service happened to answer first.
      */
+    /**
+     * Streams the search one provider at a time.
+     *
+     * Emits the full section list on start - every enabled provider, each marked loading -
+     * and again as each one answers, in the fixed provider order. The panel can therefore
+     * show a finished section while a slow one is still working, instead of waiting for the
+     * slowest source before showing anything. The last emission has nothing loading.
+     */
+    fun searchStreaming(query: SubtitleQuery): kotlinx.coroutines.flow.Flow<List<SubtitleGroup>> =
+        kotlinx.coroutines.flow.channelFlow {
+            if (query.isUnusable) {
+                send(emptyList())
+                return@channelFlow
+            }
+
+            val settings = store.currentSettings()
+            val enabled = SubtitleProvider.entries
+                .filter { it in settings.subtitleProviders }
+                .filter { it.isUsable(query, settings.subtitleApiKey) }
+
+            val lock = kotlinx.coroutines.sync.Mutex()
+            val groups = enabled.associateWith { SubtitleGroup(it, emptyList(), loading = true) }
+                .toMutableMap()
+            send(enabled.map { groups.getValue(it) })
+
+            enabled.forEach { provider ->
+                launch {
+                    val results = api.search(
+                        query = query,
+                        provider = provider,
+                        apiKey = settings.subtitleApiKey,
+                    )
+                    lock.withLock {
+                        groups[provider] = SubtitleGroup(provider, results, loading = false)
+                        send(enabled.map { groups.getValue(it) })
+                    }
+                }
+            }
+        }
+
     suspend fun searchGrouped(query: SubtitleQuery): List<SubtitleGroup> {
         if (query.isUnusable) return emptyList()
 
@@ -102,6 +144,7 @@ class SubtitleRepository(
             SubtitleProvider.VIDFAST_WYZIE -> true
             // Wing only indexes by TMDB id.
             SubtitleProvider.WING_SUBTITLES -> query.tmdbId != null
+            SubtitleProvider.VIDLOVE -> query.tmdbId != null
         }
 
     /**
@@ -201,7 +244,12 @@ class SubtitleRepository(
      */
     suspend fun cues(url: String): List<SubtitleCue> = withContext(Dispatchers.IO) {
         runCatching {
-            val text = if (url.startsWith("file://")) {
+            // `File.toURI()` writes `file:/data/...` - one slash - so a `file://` test missed
+            // every downloaded subtitle and sent it to the HTTP client, which rejects the
+            // scheme. With no cues the offset had nothing to shift: both the stepper and the
+            // two-tap measurement appeared to do nothing on exactly the subtitles people
+            // download to fix timing.
+            val text = if (url.startsWith("file:", ignoreCase = true)) {
                 File(java.net.URI(url)).readText()
             } else {
                 api.fetchText(url)
@@ -268,4 +316,6 @@ class SubtitleRepository(
 data class SubtitleGroup(
     val provider: SubtitleProvider,
     val results: List<SubtitleResult>,
+    /** True while this provider has not answered yet; the panel shows a spinner for it. */
+    val loading: Boolean = false,
 )

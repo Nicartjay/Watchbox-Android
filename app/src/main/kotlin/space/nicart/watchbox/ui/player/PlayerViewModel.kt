@@ -251,6 +251,7 @@ class PlayerViewModel(
      */
     private var cuesLoadedFor: String? = null
     private var subtitleJob: Job? = null
+    private var downloadJob: Job? = null
     private var skipJob: Job? = null
     private var lastHistoryWrite = 0L
 
@@ -597,7 +598,10 @@ class PlayerViewModel(
     }
 
     fun selectSubtitle(index: Int) {
+        val changed = index != _uiState.value.selectedSubtitleIndex
         _uiState.value = _uiState.value.copy(selectedSubtitleIndex = index)
+        // A correction was measured against one file's timing; another file needs its own.
+        if (changed) resetSubtitleTiming()
 
         // Normalised before it is stored, because this comes from the source's own track label
         // and those are written for people: "English", "Portuguese (Brazil)". Stored verbatim,
@@ -736,16 +740,35 @@ class PlayerViewModel(
         _uiState.value = state.copy(subtitleSearch = SubtitleSearchState.Searching)
 
         subtitleJob = viewModelScope.launch {
-            val groups = subtitles.searchGrouped(query)
-            _uiState.value = _uiState.value.copy(
-                subtitleSearch = if (groups.isEmpty()) {
-                    SubtitleSearchState.Empty
-                } else {
-                    SubtitleSearchState.Results(groups)
-                },
-            )
+            // Each provider's section appears as soon as it answers, with a spinner on the ones
+            // still working, rather than the panel waiting for the slowest source.
+            var latest: List<SubtitleGroup> = emptyList()
+            subtitles.searchStreaming(query).collect { groups ->
+                latest = groups
+                val current = _uiState.value.subtitleSearch
+                // A download started mid-search keeps its own state; its list just refreshes.
+                val next = when {
+                    current is SubtitleSearchState.Downloading ->
+                        current.copy(previous = groups.visibleSections())
+                    groups.any { it.loading } || groups.any { it.results.isNotEmpty() } ->
+                        SubtitleSearchState.Results(groups.visibleSections())
+                    else -> SubtitleSearchState.Searching
+                }
+                if (current !is SubtitleSearchState.Applied && current !is SubtitleSearchState.Failed) {
+                    _uiState.value = _uiState.value.copy(subtitleSearch = next)
+                }
+            }
+            if (latest.none { it.results.isNotEmpty() } &&
+                _uiState.value.subtitleSearch is SubtitleSearchState.Results
+            ) {
+                _uiState.value = _uiState.value.copy(subtitleSearch = SubtitleSearchState.Empty)
+            }
         }
     }
+
+    /** Sections worth drawing: those with results, plus those still loading. */
+    private fun List<SubtitleGroup>.visibleSections(): List<SubtitleGroup> =
+        filter { it.loading || it.results.isNotEmpty() }
 
     /**
      * Downloads a chosen result and selects it immediately.
@@ -754,9 +777,10 @@ class PlayerViewModel(
      * to then find it in a second list and turn it on.
      */
     fun applySubtitle(result: SubtitleResult) {
-        subtitleJob?.cancel()
+        // Its own job: sharing the search's would cancel sections that are still loading.
+        downloadJob?.cancel()
 
-        subtitleJob = viewModelScope.launch {
+        downloadJob = viewModelScope.launch {
             val shown = (_uiState.value.subtitleSearch as? SubtitleSearchState.Results)
                 ?.groups
                 .orEmpty()
@@ -766,6 +790,7 @@ class PlayerViewModel(
             )
 
             val option = subtitles.download(result)
+            subtitleJob?.cancel()
             if (option == null) {
                 _uiState.value = _uiState.value.copy(
                     subtitleSearch = SubtitleSearchState.Failed,
@@ -785,6 +810,8 @@ class PlayerViewModel(
                 selectedSubtitleIndex = sourceCount + external.lastIndex,
                 subtitleSearch = SubtitleSearchState.Applied,
             )
+            // A freshly downloaded file starts from its own timing, not the last one's fix.
+            resetSubtitleTiming()
 
             // Loads the cues for the track just applied.
             //
@@ -839,6 +866,7 @@ class PlayerViewModel(
     /** Closes the search, discarding results but keeping anything already downloaded. */
     fun dismissSubtitleSearch() {
         subtitleJob?.cancel()
+        downloadJob?.cancel()
         _uiState.value = _uiState.value.copy(subtitleSearch = SubtitleSearchState.Idle)
     }
 
@@ -852,6 +880,16 @@ class PlayerViewModel(
      * Persisted as well as applied: a release's desync is a property of that release, so
      * the same correction usually holds for the next episode.
      */
+    /**
+     * Clears the timing correction, and any half-done measurement, when the subtitle changes.
+     * An offset measured for one release is wrong for the next, and carrying it over made a
+     * correctly timed file look out of sync.
+     */
+    fun resetSubtitleTiming() {
+        if (_uiState.value.subtitleOffsetMs == 0L && !_uiState.value.syncCalibration.isArmed) return
+        setSubtitleOffset(0L)
+    }
+
     fun setSubtitleOffset(offsetMs: Long) {
         val clamped = clampSubtitleOffset(offsetMs)
         _uiState.value = _uiState.value.copy(
