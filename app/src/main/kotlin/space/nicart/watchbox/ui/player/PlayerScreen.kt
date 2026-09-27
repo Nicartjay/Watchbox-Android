@@ -764,8 +764,16 @@ fun PlayerScreen(
 
         // A no-seek stream starts from 0: its temp file is empty until the download begins, and
         // a resume point would sit waiting for everything before it to arrive.
+        //
+        // The one exception is a rebuild of the stream already playing - a subtitle downloaded
+        // or an audio track merged in. Its temp download is kept, so the position goes back to
+        // where the viewer was, clamped to what has downloaded.
         val usesTempFile = !stream.canSeek && !stream.isHls && !stream.isDash
+        val reusedTemp = tempStream?.takeIf { usesTempFile && sameEpisode && it.url == stream.url }
         val resumeFrom = when {
+            reusedTemp != null -> positionMs.coerceAtMost(
+                tempSeekLimitMs(reusedTemp.progress.value, durationMs),
+            ).coerceAtLeast(0L)
             usesTempFile || !stream.canSeek -> 0L
             sameEpisode && positionMs > 0 -> positionMs
             else -> state.resumeMs
@@ -802,11 +810,15 @@ fun PlayerScreen(
             )
         }
 
-        tempStream?.close()
-        tempStream = null
+        // Only a different stream replaces the temp download. The same one keeps downloading
+        // across a rebuild instead of starting over from zero.
+        if (reusedTemp == null) {
+            tempStream?.close()
+            tempStream = null
+        }
 
         if (usesTempFile) {
-            val temp = ProgressiveTempFile(
+            val temp = reusedTemp ?: ProgressiveTempFile(
                 url = stream.url,
                 headers = stream.headers,
                 client = PlayerFactory.sharedHttp,

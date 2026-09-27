@@ -35,7 +35,8 @@ import java.io.RandomAccessFile
  */
 @UnstableApi
 class ProgressiveTempFile(
-    private val url: String,
+    /** The remote file this downloads; the player reuses an instance for the same URL. */
+    val url: String,
     private val headers: Map<String, String>,
     private val client: OkHttpClient,
     cacheDir: File,
