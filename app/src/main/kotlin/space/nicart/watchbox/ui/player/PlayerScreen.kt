@@ -1824,6 +1824,7 @@ private fun playerErrorMessage(error: PlaybackException): Int = when (error.erro
 private const val SYSTEM_EDGE_EXCLUSION_DP = 48
 
 /** How much of a temp-file stream is on disk, as a playback position. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal fun tempDownloadedMs(progress: ProgressiveTempFile.Progress?, durationMs: Long): Long {
     if (progress == null || durationMs <= 0) return 0L
     if (progress.done) return durationMs
@@ -1834,6 +1835,7 @@ internal fun tempDownloadedMs(progress: ProgressiveTempFile.Progress?, durationM
  * The furthest a temp-file stream can be sought to: a little short of the downloaded edge, so
  * the player lands on bytes that are already there rather than waiting at the very end.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal fun tempSeekLimitMs(progress: ProgressiveTempFile.Progress?, durationMs: Long): Long {
     val downloaded = tempDownloadedMs(progress, durationMs)
     if (progress?.done == true) return downloaded
