@@ -39,7 +39,116 @@ interface TrailerProvider {
      * back to the backdrop rather than reporting a failure.
      */
     suspend fun trailer(tmdbId: Int, isMovie: Boolean): Trailer?
+
+    /**
+     * The same, for a provider keyed on IMDb rather than TMDB. [imdbId] is null when TMDB
+     * matched none. Defaults to the TMDB lookup so a TMDB-only provider need not change.
+     */
+    suspend fun trailer(tmdbId: Int, imdbId: String?, isMovie: Boolean): Trailer? =
+        trailer(tmdbId, isMovie)
 }
+
+/**
+ * Tries each provider in turn and returns the first trailer found.
+ *
+ * Both backing services are private endpoints that come and go - shegu answered 502 on every
+ * request from late September 2026 - so a second one behind the first keeps the hero working
+ * through an outage of either.
+ */
+class FallbackTrailers(private vararg val providers: TrailerProvider) : TrailerProvider {
+    override suspend fun trailer(tmdbId: Int, isMovie: Boolean): Trailer? =
+        trailer(tmdbId, null, isMovie)
+
+    override suspend fun trailer(tmdbId: Int, imdbId: String?, isMovie: Boolean): Trailer? {
+        for (provider in providers) {
+            val found = runCatching { provider.trailer(tmdbId, imdbId, isMovie) }.getOrNull()
+            if (found != null) return found
+        }
+        return null
+    }
+}
+
+/**
+ * Resolves a trailer through `trailers.wecollege.net`, keyed on an IMDb id.
+ *
+ * The service (the one movy.sx's hero uses) returns IMDb's own trailer files - progressive
+ * MP4s at several heights plus an HLS master - already signed, so Media3 plays them directly.
+ * Checked on 27 September 2026 across twelve films and series: all twelve answered in about a
+ * second with an MP4 that served `ftyp` bytes and honoured Range.
+ *
+ * Quality is picked the way movy.sx picks it - 1080p, then 720p, 480p, SD, then the HLS
+ * master - which favours a clean single file over an adaptive stream for a short clip.
+ */
+class WeCollegeTrailerApi(private val client: HttpClient) : TrailerProvider {
+
+    /** Per IMDb id for the process lifetime; the signed URLs last about a day. */
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Trailer>()
+    private val misses = java.util.Collections.newSetFromMap(
+        java.util.concurrent.ConcurrentHashMap<String, Boolean>(),
+    )
+
+    override suspend fun trailer(tmdbId: Int, isMovie: Boolean): Trailer? = null
+
+    override suspend fun trailer(tmdbId: Int, imdbId: String?, isMovie: Boolean): Trailer? {
+        val id = imdbId?.trim()?.takeIf { it.startsWith("tt") } ?: return null
+        cache[id]?.let { return it }
+        if (id in misses) return null
+
+        val body = runCatching {
+            val response: HttpResponse = client.get("$BASE/getOldestTrailer?id=$id") {
+                header("User-Agent", SheguTrailerApi.USER_AGENT)
+            }
+            if (response.status.value == 404) return@runCatching SheguTrailerApi.NOT_FOUND
+            if (!response.status.isSuccess()) return@runCatching null
+            response.body<String>()
+        }.getOrNull() ?: return null
+
+        val trailer = if (body == SheguTrailerApi.NOT_FOUND) null else parse(body)
+        if (trailer == null) {
+            misses += id
+            return null
+        }
+        cache[id] = trailer
+        return trailer
+    }
+
+    internal companion object {
+        const val BASE = "https://trailers.wecollege.net"
+
+        private val QUALITY_ORDER = listOf("1080p", "720p", "480p", "SD", "AUTO")
+
+        /** Reads the preferred stream out of a response, or null. Never throws. */
+        internal fun parse(body: String): Trailer? {
+            val dto = runCatching { SheguTrailerApi.json.decodeFromString<WeCollegeDto>(body) }
+                .getOrNull() ?: return null
+            val streams = dto.trailer?.streams.orEmpty().filter { !it.url.isNullOrBlank() }
+            val pick = QUALITY_ORDER.firstNotNullOfOrNull { q -> streams.firstOrNull { it.quality == q } }
+                ?: streams.firstOrNull()
+                ?: return null
+            val isHls = pick.mimeType.equals("M3U8", true) || pick.url!!.contains(".m3u8")
+            return Trailer(
+                url = pick.url!!,
+                mimeType = if (isHls) "application/x-mpegURL" else "video/mp4",
+            )
+        }
+    }
+}
+
+@Serializable
+private data class WeCollegeDto(val trailer: WeCollegeTrailer? = null)
+
+@Serializable
+private data class WeCollegeTrailer(
+    val name: String? = null,
+    val streams: List<WeCollegeStream> = emptyList(),
+)
+
+@Serializable
+private data class WeCollegeStream(
+    val quality: String? = null,
+    val url: String? = null,
+    val mimeType: String? = null,
+)
 
 /** A provider that never returns anything, so a caller with no real one shows backdrops. */
 object NoTrailers : TrailerProvider {

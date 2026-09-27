@@ -400,7 +400,11 @@ class DetailViewModel(
             val settings = store.currentSettings()
             if (!settings.autoplayTrailers) return@launch
 
-            val trailer = repository.trailer(tmdbId = tmdbId, isMovie = detail.isMovie)
+            val trailer = repository.trailer(
+                tmdbId = tmdbId,
+                isMovie = detail.isMovie,
+                imdbId = detail.imdbId,
+            )
                 ?: return@launch
 
             // Guarded like the others: the user may have navigated on, or a reload

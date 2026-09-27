@@ -26,7 +26,9 @@ import space.nicart.watchbox.data.remote.ArmApi
 import space.nicart.watchbox.data.remote.SubtitleApi
 import space.nicart.watchbox.data.remote.ChainedRatingApi
 import space.nicart.watchbox.data.remote.SheguRatingApi
+import space.nicart.watchbox.data.remote.FallbackTrailers
 import space.nicart.watchbox.data.remote.SheguTrailerApi
+import space.nicart.watchbox.data.remote.WeCollegeTrailerApi
 import space.nicart.watchbox.data.remote.WikidataRatingApi
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.SkipRepository
@@ -180,7 +182,9 @@ class AppContainer(
         ),
         // Also on the plain client, and for the same reason: a trailer host is not a
         // content source and wants none of the extensions' cookies or Referer.
-        trailerProvider = SheguTrailerApi(plainClient),
+        // wecollege first: shegu has been answering 502 everywhere, and keeping it second
+        // lets it take over again if wecollege goes the same way.
+        trailerProvider = FallbackTrailers(WeCollegeTrailerApi(plainClient), SheguTrailerApi(plainClient)),
     )
 
     /**

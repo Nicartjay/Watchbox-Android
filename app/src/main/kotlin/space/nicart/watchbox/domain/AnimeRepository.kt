@@ -446,11 +446,11 @@ class AnimeRepository(
      * one with no TMDB match at all - the caller shows the backdrop either way, so
      * there is nothing to distinguish.
      */
-    suspend fun trailer(tmdbId: Int?, isMovie: Boolean): Trailer? {
+    suspend fun trailer(tmdbId: Int?, isMovie: Boolean, imdbId: String? = null): Trailer? {
         if (tmdbId == null) return null
         return withContext(Dispatchers.IO) {
             guarded("trailer($tmdbId)") {
-                trailerProvider.trailer(tmdbId = tmdbId, isMovie = isMovie)
+                trailerProvider.trailer(tmdbId = tmdbId, imdbId = imdbId, isMovie = isMovie)
             }
         }
     }
