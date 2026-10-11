@@ -71,6 +71,32 @@ class EpisodeSeasonTest {
         assertEquals(listOf("Episode 1", "Episode 3"), ordered.map { it.name })
     }
 
+    /** A lib 16 source that splits an entry into seasons says which one each list is. */
+    @Test
+    fun `a numbered lib 16 season overrides what the names say`() {
+        val tagged = listOf(entry("Episode 1", 1f), entry("S9 E2", 2f, 9)).inSeason(2.0)
+
+        assertEquals(listOf(2, 2), tagged.map { it.season })
+    }
+
+    @Test
+    fun `season zero is kept, since it is how sources number specials`() {
+        assertEquals(0, listOf(entry("Special", 1f)).inSeason(0.0).single().season)
+    }
+
+    /**
+     * `-1` is a box set's film, not a season. Tagging it would give every film its own tab;
+     * a fractional number is an OVA between seasons, which has no tab of its own either.
+     */
+    @Test
+    fun `an unnumbered or fractional season leaves the parsed one alone`() {
+        val episodes = listOf(entry("S3 E1", 1f, 3), entry("Film", 1f))
+
+        assertEquals(listOf(3, null), episodes.inSeason(-1.0).map { it.season })
+        assertEquals(listOf(3, null), episodes.inSeason(1.5).map { it.season })
+        assertEquals(listOf(3, null), episodes.inSeason(Double.NaN).map { it.season })
+    }
+
     private fun entry(name: String, number: Float, season: Int? = null) = EpisodeEntry(
         url = "u/$name",
         name = name,

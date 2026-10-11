@@ -2,6 +2,7 @@ package space.nicart.watchbox.domain
 
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
@@ -13,6 +14,10 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.lastOrNull
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import eu.kanade.tachiyomi.animesource.ProgressiveVideoSource
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
@@ -30,6 +35,7 @@ import space.nicart.watchbox.data.remote.TmdbEpisodeArt
 import space.nicart.watchbox.data.remote.TmdbSuggestion
 import space.nicart.watchbox.data.remote.TmdbType
 import space.nicart.watchbox.extension.ExtensionManager
+import space.nicart.watchbox.extension.loader.ExtensionLoader
 
 /**
  * The single repository, backed entirely by installed extensions.
@@ -531,11 +537,19 @@ class AnimeRepository(
             val stub = SAnime.create().apply { this.url = url }
 
             val details = runCatching { source.getAnimeDetails(stub) }.getOrDefault(stub)
-            val episodes = runCatching { source.getEpisodeList(stub) }
-                .getOrDefault(emptyList())
+            val ordered = if (source is AnimeHttpSource && details.fetch_type == FetchType.Seasons) {
+                // Details parsed into a fresh object often leave the URL unset, and the
+                // season lookup is keyed on it.
+                if (details.url.isBlank()) details.url = url
+                runCatching { seasonEpisodes(source, details) }.getOrDefault(emptyList())
+            } else {
+                runCatching { source.getEpisodeList(stub) }
+                    .getOrDefault(emptyList())
+                    .map { it.toEntry() }
+                    .sortedEpisodes()
+            }
 
             val resolvedTitle = details.title.ifBlank { "Untitled" }
-            val ordered = episodes.sortedEpisodes()
 
             // One lookup per title, then one per season for stills. Resolved by the
             // URL's TMDB id when the source supplies one, so the detail page and the
@@ -610,16 +624,52 @@ class AnimeRepository(
         }
     }
 
-    private fun List<SEpisode>.sortedEpisodes(): List<EpisodeEntry> {
-        val mapped = map { it.toEntry() }
-        val hasNumbers = mapped.any { it.number >= 0 }
+    private fun List<EpisodeEntry>.sortedEpisodes(): List<EpisodeEntry> {
+        val hasNumbers = any { it.number >= 0 }
         // Season first, then number. Sorting on the number alone interleaved the
         // seasons of a multi-season show - S3E1, S2E1, S1E1, S3E2 - because every
         // season restarts at 1.
         return if (hasNumbers) {
-            mapped.sortedWith(compareBy({ it.season ?: 0 }, { it.number }))
+            sortedWith(compareBy({ it.season ?: 0 }, { it.number }))
         } else {
-            mapped.reversed()
+            reversed()
+        }
+    }
+
+    /**
+     * Episodes of a lib 16 entry that is split into seasons, as one flat list.
+     *
+     * Such an entry has no episodes of its own: `getSeasonList` returns one [SAnime] per
+     * season, and each of those holds the episodes. The detail page already splits a flat
+     * list into season tabs, so each episode is tagged with the season it came from rather
+     * than teaching the page a second layout.
+     *
+     * Each season is ordered on its own and the seasons are kept in the source's order.
+     * Sorting the combined list would reverse it across seasons whenever the source gives no
+     * episode numbers. A season that fails to load is left out rather than failing the page.
+     */
+    private suspend fun seasonEpisodes(
+        source: AnimeHttpSource,
+        anime: SAnime,
+    ): List<EpisodeEntry> {
+        val seasons = source.getSeasonList(anime)
+        val gate = Semaphore(MAX_PARALLEL_SEASONS)
+
+        return coroutineScope {
+            seasons
+                .map { season ->
+                    async {
+                        val episodes = guarded("seasonEpisodes(${source.name})") {
+                            gate.withPermit { source.getEpisodeList(season) }
+                        }.orEmpty()
+
+                        episodes.map { it.toEntry() }
+                            .sortedEpisodes()
+                            .inSeason(season.season_number)
+                    }
+                }
+                .awaitAll()
+                .flatten()
         }
     }
 
@@ -835,8 +885,14 @@ class AnimeRepository(
 
         withContext(Dispatchers.IO) {
             val stub = SEpisode.create().apply { url = episodeUrl }
-            source.getVideoList(stub)
-                .map { it.toStreamOption() }
+            val options = if (source is AnimeHttpSource && servesHosters(source)) {
+                // The last emission is the complete list.
+                source.hosterStreams(stub).lastOrNull().orEmpty()
+            } else {
+                source.getVideoList(stub).map { it.toStreamOption() }
+            }
+
+            options
                 .filter { it.url.isNotBlank() }
                 .ifEmpty { error("This source returned no playable streams.") }
         }
@@ -854,10 +910,13 @@ class AnimeRepository(
      * the whole list rather than merging. Blank URLs are dropped per emission, since a source
      * may include a placeholder it later fills in.
      *
-     * A source without the interface emits exactly once, which makes this safe to use
-     * everywhere: the caller sees the same result it would have got from [streams], just
-     * wrapped in a flow. Failure is emitted as a [Result] rather than thrown, so a collector
-     * that already has usable streams is not torn down by a later backend failing.
+     * A lib 16 source is progressive by construction: its hosters answer one at a time, and
+     * [hosterStreams] reports each as it lands.
+     *
+     * A source with neither emits exactly once, which makes this safe to use everywhere: the
+     * caller sees the same result it would have got from [streams], just wrapped in a flow.
+     * Failure is emitted as a [Result] rather than thrown, so a collector that already has
+     * usable streams is not torn down by a later backend failing.
      */
     fun streamsFlow(
         sourceId: Long,
@@ -866,9 +925,14 @@ class AnimeRepository(
         val source = catalogueOrThrow(sourceId)
         val stub = SEpisode.create().apply { url = episodeUrl }
 
-        if (source !is ProgressiveVideoSource) {
-            emit(streams(sourceId, episodeUrl))
-            return@flow
+        val batches: Flow<List<StreamOption>> = when {
+            source is AnimeHttpSource && servesHosters(source) -> source.hosterStreams(stub)
+            source is ProgressiveVideoSource -> source.getVideoListFlow(stub)
+                .map { videos -> videos.map { it.toStreamOption() } }
+            else -> {
+                emit(streams(sourceId, episodeUrl))
+                return@flow
+            }
         }
 
         var emitted = false
@@ -876,10 +940,8 @@ class AnimeRepository(
         // Collected inside runCatching rather than mapped through it: an exception raised part
         // way through the flow must not discard the batches that already arrived.
         val outcome = runCatching {
-            source.getVideoListFlow(stub).collect { videos ->
-                val options = videos
-                    .map { it.toStreamOption() }
-                    .filter { it.url.isNotBlank() }
+            batches.collect { batch ->
+                val options = batch.filter { it.url.isNotBlank() }
 
                 // Empty emissions are dropped rather than forwarded. A source may report
                 // nothing on its first pass and find streams later, and passing that on would
@@ -910,6 +972,16 @@ class AnimeRepository(
             ?: error("That source is no longer installed.")
 
     fun hasSources(): Boolean = extensions.catalogueSources().isNotEmpty()
+
+    /**
+     * True for a source whose extension lists streams through hosters.
+     *
+     * A lib 16 source cannot answer `getVideoList(episode)` at all - the lib 16 API has no
+     * such call - while a lib 14 one has nothing else, so the declared version decides.
+     */
+    private fun servesHosters(source: AnimeHttpSource): Boolean =
+        (extensions.extensionForSource(source.id)?.libVersion ?: 0.0) >=
+            ExtensionLoader.LIB_VERSION_HOSTERS
 
     /**
      * Runs extension code, swallowing failures.
@@ -951,6 +1023,15 @@ class AnimeRepository(
          * detail open. Later seasons simply keep the source's own titles.
          */
         const val MAX_SEASON_LOOKUPS = 12
+
+        /**
+         * Season episode lists fetched at once for a lib 16 entry split into seasons.
+         *
+         * Not a cap on how many are fetched: every season is needed for its tab, and the
+         * sources that split seasons are mostly self-hosted servers. This only stops a long
+         * show opening a connection per season at once.
+         */
+        const val MAX_PARALLEL_SEASONS = 4
 
         /**
          * Shorter than the general source timeout: this runs once per candidate

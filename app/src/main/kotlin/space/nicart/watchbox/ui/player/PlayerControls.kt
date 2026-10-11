@@ -122,7 +122,8 @@ fun playerMetricsFor(width: Dp): PlayerMetrics = when {
  * The server and audio panels do not use an extension API for either - lib-14
  * exposes no host list and no audio-track selection. Both are derived from the
  * stream labels the source already returns, so they switch streams rather than
- * tracks. See [StreamFacets].
+ * tracks. A lib 16 source's hosters arrive the same way, as the server part of
+ * each label. See [StreamFacets].
  */
 enum class PlayerPanel {
     NONE,

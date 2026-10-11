@@ -39,6 +39,13 @@ REQUIRED_CLASSES = [
     "animesource/model/SEpisodeImpl",
     "animesource/model/Video",
     "animesource/model/Track",
+    # Lib 16 models. Hoster is also reached by every lib 14 extension, from a bundled
+    # getHosterList shim.
+    "animesource/model/Hoster",
+    "animesource/model/TimeStamp",
+    "animesource/model/ChapterType",
+    "animesource/model/FetchType",
+    "animesource/model/AnimeUpdateStrategy",
     "animesource/model/AnimesPage",
     "animesource/model/AnimeFilter",
     "animesource/model/AnimeFilterList",
@@ -103,6 +110,10 @@ REQUIRED_MEMBERS = {
         "episodeListRequest", "episodeListParse",
         "videoListRequest", "videoListParse",
         "setUrlWithoutDomain", "headersBuilder", "generateId",
+        # Lib 16. Overridden, so an obfuscated name would silently stop dispatching to them.
+        "getSeasonList", "seasonListRequest", "seasonListParse",
+        "getHosterList", "hosterListRequest", "hosterListParse",
+        "resolveVideo", "sortHosters", "sortVideos",
     ],
 }
 

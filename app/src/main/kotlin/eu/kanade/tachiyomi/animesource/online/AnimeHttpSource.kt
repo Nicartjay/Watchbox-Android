@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animesource.online
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -128,6 +129,59 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
 
     protected abstract fun episodeListParse(response: Response): List<SEpisode>
 
+    // ------------------------------------------------------------- seasons
+
+    /**
+     * Seasons of a [eu.kanade.tachiyomi.animesource.model.FetchType.Seasons] entry. Lib 16.
+     *
+     * Every lib 16 member below has a default rather than being abstract, unlike in the lib 16
+     * stubs: lib 14 extensions extend this same class and implement none of them.
+     */
+    open suspend fun getSeasonList(anime: SAnime): List<SAnime> {
+        val response = client.newCall(seasonListRequest(anime)).awaitSuccess()
+        return response.use { seasonListParse(it) }
+    }
+
+    protected open fun seasonListRequest(anime: SAnime): Request =
+        GET(baseUrl + anime.url, headers)
+
+    protected open fun seasonListParse(response: Response): List<SAnime> =
+        throw UnsupportedOperationException("Not implemented")
+
+    // ------------------------------------------------------------- hosters
+
+    /**
+     * Servers offering an episode, best first. Lib 16.
+     *
+     * Only called for lib 16 sources. Lib 14 extensions bundle a `getHosterList` of their own
+     * that wraps [getVideoList], so the host cannot use its presence to tell the two apart.
+     */
+    open suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val response = client.newCall(hosterListRequest(episode)).awaitSuccess()
+        return response.use { hosterListParse(it) }
+    }
+
+    protected open fun hosterListRequest(episode: SEpisode): Request =
+        GET(baseUrl + episode.url, headers)
+
+    protected open fun hosterListParse(response: Response): List<Hoster> =
+        throw UnsupportedOperationException("Not implemented")
+
+    /** Videos on a hoster that came without its [Hoster.videoList]. Lib 16. */
+    open suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val response = client.newCall(videoListRequest(hoster)).awaitSuccess()
+        return response.use { videoListParse(it, hoster) }
+    }
+
+    protected open fun videoListRequest(hoster: Hoster): Request =
+        GET(hoster.hosterUrl, headers)
+
+    protected open fun videoListParse(response: Response, hoster: Hoster): List<Video> =
+        throw UnsupportedOperationException("Not implemented")
+
+    /** Ordering hook for hosters, applied by the host. Lib 16. */
+    open fun List<Hoster>.sortHosters(): List<Hoster> = this
+
     // -------------------------------------------------------------- videos
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
@@ -138,13 +192,28 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
     protected open fun videoListRequest(episode: SEpisode): Request =
         GET(baseUrl + episode.url, headers)
 
-    protected abstract fun videoListParse(response: Response): List<Video>
+    /** Lib 14. Has a default so a lib 16 source, which never implements it, still links. */
+    protected open fun videoListParse(response: Response): List<Video> =
+        throw UnsupportedOperationException("Not implemented")
 
     /**
-     * Resolve a lazily-populated [Video] into a playable one.
-     * Sources that return ready URLs leave this alone.
+     * Turns a video that is not yet [Video.initialized] into a playable one, or null when the
+     * source could not. Lib 16. Sources that return ready URLs leave this alone.
      */
-    open suspend fun resolveVideo(video: Video): Video = video
+    open suspend fun resolveVideo(video: Video): Video? = video
+
+    /**
+     * Fetches the media URL a lib 14 source left as [Video.UNRESOLVED_URL].
+     *
+     * Deprecated in lib 16 in favour of [resolveVideo], but lib 16 sources still bundle
+     * extractors that produce such videos.
+     */
+    open suspend fun getVideoUrl(video: Video): String {
+        val response = client.newCall(videoUrlRequest(video)).awaitSuccess()
+        return response.use { videoUrlParse(it) }
+    }
+
+    protected open fun videoUrlRequest(video: Video): Request = GET(video.url, headers)
 
     open fun videoUrlParse(response: Response): String =
         throw UnsupportedOperationException("Not implemented")
@@ -158,6 +227,17 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
      * the default keeps the source's own order.
      */
     protected open fun List<Video>.sort(): List<Video> = this
+
+    /**
+     * Lib 16 name for [sort], which lib 16 sources override instead.
+     *
+     * `protected`, as in the lib 16 stubs, so an override links against a member of the same
+     * visibility; the host reaches it through [sortedVideos].
+     */
+    protected open fun List<Video>.sortVideos(): List<Video> = sort()
+
+    /** Host access to the source's [sortVideos]. */
+    internal fun sortedVideos(videos: List<Video>): List<Video> = videos.sortVideos()
 
     // -------------------------------------------------------- related anime
 

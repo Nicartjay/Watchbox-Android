@@ -5,7 +5,7 @@ Verifies that the app still exposes the ABI Aniyomi anime extensions link agains
 Extension APKs are compiled `compileOnly` against the Aniyomi source API and
 bundle none of it, so this app *is* their runtime library. Every class name,
 member name and signature below was extracted from real extension APKs in
-github.com/yuzono/anime-repo with `dexdump`. Renaming or moving any of them
+github.com/yuzono/anime-repo with `dexdump`, which ships lib 14 and lib 16. Renaming or moving any of them
 still compiles cleanly but fails at runtime with NoSuchMethodError the moment a
 source is used, which is why this check exists as a build step rather than as a
 comment.
@@ -123,12 +123,28 @@ CHECKS = [
  ("animesource.model.AnimeFilterList", ["isEmpty"]),
  ("animesource.model.AnimesPage", ["<init>"]),
  ("animesource.model.SAnimeImpl", ["getUrl","setUrl","setTitle","setThumbnail_url",
-   "setDescription","setGenre","setStatus","setAuthor","setArtist","setInitialized"]),
+   "setDescription","setGenre","setStatus","setAuthor","setArtist","setInitialized",
+   "setBackground_url","setUpdate_strategy","setFetch_type","getFetch_type",
+   "setSeason_number","getSeason_number"]),
  ("animesource.model.SEpisodeImpl", ["getUrl","setUrl","getName","setName",
-   "setDate_upload","setEpisode_number","getEpisode_number","setScanlator"]),
+   "setDate_upload","setEpisode_number","getEpisode_number","setScanlator",
+   "setFillermark","setSummary","setPreview_url"]),
  ("animesource.model.Track", ["<init>","getUrl","getLang"]),
  ("animesource.model.Video", ["getQuality","getUrl","getVideoUrl","getHeaders",
-   "getSubtitleTracks","getAudioTracks","<init>"]),
+   "getSubtitleTracks","getAudioTracks","<init>",
+   # Lib 16 made Video a data class; its extensions call copy$default and these getters.
+   "getVideoTitle","getResolution","getBitrate","getPreferred","getTimestamps",
+   "getMpvArgs","getFfmpegStreamArgs","getFfmpegVideoArgs","getInternalData",
+   "getInitialized","copy$default"]),
+ # Lib 16 models.
+ ("animesource.model.Hoster", ["<init>","getHosterUrl","getHosterName","getVideoList",
+   "getInternalData","getLazy","Companion"]),
+ # Also called by every lib 14 extension, from a bundled getHosterList shim.
+ ("animesource.model.Hoster$Companion", ["toHosterList"]),
+ ("animesource.model.TimeStamp", ["<init>"]),
+ ("animesource.model.ChapterType", ["Opening","Ending"]),
+ ("animesource.model.FetchType", ["Seasons","Episodes"]),
+ ("animesource.model.AnimeUpdateStrategy", ["ALWAYS_UPDATE","ONLY_FETCH_ONCE"]),
  ("animesource.online.AnimeHttpSource", ["getHeaders","getId","getNetwork",
    "headersBuilder","setUrlWithoutDomain","getBaseUrl","getClient","generateId",
    # Related-anime suggestions. Extensions were already overriding these while
@@ -136,9 +152,14 @@ CHECKS = [
    # suggestions silently never appeared.
    "relatedAnimeListRequest","relatedAnimeListParse","fetchRelatedAnimeList",
    "getSupportsRelatedAnimes","getDisableRelatedAnimes",
-   "getDisableRelatedAnimesBySearch"]),
+   "getDisableRelatedAnimesBySearch",
+   # Lib 16 seasons and hosters. Overridden rather than called, so a missing one does not
+   # fail to link - the override is simply never dispatched to.
+   "getSeasonList","seasonListRequest","seasonListParse",
+   "getHosterList","hosterListRequest","hosterListParse",
+   "resolveVideo","sortHosters","sortVideos","getVideoUrl","videoUrlRequest"]),
  ("animesource.online.ParsedAnimeHttpSource", ["getHeaders","getNetwork",
-   "headersBuilder","setUrlWithoutDomain"]),
+   "headersBuilder","setUrlWithoutDomain","seasonListSelector","seasonFromElement"]),
  ("animesource.AnimeSource", ["getId","getName","getLang","getAnimeDetails",
    "getEpisodeList","getVideoList","fetchVideoList"]),
  ("animesource.AnimeCatalogueSource", ["getPopularAnime","getLatestUpdates",
@@ -147,7 +168,9 @@ CHECKS = [
  ("animesource.AnimeSourceFactory", ["createSources"]),
  ("network.NetworkHelper", ["getClient","defaultUserAgentProvider","getCloudflareClient"]),
  ("network.OkHttpExtensionsKt", ["await","awaitSuccess","asObservable","asObservableSuccess"]),
- ("network.RequestsKt", ["GET","POST"]),
+ # get/post are the lib 16 suspend helpers, called through get$default.
+ ("network.RequestsKt", ["GET","POST","get$default","post$default"]),
+ ("network.HttpException", ["getCode"]),
  ("network.interceptor.SpecificHostRateLimitInterceptorKt", ["rateLimitHost"]),
  ("network.interceptor.RateLimitInterceptorKt", ["rateLimit"]),
  ("util.JsoupExtensionsKt", ["asJsoup"]),
@@ -165,4 +188,4 @@ for cls, ms in CHECKS:
 print(f"verified {total} ABI members across {len(CHECKS)} classes")
 if fails:
     print("\n".join(fails)); sys.exit(1)
-print("ALL PRESENT - ABI satisfies the surveyed lib-14 extensions")
+print("ALL PRESENT - ABI satisfies the surveyed lib-14 and lib-16 extensions")

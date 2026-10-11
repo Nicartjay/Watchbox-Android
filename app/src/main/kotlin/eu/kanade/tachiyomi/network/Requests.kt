@@ -4,9 +4,11 @@ import okhttp3.CacheControl
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.MediaType
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
@@ -80,6 +82,32 @@ fun DELETE(
     .headers(headers)
     .cacheControl(cache)
     .build()
+
+/**
+ * Sends a GET and awaits a successful response. Added in lib 16.
+ *
+ * Extensions call these through their default-argument synthetics (`get$default`), so the
+ * parameter lists must stay exactly as they are.
+ */
+suspend fun OkHttpClient.get(
+    url: String,
+    headers: Headers = DEFAULT_HEADERS,
+    cache: CacheControl = DEFAULT_CACHE_CONTROL,
+): Response = newCall(GET(url, headers, cache)).awaitSuccess()
+
+suspend fun OkHttpClient.get(
+    url: HttpUrl,
+    headers: Headers = DEFAULT_HEADERS,
+    cache: CacheControl = DEFAULT_CACHE_CONTROL,
+): Response = newCall(GET(url, headers, cache)).awaitSuccess()
+
+/** Sends a POST and awaits a successful response. Added in lib 16. */
+suspend fun OkHttpClient.post(
+    url: String,
+    headers: Headers = DEFAULT_HEADERS,
+    body: RequestBody = DEFAULT_BODY,
+    cache: CacheControl = DEFAULT_CACHE_CONTROL,
+): Response = newCall(POST(url, headers, body, cache)).awaitSuccess()
 
 /** Convenience used by some extensions when posting JSON. */
 val JSON_MEDIA_TYPE: MediaType = "application/json; charset=utf-8".toMediaType()

@@ -256,7 +256,9 @@ data class EpisodeEntry(
      *
      * Parsed from the episode name rather than supplied by the extension API:
      * `getEpisodeList` returns one flat list with no season field, and sources that
-     * carry several seasons encode it in the name ("S3 E1 - Title").
+     * carry several seasons encode it in the name ("S3 E1 - Title"). The exception is a
+     * lib 16 entry split into seasons, whose episodes take the season they were listed
+     * under - see [inSeason].
      */
     val season: Int? = null,
     val dateUpload: Long,
@@ -463,7 +465,26 @@ internal fun SEpisode.toEntry(): EpisodeEntry = EpisodeEntry(
     season = parseSeason(name),
     dateUpload = date_upload,
     scanlator = scanlator?.takeIf { it.isNotBlank() },
+    // Lib 16 sources may describe and illustrate an episode themselves. TMDB still wins
+    // when it has the episode - see withArt - but a source with no TMDB match, such as a
+    // self-hosted library, would otherwise show bare titles.
+    stillUrl = preview_url?.takeIf { it.isNotBlank() },
+    overview = summary?.trim().orEmpty(),
 )
+
+/**
+ * Tags episodes with the season a lib 16 source listed them under.
+ *
+ * Only a whole, non-negative [seasonNumber] is used: `-1` means the entry is not a numbered
+ * season - a film in a box set, say - and a fractional one is an OVA slotted between
+ * seasons. Either way the episodes keep whatever season their names carry, so a box set
+ * reads as one list instead of a tab per film.
+ */
+internal fun List<EpisodeEntry>.inSeason(seasonNumber: Double): List<EpisodeEntry> {
+    if (seasonNumber < 0 || seasonNumber % 1.0 != 0.0) return this
+    val season = seasonNumber.toInt()
+    return map { it.copy(season = season) }
+}
 
 /**
  * Pulls a season number out of an episode name.
@@ -490,9 +511,11 @@ internal fun EpisodeEntry.withArt(
 ): EpisodeEntry {
     if (art == null) return this
     return copy(
-        stillUrl = art.stillUrl,
+        // The source's own still and synopsis are only a fallback, but TMDB lacking one for a
+        // single episode must not blank what the source supplied.
+        stillUrl = art.stillUrl ?: stillUrl,
         tmdbName = art.name.takeIf { it.isNotBlank() },
-        overview = art.overview,
+        overview = art.overview.ifBlank { overview },
         rating = art.rating,
         runtimeMinutes = art.runtimeMinutes,
         airDate = art.airDate,
@@ -500,7 +523,9 @@ internal fun EpisodeEntry.withArt(
 }
 
 internal fun Video.toStreamOption(): StreamOption {
-    val resolved = videoUrl ?: url
+    // A lib 14 source that never found the media URL leaves the sentinel; the page URL is
+    // the only thing left to try, as it was when the field was nullable.
+    val resolved = videoUrl.takeUnless { it == Video.UNRESOLVED_URL } ?: url
     return StreamOption(
         label = quality.ifBlank { "Default" },
         url = resolved,

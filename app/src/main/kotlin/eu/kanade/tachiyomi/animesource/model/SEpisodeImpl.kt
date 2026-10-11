@@ -19,6 +19,12 @@ class SEpisodeImpl : SEpisode {
 
     override var scanlator: String? = null
 
+    override var fillermark: Boolean = false
+
+    override var summary: String? = null
+
+    override var preview_url: String? = null
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is SEpisode) return false

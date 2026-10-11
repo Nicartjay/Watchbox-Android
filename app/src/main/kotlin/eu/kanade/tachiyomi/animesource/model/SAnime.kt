@@ -14,7 +14,7 @@ package eu.kanade.tachiyomi.animesource.model
  *
  * This package is therefore a from-scratch implementation of that ABI, written
  * against the signatures observed in real extension APKs from
- * `github.com/yuzono/anime-repo` (all of which report lib version 14).
+ * `github.com/yuzono/anime-repo`, which ships lib versions 14 and 16.
  * The fully-qualified names, member names and signatures are fixed by the ABI
  * and cannot be renamed or shaded; the behaviour behind them is ours.
  *
@@ -44,6 +44,23 @@ interface SAnime : java.io.Serializable {
 
     var thumbnail_url: String?
 
+    /** Wide artwork, when the source has one. */
+    var background_url: String?
+
+    /** Stored for the ABI only; see [AnimeUpdateStrategy]. */
+    var update_strategy: AnimeUpdateStrategy
+
+    /**
+     * Whether this entry holds episodes or seasons. Added in lib 16.
+     *
+     * A [FetchType.Seasons] entry has no episodes of its own: `getSeasonList` returns one
+     * [SAnime] per season, and each of those is asked for its episodes.
+     */
+    var fetch_type: FetchType
+
+    /** This entry's number as a season of another, or `-1` when it is not one. Lib 16. */
+    var season_number: Double
+
     /** True once details have been fetched, so the host can avoid refetching. */
     var initialized: Boolean
 
@@ -58,7 +75,9 @@ interface SAnime : java.io.Serializable {
         if (other.description != null) description = other.description
         if (other.genre != null) genre = other.genre
         if (other.thumbnail_url != null) thumbnail_url = other.thumbnail_url
+        if (other.background_url != null) background_url = other.background_url
         status = other.status
+        update_strategy = other.update_strategy
         if (!initialized) initialized = other.initialized
     }
 

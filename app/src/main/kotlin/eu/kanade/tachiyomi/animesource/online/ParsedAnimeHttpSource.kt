@@ -102,6 +102,20 @@ abstract class ParsedAnimeHttpSource : AnimeHttpSource() {
 
     protected abstract fun episodeFromElement(element: Element): SEpisode
 
+    // -------------------------------------------------------------- seasons
+
+    /** Lib 16. The selector pair has defaults because lib 14 sources implement neither. */
+    override fun seasonListParse(response: Response): List<SAnime> {
+        val document = response.asJsoup()
+        return document.select(seasonListSelector()).map { seasonFromElement(it) }
+    }
+
+    protected open fun seasonListSelector(): String =
+        throw UnsupportedOperationException("Not implemented")
+
+    protected open fun seasonFromElement(element: Element): SAnime =
+        throw UnsupportedOperationException("Not implemented")
+
     // --------------------------------------------------------------- videos
 
     override fun videoListParse(response: Response): List<eu.kanade.tachiyomi.animesource.model.Video> {

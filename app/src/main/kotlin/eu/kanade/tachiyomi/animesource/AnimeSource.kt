@@ -20,9 +20,12 @@ import rx.Observable
  * The host should always call the `suspend` methods and let the bridge handle
  * legacy sources.
  *
- * Deliberately *not* included: `getSeasonList` and the `Hoster` overloads. Those
- * arrived in lib 16, and declaring an abstract member the surveyed lib-14
- * extensions do not implement would raise `AbstractMethodError` at call time.
+ * Deliberately *not* included: `getSeasonList` and the `Hoster` overloads, which
+ * arrived in lib 16. Kotlin compiles an interface member to an abstract method even
+ * when it has a body, so declaring them here would raise `AbstractMethodError` for
+ * any source that implements this interface without them. They are declared on
+ * [eu.kanade.tachiyomi.animesource.online.AnimeHttpSource] instead, which every
+ * lib 16 extension in the default repo extends.
  *
  * See the note in [eu.kanade.tachiyomi.animesource.model.SAnime] for why this
  * package reproduces the Aniyomi ABI rather than inventing its own.

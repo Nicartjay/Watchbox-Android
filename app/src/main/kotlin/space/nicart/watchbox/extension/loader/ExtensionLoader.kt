@@ -43,14 +43,22 @@ object ExtensionLoader {
     /**
      * Supported extension library range.
      *
-     * Every extension in the default repo reports 14. The upper bound stops at
-     * 15 deliberately: lib 16 made `getSeasonList` abstract and replaced the
-     * video contract with `Hoster`, so a 16 extension would call members this
-     * app does not implement and die with `AbstractMethodError` mid-playback.
-     * Refusing to load it is the honest failure.
+     * The default repo ships 14 and 16. The upper bound stops at 16 deliberately:
+     * lib 17 moved browsing onto `AnimeSource` and made combined update calls
+     * abstract, so a 17 extension would call members this app does not implement
+     * and die with `AbstractMethodError`. Refusing to load it is the honest failure.
      */
     const val LIB_VERSION_MIN = 12.0
-    const val LIB_VERSION_MAX = 15.0
+    const val LIB_VERSION_MAX = 16.0
+
+    /**
+     * First library version that lists streams through hosters.
+     *
+     * Keyed on the declared version rather than probed for, because lib 14
+     * extensions bundle a `getHosterList` of their own and look the same to
+     * reflection.
+     */
+    const val LIB_VERSION_HOSTERS = 16.0
 
     private const val PRIVATE_DIR = "extensions"
     private const val PRIVATE_SUFFIX = ".apk"

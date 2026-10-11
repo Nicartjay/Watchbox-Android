@@ -322,9 +322,12 @@ python3 tools/verify-extension-abi.py               # compiled classes
 python3 tools/verify-release-abi.py <release.apk>   # after minification
 ```
 
-**Supported API:** library versions **12–15**. Lib 16 is deliberately rejected — it
-made `getSeasonList` abstract and replaced the video contract with `Hoster`, so a 16
-extension would call members this app does not implement.
+**Supported API:** library versions **12–16**. Lib 16 lists streams through `Hoster`s
+and can split an entry into seasons; hosters are folded into the same progressive
+stream list as every other source, and seasons into the detail page's season tabs.
+Lib 17 is deliberately rejected — it moved browsing onto `AnimeSource` and made
+combined update calls abstract, so a 17 extension would call members this app does
+not implement.
 
 <details>
 <summary><b>Known limitations</b></summary>
