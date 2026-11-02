@@ -19,6 +19,7 @@ import space.nicart.watchbox.AppContainer
 import space.nicart.watchbox.data.local.AppSettings
 import space.nicart.watchbox.data.local.WatchHistoryEntry
 import space.nicart.watchbox.domain.AnimeCard
+import space.nicart.watchbox.extension.SourceCollection
 import space.nicart.watchbox.ui.detail.DetailScreen
 import space.nicart.watchbox.ui.detail.DetailViewModel
 import space.nicart.watchbox.ui.extensions.ExtensionsScreen
@@ -26,6 +27,7 @@ import space.nicart.watchbox.ui.extensions.ExtensionsViewModel
 import space.nicart.watchbox.ui.library.LibraryScreen
 import space.nicart.watchbox.ui.library.LibraryViewModel
 import space.nicart.watchbox.ui.navigation.AppTab
+import space.nicart.watchbox.ui.navigation.extensionCollection
 import space.nicart.watchbox.ui.navigation.Routes
 import space.nicart.watchbox.ui.player.PlayerScreen
 import space.nicart.watchbox.ui.player.PlayerViewModel
@@ -120,6 +122,7 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
                             animeUrl = route.animeUrl,
                             episodeUrl = episode.url,
                             resumeMs = resumeMs,
+                            sourceName = viewModel.uiState.value.detail?.sourceName.orEmpty(),
                         ),
                     )
                 },
@@ -140,6 +143,7 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
                     route.animeUrl,
                     route.episodeUrl,
                     route.resumeMs,
+                    savedSourceName = route.sourceName,
                 ),
             )
             val settings by container.store.settings
@@ -186,12 +190,14 @@ fun TvApp(container: AppContainer, modifier: Modifier = Modifier) {
             )
         }
 
-        composable<Routes.Extensions> {
+        composable<Routes.Extensions> { entry ->
+            val route = entry.toRoute<Routes.Extensions>()
             val viewModel: ExtensionsViewModel = viewModel(
-                key = "extensions",
+                key = "extensions-${route.collection}",
                 factory = ExtensionsViewModel.factory(
                     container.extensionManager,
                     container.store,
+                    route.collection,
                 ),
             )
             ExtensionsScreen(
@@ -297,6 +303,7 @@ private fun TvTabContent(
                 // Switches tab rather than navigating: repositories live in the
                 // Settings tab, which is not a nav destination.
                 onOpenSettings = { onSelectTab(AppTab.SETTINGS) },
+                onOpenShortReels = { onSelectTab(AppTab.SHORT_REELS) },
                 pickerOpen = pickerOpen,
                 onPlay = { request ->
                     navController.navigate(
@@ -305,6 +312,7 @@ private fun TvTabContent(
                             animeUrl = request.animeUrl,
                             episodeUrl = request.episodeUrl,
                             resumeMs = request.resumeMs,
+                            sourceName = container.extensionManager.sourceById(request.sourceId)?.name.orEmpty(),
                         ),
                     )
                 },
@@ -318,6 +326,7 @@ private fun TvTabContent(
                     container.repository,
                     container.store,
                     container.extensionManager,
+                    SourceCollection.STANDARD,
                 ),
             )
             // Search follows the rail's source rather than querying everything: on a
@@ -329,29 +338,30 @@ private fun TvTabContent(
             )
             val tvSourceId = settings?.tvSourceId
             LaunchedEffect(tvSourceId) {
-                if (tvSourceId != null) viewModel.onSelectSource(tvSourceId)
+                viewModel.onSelectSource(tvSourceId)
             }
 
             TvSearchScreen(viewModel = viewModel, onOpenAnime = openAnime)
         }
 
-        AppTab.BROWSE -> {
+        AppTab.BROWSE, AppTab.SHORT_REELS -> {
+            val collection = tab.extensionCollection()
             val viewModel: SourceListViewModel = viewModel(
-                key = "sources",
-                factory = SourceListViewModel.factory(container.extensionManager),
+                key = "sources-$collection",
+                factory = SourceListViewModel.factory(container.extensionManager, collection),
             )
-            val updateCount by container.extensionManager.updateCount
+            val updateCounts by container.extensionManager.updateCounts
                 .collectAsStateWithLifecycle()
 
             TvSourceListScreen(
                 viewModel = viewModel,
-                updateCount = updateCount,
+                updateCount = updateCounts.forCollection(collection),
                 onOpenSource = { source ->
                     navController.navigate(
                         Routes.SourceBrowse(source.id, source.name),
                     )
                 },
-                onOpenExtensions = { navController.navigate(Routes.Extensions) },
+                onOpenExtensions = { navController.navigate(Routes.Extensions(collection)) },
             )
         }
 
@@ -374,6 +384,7 @@ private fun TvTabContent(
                             sourceId = entry.sourceId,
                             animeUrl = entry.animeUrl,
                             episodeUrl = entry.episodeUrl,
+                            sourceName = entry.sourceName,
                         ),
                     )
                 },
@@ -408,6 +419,7 @@ private fun NavHostController.openPlayer(entry: WatchHistoryEntry) {
             animeUrl = entry.animeUrl,
             episodeUrl = entry.episodeUrl,
             resumeMs = entry.positionMs,
+            sourceName = entry.sourceName,
         ),
     )
 }

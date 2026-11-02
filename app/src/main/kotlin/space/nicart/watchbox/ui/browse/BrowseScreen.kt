@@ -52,7 +52,10 @@ import space.nicart.watchbox.core.ui.gridColumnsScaled
 import space.nicart.watchbox.core.ui.LocalPosterScale
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.domain.AnimeCard
+import space.nicart.watchbox.extension.SourceCollection
+import space.nicart.watchbox.extension.contentGroups
 import space.nicart.watchbox.ui.components.NavOverlayPadding
+import space.nicart.watchbox.ui.components.ShortsReelsBadge
 import space.nicart.watchbox.ui.components.openInBrowser
 import space.nicart.watchbox.ui.components.WbBackButton
 import space.nicart.watchbox.ui.extensions.ExtensionIconSlot
@@ -79,6 +82,10 @@ fun SourceListScreen(
 ) {
     val sources by viewModel.sources.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
+    val shortReels = viewModel.collection == SourceCollection.SHORT_REELS
+    val groups = remember(sources, viewModel.collection) {
+        contentGroups(sources, viewModel.collection) { it.isShortReels }
+    }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val padding = sectionHorizontalPadding(maxWidth)
@@ -100,7 +107,20 @@ fun SourceListScreen(
         ) {
             item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
                 Box(modifier = Modifier.statusBarsPadding().padding(top = 10.dp)) {
-                    WbScreenHeader(title = stringResource(R.string.title_browse))
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        WbScreenHeader(
+                            title = stringResource(
+                                if (shortReels) R.string.nav_short_reels else R.string.title_browse,
+                            ),
+                        )
+                        if (shortReels) {
+                            Text(
+                                text = stringResource(R.string.short_reels_providers_body),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = tokens.colors.textSecondary,
+                            )
+                        }
+                    }
                 }
             }
 
@@ -156,24 +176,35 @@ fun SourceListScreen(
             if (sources.isEmpty()) {
                 item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
                     WbEmptyState(
-                        title = stringResource(R.string.empty_no_sources_title),
-                        body = stringResource(R.string.empty_no_sources_body),
+                        title = stringResource(
+                            if (shortReels) R.string.empty_short_reels_title
+                            else R.string.empty_no_sources_title,
+                        ),
+                        body = stringResource(
+                            if (shortReels) R.string.empty_short_reels_body
+                            else R.string.empty_no_sources_body,
+                        ),
                         actionLabel = stringResource(R.string.action_browse_extensions),
                         onAction = onOpenExtensions,
                     )
                 }
             } else {
-                item(key = "sources-label", span = { GridItemSpan(maxLineSpan) }) {
-                    Text(
-                        text = stringResource(R.string.title_sources).uppercase(),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = tokens.colors.textMuted,
-                        modifier = Modifier.padding(top = 10.dp, start = 4.dp),
-                    )
-                }
-
-                items(items = sources, key = { it.id }) { source ->
-                    SourceTile(source = source, onClick = { onOpenSource(source) })
+                groups.forEach { group ->
+                    item(key = "sources-${group.collection}", span = { GridItemSpan(maxLineSpan) }) {
+                        Text(
+                            text = stringResource(
+                                if (viewModel.collection != SourceCollection.ALL) R.string.title_sources
+                                else if (group.collection == SourceCollection.SHORT_REELS) R.string.extensions_short_reels
+                                else R.string.extensions_standard,
+                            ).uppercase(),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = tokens.colors.textMuted,
+                            modifier = Modifier.padding(top = 10.dp, start = 4.dp),
+                        )
+                    }
+                    items(items = group.items, key = { it.id }) { source ->
+                        SourceTile(source = source, onClick = { onOpenSource(source) })
+                    }
                 }
             }
         }
@@ -222,6 +253,8 @@ private fun SourceTile(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
+
+        if (source.isShortReels) ShortsReelsBadge()
 
         if (source.lang.isNotBlank()) {
             Text(

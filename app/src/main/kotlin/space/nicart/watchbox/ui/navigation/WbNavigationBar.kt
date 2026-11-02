@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import space.nicart.watchbox.core.ui.WbTokens
 import space.nicart.watchbox.core.ui.wb
+import space.nicart.watchbox.extension.ExtensionUpdateCounts
 
 /**
  * The floating pill bottom navigation.
@@ -106,7 +107,8 @@ fun WbNavigationBar(
     onSelect: (AppTab) -> Unit,
     modifier: Modifier = Modifier,
     scrollState: WbNavBarScrollState = rememberWbNavBarScrollState(),
-    browseUpdateCount: Int = 0,
+    updateCounts: ExtensionUpdateCounts = ExtensionUpdateCounts(),
+    tabs: List<AppTab> = appTabs(showShortReels = false),
 ) {
     val tokens = MaterialTheme.wb
     val labelsVisible = scrollState.labelsVisible
@@ -144,12 +146,14 @@ fun WbNavigationBar(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AppTab.entries.forEach { tab ->
+            tabs.forEach { tab ->
                 WbNavItem(
                     tab = tab,
                     selected = tab == selected,
                     labelFraction = labelFraction,
-                    badgeCount = browseUpdateCount.takeIf { tab == AppTab.BROWSE } ?: 0,
+                    badgeCount = navigationUpdateCount(
+                        tab, updateCounts, separateShortReels = AppTab.SHORT_REELS in tabs,
+                    ),
                     onClick = { onSelect(tab) },
                     modifier = Modifier.weight(1f),
                 )

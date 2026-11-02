@@ -14,6 +14,7 @@ import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.AnimeRow
 import space.nicart.watchbox.domain.friendlyMessage
 import space.nicart.watchbox.extension.ExtensionManager
+import space.nicart.watchbox.extension.SourceCollection
 
 data class SearchUiState(
     val query: String = "",
@@ -51,6 +52,7 @@ class SearchViewModel(
     private val repository: AnimeRepository,
     private val store: WatchBoxStore,
     private val extensions: ExtensionManager,
+    private val collection: SourceCollection = SourceCollection.ALL,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SearchUiState())
@@ -64,13 +66,13 @@ class SearchViewModel(
                 _uiState.value = _uiState.value.copy(recentSearches = terms)
             }
         }
-        _uiState.value = _uiState.value.copy(hasNoSources = !repository.hasSources())
+        _uiState.value = _uiState.value.copy(hasNoSources = !repository.hasSources(collection))
 
         // Rebuilt when extensions change so installing one updates the picker
         // without leaving the screen.
         viewModelScope.launch {
             extensions.installed.collect {
-                val sources = extensions.catalogueSources()
+                val sources = extensions.catalogueSources(collection)
                     .map { source -> SearchSource(source.id, source.name) }
 
                 _uiState.value = _uiState.value.copy(
@@ -92,6 +94,9 @@ class SearchViewModel(
      * keystroke, since changing scope is itself the request.
      */
     fun onSelectSource(sourceId: Long?) {
+        if (sourceId != null &&
+            !collection.includes(extensions.isShortReelsSource(sourceId))
+        ) return
         if (sourceId == _uiState.value.selectedSourceId) return
         _uiState.value = _uiState.value.copy(selectedSourceId = sourceId)
 
@@ -146,7 +151,7 @@ class SearchViewModel(
 
         var errorMessage: String? = null
         val rows = if (sourceId == null) {
-            repository.searchAll(query)
+            repository.searchAll(query, collection)
         } else {
             // Wrapped in the same row shape so the results list renders
             // identically whether one source or all were queried.
@@ -202,10 +207,11 @@ class SearchViewModel(
             repository: AnimeRepository,
             store: WatchBoxStore,
             extensions: ExtensionManager,
+            collection: SourceCollection = SourceCollection.ALL,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                SearchViewModel(repository, store, extensions) as T
+                SearchViewModel(repository, store, extensions, collection) as T
         }
     }
 }

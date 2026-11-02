@@ -9,6 +9,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,7 +43,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.wb
+import space.nicart.watchbox.core.ui.adaptiveFocus
+import space.nicart.watchbox.core.ui.rememberFocusInteraction
+import space.nicart.watchbox.core.ui.tvInitialFocus
 import space.nicart.watchbox.data.local.ExtensionRepo
+import space.nicart.watchbox.extension.SourceCollection
 
 /**
  * Filter panel for the extension list.
@@ -62,11 +67,15 @@ fun ExtensionFilterPanel(
     visible: Boolean,
     onToggleLanguage: (String) -> Unit,
     onSetNsfw: (NsfwFilter) -> Unit,
+    onSetCollection: (SourceCollection) -> Unit,
     onToggleRepo: (String) -> Unit,
     onReset: () -> Unit,
     onDismiss: () -> Unit,
+    showContentTypes: Boolean = true,
 ) {
     val tokens = MaterialTheme.wb
+    val closeInteraction = rememberFocusInteraction()
+    val resetInteraction = rememberFocusInteraction()
 
     // Closes the drawer instead of leaving the Extensions screen. See the note in
     // SourceFilterPanel: KEYCODE_BACK never reaches the view tree once
@@ -99,7 +108,8 @@ fun ExtensionFilterPanel(
                     .clip(RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
                     .background(tokens.colors.surfaceElevated)
                     .statusBarsPadding()
-                    .padding(20.dp),
+                    .padding(20.dp)
+                    .tvInitialFocus(),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -113,11 +123,17 @@ fun ExtensionFilterPanel(
                     )
                     Icon(
                         imageVector = Icons.Rounded.Close,
-                        contentDescription = null,
+                        contentDescription = stringResource(R.string.extensions_filter_close),
                         tint = tokens.colors.textMuted,
                         modifier = Modifier
-                            .size(22.dp)
-                            .clickable(onClick = onDismiss),
+                            .size(40.dp)
+                            .adaptiveFocus(closeInteraction, RoundedCornerShape(10.dp), scale = false)
+                            .clickable(
+                                interactionSource = closeInteraction,
+                                indication = LocalIndication.current,
+                                onClick = onDismiss,
+                            )
+                            .padding(9.dp),
                     )
                 }
 
@@ -128,6 +144,18 @@ fun ExtensionFilterPanel(
                         .weight(1f)
                         .verticalScroll(rememberScrollState()),
                 ) {
+                    if (showContentTypes) {
+                        FilterSectionLabel(stringResource(R.string.extensions_filter_type))
+                        SourceCollection.entries.forEach { option ->
+                            FilterOptionRow(
+                                label = stringResource(option.labelRes()),
+                                selected = filters.collection == option,
+                                onClick = { onSetCollection(option) },
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                    }
+
                     FilterSectionLabel(stringResource(R.string.extensions_filter_nsfw))
                     NsfwFilter.entries.forEach { option ->
                         FilterOptionRow(
@@ -172,11 +200,16 @@ fun ExtensionFilterPanel(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .adaptiveFocus(resetInteraction, RoundedCornerShape(12.dp), scale = false)
                         .clip(RoundedCornerShape(12.dp))
                         .background(
                             if (filters.isActive) tokens.colors.accent else tokens.colors.surface,
                         )
-                        .clickable(onClick = onReset)
+                        .clickable(
+                            interactionSource = resetInteraction,
+                            indication = LocalIndication.current,
+                            onClick = onReset,
+                        )
                         .padding(vertical = 12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -202,6 +235,12 @@ private fun NsfwFilter.labelRes(): Int = when (this) {
     NsfwFilter.ONLY -> R.string.extensions_filter_nsfw_only
 }
 
+private fun SourceCollection.labelRes(): Int = when (this) {
+    SourceCollection.ALL -> R.string.extensions_filter_type_all
+    SourceCollection.STANDARD -> R.string.extensions_filter_type_standard
+    SourceCollection.SHORT_REELS -> R.string.extensions_short_reels
+}
+
 @Composable
 private fun FilterSectionLabel(text: String) {
     Text(
@@ -220,14 +259,21 @@ private fun FilterOptionRow(
     enabled: Boolean = true,
 ) {
     val tokens = MaterialTheme.wb
+    val interaction = rememberFocusInteraction()
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp)
+            .adaptiveFocus(interaction, RoundedCornerShape(10.dp), scale = false)
             .clip(RoundedCornerShape(10.dp))
             .background(if (selected) tokens.colors.accent else tokens.colors.surface)
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(
+                enabled = enabled,
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),

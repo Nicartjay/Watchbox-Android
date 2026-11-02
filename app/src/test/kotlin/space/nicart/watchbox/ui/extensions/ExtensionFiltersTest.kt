@@ -1,5 +1,9 @@
 package space.nicart.watchbox.ui.extensions
 
+import eu.kanade.tachiyomi.animesource.AnimeSource
+import space.nicart.watchbox.extension.SourceCollection
+import space.nicart.watchbox.extension.isShortReels
+import space.nicart.watchbox.extension.model.AvailableSource
 import space.nicart.watchbox.extension.model.Extension
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -22,6 +26,7 @@ class ExtensionFiltersTest {
         lang: String = "en",
         isNsfw: Boolean = false,
         repoUrl: String = REPO_A,
+        sources: List<AvailableSource> = emptyList(),
     ) = Extension.Available(
         name = name,
         pkgName = "eu.kanade.tachiyomi.animeextension.$lang.${name.lowercase()}",
@@ -34,6 +39,7 @@ class ExtensionFiltersTest {
         iconUrl = "https://example.invalid/icon.png",
         apkUrl = "https://example.invalid/$name.apk",
         repoUrl = repoUrl,
+        sources = sources,
     )
 
     private fun installed(name: String, lang: String = "en", isNsfw: Boolean = false) =
@@ -169,6 +175,175 @@ class ExtensionFiltersTest {
     fun `a blank query does not mark the set active`() {
         // Otherwise the filter button highlights while nothing is filtered.
         assertFalse(ExtensionFilters(query = "   ").isActive)
+    }
+
+    // ---------------------------------------------------------- content type
+
+    @Test
+    fun `Shorts Reels filter includes every Arvin suffix before installation`() {
+        val entries = catalogue + listOf(available("Arvin-HD"), available("Arvin-RF"), available("Arvin-XY"))
+        val result = entries.applyFilters(ExtensionFilters(collection = SourceCollection.SHORT_REELS))
+        assertEquals(listOf("Arvin-HD", "Arvin-RF", "Arvin-XY"), result.map { it.name })
+    }
+
+    @Test
+    fun `standard filter hides Arvin extensions`() {
+        val entries = catalogue + available("Arvin-HD")
+        assertEquals(
+            catalogue,
+            entries.applyFilters(ExtensionFilters(collection = SourceCollection.STANDARD)),
+        )
+    }
+
+    @Test
+    fun `all content types keeps standard and short form extensions`() {
+        val entries = catalogue + available("Arvin-HD")
+        assertEquals(entries, entries.applyFilters(ExtensionFilters(collection = SourceCollection.ALL)))
+    }
+
+    @Test
+    fun `installed extensions use the same content type filter`() {
+        val entries = listOf(installed("Rentaro"), installed("Arvin-HD"), installed("Arvin-RF"))
+        assertEquals(
+            listOf("Arvin-HD", "Arvin-RF"),
+            entries.applyFilters(ExtensionFilters(collection = SourceCollection.SHORT_REELS)).map { it.name },
+        )
+        assertEquals(
+            listOf("Rentaro"),
+            entries.applyFilters(ExtensionFilters(collection = SourceCollection.STANDARD)).map { it.name },
+        )
+    }
+
+    @Test
+    fun `content type combines with query language repository and adult filters`() {
+        val entries = catalogue + listOf(
+            available("Arvin-RF", lang = "en", repoUrl = REPO_A),
+            available("Arvin-HD", lang = "en", repoUrl = REPO_A, isNsfw = true),
+            available("Arvin-ND", lang = "en", repoUrl = REPO_B),
+            available("Arvin-KD", lang = "es", repoUrl = REPO_A),
+        )
+        val result = entries.applyFilters(
+            ExtensionFilters(
+                query = "arvin",
+                languages = setOf("en"),
+                repoUrls = setOf(REPO_A),
+                nsfw = NsfwFilter.HIDE,
+                collection = SourceCollection.SHORT_REELS,
+            ),
+        )
+        assertEquals(listOf("Arvin-RF"), result.map { it.name })
+    }
+
+    @Test
+    fun `content type filtering never changes the installed repository rule`() {
+        val entries = listOf(installed("Arvin-HD"), installed("Rentaro"))
+        val result = entries.applyFilters(
+            ExtensionFilters(collection = SourceCollection.SHORT_REELS, repoUrls = setOf(REPO_B)),
+        )
+        assertEquals(listOf("Arvin-HD"), result.map { it.name })
+    }
+
+    @Test
+    fun `choosing a content type highlights filters and All removes the restriction`() {
+        val active = ExtensionFilters(collection = SourceCollection.SHORT_REELS)
+        assertTrue(active.isActive)
+        assertTrue(ExtensionFilters(collection = SourceCollection.STANDARD).isActive)
+        assertFalse(active.copy(collection = SourceCollection.ALL).isActive)
+    }
+
+    @Test
+    fun `Arvin classification ignores status badges`() {
+        val entry = installed("Arvin-HD", isNsfw = true).copy(hasUpdate = true, isObsolete = true)
+        assertTrue(entry.isShortReels)
+        assertEquals(
+            listOf(entry),
+            listOf(entry).applyFilters(ExtensionFilters(collection = SourceCollection.SHORT_REELS)),
+        )
+        assertFalse(installed("Rentaro").copy(hasUpdate = true).isShortReels)
+    }
+
+    @Test
+    fun `repository source metadata can identify a short form bundle`() {
+        val bundle = available(
+            "Provider bundle",
+            sources = listOf(AvailableSource(1L, "Arvin-XY", "en", "https://example.invalid")),
+        )
+        assertTrue(bundle.isShortReels)
+        assertEquals(
+            listOf(bundle),
+            listOf(bundle).applyFilters(ExtensionFilters(collection = SourceCollection.SHORT_REELS)),
+        )
+    }
+
+    @Test
+    fun `installed source metadata can identify the same short form bundle`() {
+        val source = object : AnimeSource {
+            override val id = 1L
+            override val name = "Arvin-XY"
+        }
+        val bundle = installed("Provider bundle").copy(sources = listOf(source))
+        assertTrue(bundle.isShortReels)
+        assertTrue(
+            listOf(bundle).applyFilters(ExtensionFilters(collection = SourceCollection.STANDARD)).isEmpty(),
+        )
+    }
+
+    @Test
+    fun `an Arvin mention in the middle of a name is not a short form tag`() {
+        assertFalse(available("My Arvin-HD").isShortReels)
+        assertFalse(available("ArvinHD").isShortReels)
+        assertTrue(available(" arvin-hd ").isShortReels)
+    }
+
+    @Test
+    fun `Short Reels scope restricts installed and available lists with no manual filters`() {
+        val filters = ExtensionFilters()
+        assertEquals(
+            listOf("Arvin-HD"),
+            listOf(installed("Rentaro"), installed("Arvin-HD"))
+                .applyFilters(filters, scope = SourceCollection.SHORT_REELS).map { it.name },
+        )
+        assertEquals(
+            listOf("Arvin-RF"),
+            listOf(available("Cineby"), available("Arvin-RF"))
+                .applyFilters(filters, scope = SourceCollection.SHORT_REELS).map { it.name },
+        )
+    }
+
+    @Test
+    fun `Browse scope always hides shorts even when All types is selected`() {
+        val entries = catalogue + available("Arvin-HD")
+        assertEquals(
+            catalogue,
+            entries.applyFilters(ExtensionFilters(), scope = SourceCollection.STANDARD),
+        )
+    }
+
+    @Test
+    fun `clearing filters cannot widen the Short Reels scope`() {
+        val entries = listOf(available("Rentaro"), available("Arvin-HD"))
+        val cleared = ExtensionFilters()
+        assertEquals(
+            listOf("Arvin-HD"),
+            entries.applyFilters(cleared, scope = SourceCollection.SHORT_REELS).map { it.name },
+        )
+    }
+
+    @Test
+    fun `an opposite manual filter cannot leak extensions from another scope`() {
+        val entries = listOf(available("Rentaro"), available("Arvin-HD"))
+        assertTrue(
+            entries.applyFilters(
+                ExtensionFilters(collection = SourceCollection.STANDARD),
+                scope = SourceCollection.SHORT_REELS,
+            ).isEmpty(),
+        )
+        assertTrue(
+            entries.applyFilters(
+                ExtensionFilters(collection = SourceCollection.SHORT_REELS),
+                scope = SourceCollection.STANDARD,
+            ).isEmpty(),
+        )
     }
 
     // ----------------------------------------------------- offered languages

@@ -3,14 +3,15 @@ package space.nicart.watchbox.ui.tv
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.extension.ExtensionManager
+import space.nicart.watchbox.extension.SourceCollection
 import space.nicart.watchbox.ui.browse.SourceEntry
+import space.nicart.watchbox.ui.browse.sourceEntries
 
 /**
  * The source chosen in the TV navigation rail.
@@ -54,34 +55,30 @@ class TvSourceViewModel(
             // Re-derived whenever extensions change, so installing one appears in the
             // rail without leaving the screen.
             extensions.installed.collect { installed ->
-                val sources = installed.flatMap { extension ->
-                    extension.sources
-                        .filterIsInstance<AnimeCatalogueSource>()
-                        .map { source ->
-                            SourceEntry(
-                                id = source.id,
-                                name = source.name,
-                                lang = source.lang,
-                                supportsLatest = runCatching { source.supportsLatest }
-                                    .getOrDefault(false),
-                                icon = extension.icon,
-                            )
-                        }
-                }.sortedBy { it.name.lowercase() }
+                val sources = installed.sourceEntries(SourceCollection.STANDARD)
 
                 _sources.value = sources
 
                 // The stored choice wins on first load, then the live one, so a reload
                 // does not move the user's feed. Falls back to the first source: the rail
                 // must always name something once anything is installed.
-                val wanted = _selected.value?.id ?: store.currentSettings().tvSourceId
+                val stored = store.currentSettings().tvSourceId
+                val wanted = _selected.value?.id ?: stored
                 _selected.value = sources.firstOrNull { it.id == wanted }
                     ?: sources.firstOrNull()
+                // Migrate an old Arvin selection so Home and Search cannot keep using
+                // a provider that now lives exclusively in Short/Reels.
+                // The initial empty emission precedes extension loading; do not erase
+                // the saved choice before its source has had a chance to load.
+                if (installed.isNotEmpty() && stored != _selected.value?.id) {
+                    store.setTvSourceId(_selected.value?.id)
+                }
             }
         }
     }
 
     fun select(source: SourceEntry) {
+        if (source.isShortReels) return
         if (source.id == _selected.value?.id) return
         _selected.value = source
         viewModelScope.launch { store.setTvSourceId(source.id) }

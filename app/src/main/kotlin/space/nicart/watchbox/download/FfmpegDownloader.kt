@@ -146,7 +146,7 @@ class FfmpegDownloader(private val context: Context) {
             FFmpegKitConfig.parseArguments(
                 headerArg +
                     "-v quiet -show_entries format=duration " +
-                    "-of default=noprint_wrappers=1:nokey=1 \"${stream.url}\"",
+                    "-of default=noprint_wrappers=1:nokey=1 \"${ffmpegInputUrl(stream.url)}\"",
             ),
         )
 
@@ -188,7 +188,7 @@ class FfmpegDownloader(private val context: Context) {
                 add(headerArg)
             }
             add("-i")
-            add("\"$url\"")
+            add("\"${ffmpegInputUrl(url)}\"")
         }.joinToString(" ")
 
         val subtitleTracks = stream.subtitles.filter { it.url.isNotBlank() }

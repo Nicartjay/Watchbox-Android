@@ -19,6 +19,9 @@ import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.friendlyMessage
 import space.nicart.watchbox.extension.ExtensionManager
+import space.nicart.watchbox.extension.SourceCollection
+import space.nicart.watchbox.extension.isShortReelsProvider
+import space.nicart.watchbox.extension.model.Extension
 
 /** One installed, browsable source. */
 data class SourceEntry(
@@ -34,7 +37,27 @@ data class SourceEntry(
      * walking the installed list.
      */
     val icon: Drawable? = null,
+    val isShortReels: Boolean = isShortReelsProvider(name),
 )
+
+/** Keep the source/extension classification identical in Browse and the TV picker. */
+fun List<Extension.Installed>.sourceEntries(
+    collection: SourceCollection = SourceCollection.ALL,
+): List<SourceEntry> = flatMap { extension ->
+    extension.sources
+        .filterIsInstance<AnimeCatalogueSource>()
+        .map { source ->
+            SourceEntry(
+                id = source.id,
+                name = source.name,
+                lang = source.lang,
+                supportsLatest = runCatching { source.supportsLatest }.getOrDefault(false),
+                icon = extension.icon,
+                isShortReels = isShortReelsProvider(source.name, extension.name),
+            )
+        }
+}.filter { collection.includes(it.isShortReels) }
+    .sortedBy { it.name.lowercase() }
 
 /**
  * Which listing a source is being browsed by.
@@ -69,7 +92,10 @@ data class BrowseUiState(
 )
 
 /** Backs the source list on the Browse tab. */
-class SourceListViewModel(extensions: ExtensionManager) : ViewModel() {
+class SourceListViewModel(
+    extensions: ExtensionManager,
+    val collection: SourceCollection = SourceCollection.ALL,
+) : ViewModel() {
 
     /**
      * Built by walking the installed extensions rather than [ExtensionManager.catalogueSources],
@@ -77,24 +103,7 @@ class SourceListViewModel(extensions: ExtensionManager) : ViewModel() {
      * only place an icon can come from.
      */
     val sources: StateFlow<List<SourceEntry>> = extensions.installed
-        .map { installed ->
-            installed
-                .flatMap { extension ->
-                    extension.sources
-                        .filterIsInstance<AnimeCatalogueSource>()
-                        .map { source ->
-                            SourceEntry(
-                                id = source.id,
-                                name = source.name,
-                                lang = source.lang,
-                                supportsLatest = runCatching { source.supportsLatest }
-                                    .getOrDefault(false),
-                                icon = extension.icon,
-                            )
-                        }
-                }
-                .sortedBy { it.name.lowercase() }
-        }
+        .map { installed -> installed.sourceEntries(collection) }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -102,11 +111,14 @@ class SourceListViewModel(extensions: ExtensionManager) : ViewModel() {
         )
 
     companion object {
-        fun factory(extensions: ExtensionManager): ViewModelProvider.Factory =
+        fun factory(
+            extensions: ExtensionManager,
+            collection: SourceCollection = SourceCollection.ALL,
+        ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                    SourceListViewModel(extensions) as T
+                    SourceListViewModel(extensions, collection) as T
             }
     }
 }

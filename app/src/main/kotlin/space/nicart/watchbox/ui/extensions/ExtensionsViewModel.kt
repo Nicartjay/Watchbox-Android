@@ -13,6 +13,8 @@ import kotlinx.coroutines.launch
 import space.nicart.watchbox.data.local.ExtensionRepo
 import space.nicart.watchbox.data.local.WatchBoxStore
 import space.nicart.watchbox.extension.ExtensionManager
+import space.nicart.watchbox.extension.SourceCollection
+import space.nicart.watchbox.extension.isShortReels
 import space.nicart.watchbox.extension.model.Extension
 import space.nicart.watchbox.extension.model.InstallStep
 
@@ -84,6 +86,7 @@ internal fun Extension.matches(query: String): Boolean {
 class ExtensionsViewModel(
     private val extensions: ExtensionManager,
     private val store: WatchBoxStore,
+    val collection: SourceCollection = SourceCollection.ALL,
 ) : ViewModel() {
 
     private val _installing = MutableStateFlow<Map<String, InstallStep>>(emptyMap())
@@ -145,8 +148,8 @@ class ExtensionsViewModel(
             .filter { nsfwAllowed || !it.isNsfw }
 
         ExtensionsUiState(
-            installed = installed.applyFilters(local.filters),
-            available = visibleAvailable.applyFilters(local.filters),
+            installed = installed.applyFilters(local.filters, scope = collection),
+            available = visibleAvailable.applyFilters(local.filters, scope = collection),
             filters = local.filters,
             failures = failures
                 .filterNot { it.pkgName in local.dismissedFailures }
@@ -157,7 +160,9 @@ class ExtensionsViewModel(
             installing = local.installing,
             // Offered languages come from the unfiltered lists, or selecting one
             // would remove every other option from the panel.
-            languages = (installed + visibleAvailable).availableLanguages(),
+            languages = (installed + visibleAvailable)
+                .filter { collection.includes(it.isShortReels) }
+                .availableLanguages(),
             repos = local.repos,
             filterPanelOpen = local.panelOpen,
             partialRefresh = local.partial,
@@ -220,6 +225,11 @@ class ExtensionsViewModel(
 
     fun setNsfwFilter(filter: NsfwFilter) {
         _filters.value = _filters.value.copy(nsfw = filter)
+    }
+
+    fun setCollectionFilter(collection: SourceCollection) {
+        if (this.collection != SourceCollection.ALL) return
+        _filters.value = _filters.value.copy(collection = collection)
     }
 
     fun toggleRepo(repoUrl: String) {
@@ -313,10 +323,11 @@ class ExtensionsViewModel(
         fun factory(
             extensions: ExtensionManager,
             store: WatchBoxStore,
+            collection: SourceCollection = SourceCollection.ALL,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                ExtensionsViewModel(extensions, store) as T
+                ExtensionsViewModel(extensions, store, collection) as T
         }
     }
 }

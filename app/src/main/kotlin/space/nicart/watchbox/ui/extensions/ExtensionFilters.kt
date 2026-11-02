@@ -1,6 +1,8 @@
 package space.nicart.watchbox.ui.extensions
 
 import space.nicart.watchbox.extension.model.Extension
+import space.nicart.watchbox.extension.SourceCollection
+import space.nicart.watchbox.extension.isShortReels
 
 /**
  * The filters applied to the extension list.
@@ -16,6 +18,7 @@ data class ExtensionFilters(
     val nsfw: NsfwFilter = NsfwFilter.ALL,
     /** Repository URLs to keep. Empty means every repository. */
     val repoUrls: Set<String> = emptySet(),
+    val collection: SourceCollection = SourceCollection.ALL,
 ) {
 
     /**
@@ -28,7 +31,8 @@ data class ExtensionFilters(
         get() = query.isNotBlank() ||
             languages.isNotEmpty() ||
             nsfw != NsfwFilter.ALL ||
-            repoUrls.isNotEmpty()
+            repoUrls.isNotEmpty() ||
+            collection != SourceCollection.ALL
 }
 
 /**
@@ -50,11 +54,17 @@ enum class NsfwFilter { ALL, HIDE, ONLY }
  * share one implementation - two copies would inevitably drift, and a filter that
  * behaves differently in the two sections reads as a bug.
  */
-fun <T : Extension> List<T>.applyFilters(filters: ExtensionFilters): List<T> = filter { extension ->
-    extension.matches(filters.query) &&
+fun <T : Extension> List<T>.applyFilters(
+    filters: ExtensionFilters,
+    scope: SourceCollection = SourceCollection.ALL,
+): List<T> = filter { extension ->
+    // The screen's scope is not a user filter: Clear filters or All types cannot widen it.
+    scope.includes(extension.isShortReels) &&
+        extension.matches(filters.query) &&
         extension.matchesLanguage(filters.languages) &&
         extension.matchesNsfw(filters.nsfw) &&
-        extension.matchesRepo(filters.repoUrls)
+        extension.matchesRepo(filters.repoUrls) &&
+        filters.collection.includes(extension.isShortReels)
 }
 
 private fun Extension.matchesLanguage(languages: Set<String>): Boolean =

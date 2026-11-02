@@ -47,6 +47,7 @@ import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.tvFocusable
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.domain.AnimeCard
+import space.nicart.watchbox.extension.SourceCollection
 import androidx.compose.material.icons.rounded.FilterList
 import space.nicart.watchbox.core.ui.adaptiveFocus
 import space.nicart.watchbox.ui.browse.BrowseUiState
@@ -58,6 +59,7 @@ import space.nicart.watchbox.ui.browse.BrowseViewModel
 import space.nicart.watchbox.ui.browse.SourceEntry
 import space.nicart.watchbox.ui.browse.SourceListViewModel
 import space.nicart.watchbox.ui.components.WbAsyncImage
+import space.nicart.watchbox.ui.components.ShortsReelsBadge
 import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
 import space.nicart.watchbox.ui.extensions.ExtensionIconSlot
@@ -78,6 +80,7 @@ fun TvSourceListScreen(
 ) {
     val sources by viewModel.sources.collectAsStateWithLifecycle()
     val tokens = MaterialTheme.wb
+    val shortReels = viewModel.collection == SourceCollection.SHORT_REELS
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(
@@ -91,7 +94,9 @@ fun TvSourceListScreen(
     ) {
         item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
             Text(
-                text = stringResource(R.string.title_browse),
+                text = stringResource(
+                    if (shortReels) R.string.nav_short_reels else R.string.title_browse,
+                ),
                 style = MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.Bold,
                 color = tokens.colors.textPrimary,
@@ -106,8 +111,14 @@ fun TvSourceListScreen(
         if (sources.isEmpty()) {
             item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
                 WbEmptyState(
-                    title = stringResource(R.string.empty_no_sources_title),
-                    body = stringResource(R.string.empty_no_sources_body),
+                    title = stringResource(
+                        if (shortReels) R.string.empty_short_reels_title
+                        else R.string.empty_no_sources_title,
+                    ),
+                    body = stringResource(
+                        if (shortReels) R.string.empty_short_reels_body
+                        else R.string.empty_no_sources_body,
+                    ),
                     actionLabel = stringResource(R.string.action_browse_extensions),
                     onAction = onOpenExtensions,
                 )
@@ -200,6 +211,8 @@ private fun TvSourceTile(source: SourceEntry, onClick: () -> Unit) {
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
+        if (source.isShortReels) ShortsReelsBadge()
+
         if (source.lang.isNotBlank()) {
             Text(
                 text = source.lang.uppercase(),

@@ -14,6 +14,18 @@ import kotlin.test.assertTrue
 class EpisodeRangesTest {
 
     @Test
+    fun `short dramas show every episode without range groups`() {
+        listOf(1, 50, 51, 120, 1000).forEach { count ->
+            assertTrue(episodeRanges(count, shortReels = true).isEmpty())
+        }
+    }
+
+    @Test
+    fun `ordinary series still use ranges of fifty`() {
+        assertEquals(listOf("1-50", "51-100", "101-120"), episodeRanges(120).map { it.label })
+    }
+
+    @Test
     fun `a short list gets no ranges`() {
         assertTrue(episodeRanges(1).isEmpty())
         assertTrue(episodeRanges(12).isEmpty())

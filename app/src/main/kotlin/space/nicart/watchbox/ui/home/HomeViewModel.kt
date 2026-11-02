@@ -20,6 +20,9 @@ import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.friendlyMessage
 import space.nicart.watchbox.domain.HomeFeed
 import space.nicart.watchbox.extension.ExtensionManager
+import space.nicart.watchbox.extension.SourceCollection
+import space.nicart.watchbox.ui.browse.SourceEntry
+import space.nicart.watchbox.ui.browse.sourceEntries
 
 data class HomeUiState(
     val isLoading: Boolean = true,
@@ -35,6 +38,8 @@ data class HomeUiState(
      * sending the user there is a dead end. They need to add a repository first.
      */
     val hasNoRepos: Boolean = false,
+    /** Installed short-form providers live in their own tab on tablets/TV. */
+    val hasOnlyShortReels: Boolean = false,
 )
 
 /** Continue Watching + My List, derived from persisted state. */
@@ -47,10 +52,26 @@ class HomeViewModel(
     private val repository: AnimeRepository,
     private val extensions: ExtensionManager,
     private val store: WatchBoxStore,
+    private val collection: SourceCollection = SourceCollection.ALL,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+
+    /** Available immediately, even when a provider's home feed is slow or unavailable. */
+    val shortReelsSources: StateFlow<List<SourceEntry>> = extensions.installed
+        .map { installed ->
+            if (collection == SourceCollection.ALL) {
+                installed.sourceEntries(SourceCollection.SHORT_REELS)
+            } else {
+                emptyList()
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList(),
+        )
 
     /**
      * Finished titles are dropped from Continue Watching — a completed episode
@@ -59,13 +80,21 @@ class HomeViewModel(
     val personal: StateFlow<HomePersonalState> = combine(
         store.history,
         store.watchlist,
-    ) { history, watchlist ->
+        extensions.installed,
+    ) { history, watchlist, _ ->
         HomePersonalState(
             continueWatching = history
+                .filter { entry ->
+                    collection.includes(extensions.isShortReelsSource(entry.sourceId, entry.sourceName))
+                }
                 .filterNot { it.isFinished }
                 .filter { it.progress > 0.005f }
                 .sortedByDescending { it.updatedAt },
-            myList = watchlist.sortedByDescending { it.addedAt },
+            myList = watchlist
+                .filter { entry ->
+                    collection.includes(extensions.isShortReelsSource(entry.sourceId, entry.sourceName))
+                }
+                .sortedByDescending { it.addedAt },
         )
     }.stateIn(
         scope = viewModelScope,
@@ -91,9 +120,7 @@ class HomeViewModel(
                 .map { it.repos.isNotEmpty() }
                 .distinctUntilChanged()
                 .collect { hasRepos ->
-                    if (_uiState.value.hasNoSources) {
-                        _uiState.value = _uiState.value.copy(hasNoRepos = !hasRepos)
-                    }
+                    _uiState.value = _uiState.value.copy(hasNoRepos = !hasRepos)
                 }
         }
 
@@ -118,11 +145,14 @@ class HomeViewModel(
         viewModelScope.launch {
             val hasRepos = store.currentSettings().repos.isNotEmpty()
 
-            if (!repository.hasSources()) {
+            if (!repository.hasSources(collection)) {
+                val onlyShortReels = collection == SourceCollection.STANDARD &&
+                    repository.hasSources(SourceCollection.SHORT_REELS)
                 _uiState.value = HomeUiState(
                     isLoading = false,
-                    hasNoSources = true,
+                    hasNoSources = !onlyShortReels,
                     hasNoRepos = !hasRepos,
+                    hasOnlyShortReels = onlyShortReels,
                     feed = null,
                 )
                 return@launch
@@ -133,14 +163,17 @@ class HomeViewModel(
                 isRefreshing = refresh,
                 errorMessage = null,
                 hasNoSources = false,
+                hasNoRepos = !hasRepos,
+                hasOnlyShortReels = false,
             )
 
-            repository.homeFeed()
+            repository.homeFeed(collection)
                 .onSuccess { feed ->
                     _uiState.value = HomeUiState(
                         isLoading = false,
                         isRefreshing = false,
                         feed = feed,
+                        hasNoRepos = !hasRepos,
                     )
                 }
                 .onFailure { error ->
@@ -166,10 +199,11 @@ class HomeViewModel(
             repository: AnimeRepository,
             extensions: ExtensionManager,
             store: WatchBoxStore,
+            collection: SourceCollection = SourceCollection.ALL,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                HomeViewModel(repository, extensions, store) as T
+                HomeViewModel(repository, extensions, store, collection) as T
         }
     }
 }

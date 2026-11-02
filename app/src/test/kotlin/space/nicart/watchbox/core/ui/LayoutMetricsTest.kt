@@ -19,6 +19,40 @@ import kotlin.test.assertTrue
  */
 class LayoutMetricsTest {
 
+    @Test
+    fun `touch tablets get tablet playback even in a TV flavor test run`() {
+        assertEquals(FormFactor.TABLET, playbackFormFactor(isTelevision = false, smallestWidthDp = 600))
+        assertEquals(FormFactor.TABLET, playbackFormFactor(isTelevision = false, smallestWidthDp = 1000))
+    }
+
+    @Test
+    fun `television playback never depends on the reported width`() {
+        assertEquals(FormFactor.TV, playbackFormFactor(isTelevision = true, smallestWidthDp = 400))
+        assertEquals(FormFactor.TV, playbackFormFactor(isTelevision = true, smallestWidthDp = 1080))
+    }
+
+    @Test
+    fun `small touch devices use phone playback`() {
+        assertEquals(FormFactor.COMPACT, playbackFormFactor(isTelevision = false, smallestWidthDp = 400))
+    }
+
+    @Test
+    fun `portrait tablets keep Short Reels even when their layout is compact`() {
+        assertTrue(usesShortReelsSection(FormFactor.COMPACT, smallestWidthDp = 600))
+        assertTrue(usesShortReelsSection(FormFactor.TABLET, smallestWidthDp = 800))
+    }
+
+    @Test
+    fun `rotating a phone into a wide layout does not move its providers out of Home`() {
+        assertFalse(usesShortReelsSection(FormFactor.TABLET, smallestWidthDp = 400))
+        assertFalse(usesShortReelsSection(FormFactor.COMPACT, smallestWidthDp = 400))
+    }
+
+    @Test
+    fun `TV always exposes the Short Reels section`() {
+        assertTrue(usesShortReelsSection(FormFactor.TV, smallestWidthDp = 540))
+    }
+
     // ------------------------------------------------------------------- tv
 
     @Test

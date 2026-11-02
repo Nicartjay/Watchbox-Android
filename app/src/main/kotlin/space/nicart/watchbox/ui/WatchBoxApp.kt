@@ -1,6 +1,7 @@
 package space.nicart.watchbox.ui
 
 import androidx.compose.animation.core.tween
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -12,16 +13,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
@@ -51,6 +55,11 @@ import space.nicart.watchbox.ui.library.LibraryViewModel
 import space.nicart.watchbox.ui.navigation.AppTab
 import space.nicart.watchbox.ui.navigation.Routes
 import space.nicart.watchbox.core.ui.LocalLayoutMetrics
+import space.nicart.watchbox.core.ui.usesShortReelsSection
+import space.nicart.watchbox.extension.SourceCollection
+import space.nicart.watchbox.ui.navigation.appTabs
+import space.nicart.watchbox.ui.navigation.backDestination
+import space.nicart.watchbox.ui.navigation.extensionCollection
 import space.nicart.watchbox.ui.navigation.WbNavigationRail
 import space.nicart.watchbox.ui.navigation.WbNavigationBar
 import space.nicart.watchbox.ui.navigation.rememberWbNavBarScrollState
@@ -115,7 +124,9 @@ fun WatchBoxApp(
                     onOpenAnime = navController::openAnime,
                     onPlayAnime = navController::playAnime,
                     onResume = navController::openPlayer,
-                    onOpenExtensions = { navController.navigate(Routes.Extensions) },
+                    onOpenExtensions = { collection ->
+                        navController.navigate(Routes.Extensions(collection))
+                    },
                     onOpenSource = { id, name ->
                         navController.navigate(Routes.SourceBrowse(id, name))
                     },
@@ -125,6 +136,7 @@ fun WatchBoxApp(
                                 sourceId = entry.sourceId,
                                 animeUrl = entry.animeUrl,
                                 episodeUrl = entry.episodeUrl,
+                                sourceName = entry.sourceName,
                             ),
                         )
                     },
@@ -167,6 +179,7 @@ fun WatchBoxApp(
                                 animeUrl = route.animeUrl,
                                 episodeUrl = episode.url,
                                 resumeMs = resumeMs,
+                                sourceName = viewModel.uiState.value.detail?.sourceName.orEmpty(),
                             ),
                         )
                     },
@@ -188,6 +201,7 @@ fun WatchBoxApp(
                         animeUrl = route.animeUrl,
                         episodeUrl = route.episodeUrl,
                         resumeMs = route.resumeMs,
+                        savedSourceName = route.sourceName,
                     ),
                 )
                 val playerSettings by container.store.settings
@@ -231,12 +245,14 @@ fun WatchBoxApp(
                 )
             }
 
-            composable<Routes.Extensions> {
+            composable<Routes.Extensions> { entry ->
+                val route = entry.toRoute<Routes.Extensions>()
                 val viewModel: ExtensionsViewModel = viewModel(
-                    key = "extensions",
+                    key = "extensions-${route.collection}",
                     factory = ExtensionsViewModel.factory(
                         container.extensionManager,
                         container.store,
+                        route.collection,
                     ),
                 )
                 ExtensionsScreen(
@@ -318,6 +334,7 @@ private fun NavHostController.openPlayer(entry: WatchHistoryEntry) {
             animeUrl = entry.animeUrl,
             episodeUrl = entry.episodeUrl,
             resumeMs = entry.positionMs,
+            sourceName = entry.sourceName,
         ),
     )
 }
@@ -334,18 +351,32 @@ private fun TabShell(
     container: AppContainer,
     onOpenAnime: (AnimeCard) -> Unit,
     onResume: (WatchHistoryEntry) -> Unit,
-    onOpenExtensions: () -> Unit,
+    onOpenExtensions: (SourceCollection) -> Unit,
     onOpenSource: (sourceId: Long, sourceName: String) -> Unit,
     /** Opens a title and starts it playing, for the home hero's primary action. */
     onPlayAnime: (AnimeCard) -> Unit,
     /** Opens one downloaded episode, from the Library's Downloads tab. */
     onPlayDownload: (DownloadEntry) -> Unit,
 ) {
-    var selectedTab by remember { mutableStateOf(AppTab.HOME) }
+    // Detail/player/extension routes dispose this shell; Back must restore its tab.
+    var selectedTab by rememberSaveable { mutableStateOf(AppTab.HOME) }
     val stateHolder = rememberSaveableStateHolder()
     val navScrollState = rememberWbNavBarScrollState()
+    BackHandler(enabled = selectedTab.backDestination() != null) {
+        selectedTab = selectedTab.backDestination() ?: AppTab.HOME
+        navScrollState.reveal()
+    }
     val metrics = LocalLayoutMetrics.current
-    val extensionUpdateCount by container.extensionManager.updateCount
+    val separateShortReels = usesShortReelsSection(
+        metrics.formFactor,
+        LocalConfiguration.current.smallestScreenWidthDp,
+    )
+    val homeCollection = if (separateShortReels) SourceCollection.STANDARD else SourceCollection.ALL
+    val tabs = appTabs(showShortReels = separateShortReels)
+    LaunchedEffect(tabs) {
+        if (selectedTab !in tabs) selectedTab = AppTab.HOME
+    }
+    val extensionUpdateCounts by container.extensionManager.updateCounts
         .collectAsStateWithLifecycle()
 
     val openSaved: (WatchlistEntry) -> Unit = { entry ->
@@ -371,11 +402,12 @@ private fun TabShell(
             when (selectedTab) {
                 AppTab.HOME -> {
                     val viewModel: HomeViewModel = viewModel(
-                        key = "home",
+                        key = "home-$homeCollection",
                         factory = HomeViewModel.factory(
                             container.repository,
                             container.extensionManager,
                             container.store,
+                            homeCollection,
                         ),
                     )
                     HomeScreen(
@@ -385,10 +417,12 @@ private fun TabShell(
                         onResume = onResume,
                         onOpenSaved = openSaved,
                         onBrowseSource = onOpenSource,
-                        onInstallExtensions = onOpenExtensions,
+                        onInstallExtensions = { onOpenExtensions(homeCollection) },
                         // Switches tab rather than navigating: repositories live in
                         // Settings, and the tabs are not nav destinations.
                         onOpenSettings = { selectedTab = AppTab.SETTINGS },
+                        onOpenShortReels = { selectedTab = AppTab.SHORT_REELS },
+                        showShortReelsSection = !separateShortReels,
                         navScrollState = navScrollState,
                     )
                 }
@@ -405,16 +439,17 @@ private fun TabShell(
                     SearchScreen(viewModel = viewModel, onOpenAnime = onOpenAnime)
                 }
 
-                AppTab.BROWSE -> {
+                AppTab.BROWSE, AppTab.SHORT_REELS -> {
+                    val collection = selectedTab.extensionCollection(separateShortReels)
                     val viewModel: SourceListViewModel = viewModel(
-                        key = "sources",
-                        factory = SourceListViewModel.factory(container.extensionManager),
+                        key = "sources-$collection",
+                        factory = SourceListViewModel.factory(container.extensionManager, collection),
                     )
                     SourceListScreen(
                         viewModel = viewModel,
                         onOpenSource = { onOpenSource(it.id, it.name) },
-                        onOpenExtensions = onOpenExtensions,
-                        updateCount = extensionUpdateCount,
+                        onOpenExtensions = { onOpenExtensions(collection) },
+                        updateCount = extensionUpdateCounts.forCollection(collection),
                     )
                 }
 
@@ -465,7 +500,8 @@ private fun TabShell(
                 // Always labelled here: unlike a TV there is no focus to expand on,
                 // and a tablet has the width to spare.
                 expanded = true,
-                browseUpdateCount = extensionUpdateCount,
+                updateCounts = extensionUpdateCounts,
+                tabs = tabs,
                 modifier = Modifier.align(Alignment.CenterStart),
             )
         } else {
@@ -476,7 +512,8 @@ private fun TabShell(
                     navScrollState.reveal()
                 },
                 scrollState = navScrollState,
-                browseUpdateCount = extensionUpdateCount,
+                updateCounts = extensionUpdateCounts,
+                tabs = tabs,
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }

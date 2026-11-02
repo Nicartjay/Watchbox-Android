@@ -35,6 +35,7 @@ import space.nicart.watchbox.data.remote.TmdbEpisodeArt
 import space.nicart.watchbox.data.remote.TmdbSuggestion
 import space.nicart.watchbox.data.remote.TmdbType
 import space.nicart.watchbox.extension.ExtensionManager
+import space.nicart.watchbox.extension.SourceCollection
 import space.nicart.watchbox.extension.loader.ExtensionLoader
 
 /**
@@ -66,6 +67,7 @@ class AnimeRepository(
      */
     private val trailerProvider: TrailerProvider = NoTrailers,
 ) {
+    private val metadataPolicy = SourceMetadataPolicy(extensions::isShortReelsSource)
 
     // ------------------------------------------------------------------ home
 
@@ -76,8 +78,11 @@ class AnimeRepository(
      * drawn from the first source's popular list and each source contributes one
      * rail. Sources are queried concurrently; slow or failing ones are dropped.
      */
-    suspend fun homeFeed(): Result<HomeFeed> = runCatching {
-        val sources = extensions.catalogueSources()
+    suspend fun homeFeed(
+        collection: SourceCollection = SourceCollection.ALL,
+    ): Result<HomeFeed> = runCatching {
+        // Filter before querying or selecting the hero, not just before rendering rows.
+        val sources = extensions.catalogueSources(collection)
         if (sources.isEmpty()) error(NO_SOURCES)
 
         sourceErrors.clear()
@@ -113,7 +118,8 @@ class AnimeRepository(
                 error(detail)
             }
 
-            // The spotlight is drawn at random from every source, not from the head of one row.
+            // The spotlight is drawn from normal sources only. Short dramas remain in
+            // the feed for their dedicated section, but never enter the hero/Featured pool.
             //
             // Taking the first row's opening titles meant the same handful every launch - a
             // catalogue's ordering barely moves - and no other source was ever represented.
@@ -135,10 +141,7 @@ class AnimeRepository(
             // expensive part (a TMDB request each), so the two are enriched together in
             // one pass rather than one after the other.
             val spotlight = coroutineScope {
-                val pool = rows.asSequence()
-                    .flatMap { it.items.asSequence() }
-                    .distinctBy { it.key }
-                    .toList()
+                val pool = homeSpotlightCandidates(rows, ::isShortReelsSource)
 
                 pool.shuffled(Random(heroSeed()))
                     .take(MAX_HERO + MAX_FEATURED)
@@ -187,7 +190,11 @@ class AnimeRepository(
 
     /** Overlays TMDB artwork on a card, keeping the source fields intact. */
     private suspend fun AnimeCard.enriched(): AnimeCard {
-        val art = guarded("tmdb($title)") { tmdbArtwork(url, title) } ?: return this
+        // Short dramas are not the similarly named films/series in TMDB.
+        if (isShortReelsSource(sourceId, sourceName)) return this
+        val art = guarded("tmdb($title)") {
+            tmdbArtwork(sourceId, sourceName, url, title)
+        } ?: return this
         return copy(
             backdropUrl = art.backdropUrl,
             heroBackdropUrl = art.heroBackdropUrl,
@@ -217,16 +224,18 @@ class AnimeRepository(
      * states the type, which is strictly better than inferring it.
      */
     private suspend fun tmdbArtwork(
+        sourceId: Long,
+        sourceName: String,
         url: String,
         title: String,
         preferMovie: Boolean = false,
-    ): TmdbArtwork? {
+    ): TmdbArtwork? = metadataPolicy.load(sourceId, sourceName, fallback = null) {
         TmdbApi.parseTmdbRef(url)?.let { (id, type) ->
             // Falls through to the title search when the id resolves to nothing:
             // an id can be stale, and no artwork at all is worse than a guess.
-            tmdb.lookupById(id, type)?.let { return it }
+            tmdb.lookupById(id, type)?.let { return@load it }
         }
-        return tmdb.lookup(title, preferMovie = preferMovie)
+        tmdb.lookup(title, preferMovie = preferMovie)
     }
 
     /**
@@ -388,16 +397,18 @@ class AnimeRepository(
      * Returns empty when the title has no TMDB match, which is the ordinary case for a
      * source-only entry rather than a failure.
      */
-    suspend fun extras(tmdbId: Int?, isMovie: Boolean, country: String): TmdbExtras {
-        if (tmdbId == null) return TmdbExtras()
-        return withContext(Dispatchers.IO) {
-            guarded("tmdbExtras($tmdbId)") {
-                tmdb.extras(
-                    id = tmdbId,
-                    type = if (isMovie) TmdbType.MOVIE else TmdbType.TV,
-                    country = country,
-                )
-            } ?: TmdbExtras()
+    suspend fun extras(detail: AnimeDetail, country: String): TmdbExtras {
+        val tmdbId = detail.tmdbId ?: return TmdbExtras()
+        return metadataPolicy.load(detail.sourceId, detail.sourceName, fallback = TmdbExtras()) {
+            withContext(Dispatchers.IO) {
+                guarded("tmdbExtras($tmdbId)") {
+                    tmdb.extras(
+                        id = tmdbId,
+                        type = if (detail.isMovie) TmdbType.MOVIE else TmdbType.TV,
+                        country = country,
+                    )
+                } ?: TmdbExtras()
+            }
         }
     }
 
@@ -422,20 +433,22 @@ class AnimeRepository(
      * Wikidata entity - and either may be the one that answers.
      */
     suspend fun withRatings(
+        detail: AnimeDetail,
         extras: TmdbExtras,
-        tmdbId: Int?,
-        isMovie: Boolean,
-    ): TmdbExtras {
+    ): TmdbExtras = metadataPolicy.load(
+        detail.sourceId, detail.sourceName, fallback = TmdbExtras(),
+    ) {
+        val tmdbId = detail.tmdbId
         val qid = extras.wikidataId
-        if (tmdbId == null && qid == null) return extras
-        return withContext(Dispatchers.IO) {
+        if (tmdbId == null && qid == null) return@load extras
+        withContext(Dispatchers.IO) {
             val ratings = guarded("ratings($tmdbId/$qid)") {
                 when (val provider = ratingProvider) {
                     // Prefers the richer source and falls through when it fails, which
                     // it does often - see SheguRatingApi.
                     is ChainedRatingApi -> provider.ratingsFor(
                         tmdbId = tmdbId ?: 0,
-                        isMovie = isMovie,
+                        isMovie = detail.isMovie,
                         wikidataId = qid,
                     )
                     else -> provider.ratings(wikidataId = qid, imdbId = null)
@@ -452,11 +465,17 @@ class AnimeRepository(
      * one with no TMDB match at all - the caller shows the backdrop either way, so
      * there is nothing to distinguish.
      */
-    suspend fun trailer(tmdbId: Int?, isMovie: Boolean, imdbId: String? = null): Trailer? {
-        if (tmdbId == null) return null
-        return withContext(Dispatchers.IO) {
-            guarded("trailer($tmdbId)") {
-                trailerProvider.trailer(tmdbId = tmdbId, imdbId = imdbId, isMovie = isMovie)
+    suspend fun trailer(detail: AnimeDetail): Trailer? {
+        val tmdbId = detail.tmdbId ?: return null
+        return metadataPolicy.load(detail.sourceId, detail.sourceName, fallback = null) {
+            withContext(Dispatchers.IO) {
+                guarded("trailer($tmdbId)") {
+                    trailerProvider.trailer(
+                        tmdbId = tmdbId,
+                        imdbId = detail.imdbId,
+                        isMovie = detail.isMovie,
+                    )
+                }
             }
         }
     }
@@ -489,8 +508,11 @@ class AnimeRepository(
      * Results are grouped per source rather than merged, because relevance is not
      * comparable across sources and a merged list would bury the good matches.
      */
-    suspend fun searchAll(query: String): List<AnimeRow> {
-        val sources = extensions.catalogueSources()
+    suspend fun searchAll(
+        query: String,
+        collection: SourceCollection = SourceCollection.ALL,
+    ): List<AnimeRow> {
+        val sources = extensions.catalogueSources(collection)
         if (sources.isEmpty() || query.isBlank()) return emptyList()
 
         // On IO for the same reason as `homeFeed`: `coroutineScope` inherits the
@@ -555,7 +577,7 @@ class AnimeRepository(
             // URL's TMDB id when the source supplies one, so the detail page and the
             // card it was opened from cannot disagree about which entry this is.
             val art = guarded("tmdb($resolvedTitle)") {
-                tmdbArtwork(url, resolvedTitle, preferMovie = ordered.size <= 1)
+                tmdbArtwork(sourceId, source.name, url, resolvedTitle, preferMovie = ordered.size <= 1)
             }
 
             // Fetched per season, keyed by season. Season 1's episodes were previously
@@ -750,7 +772,10 @@ class AnimeRepository(
         animeUrl: String,
         title: String,
     ): List<AnimeCard> {
-        val art = guarded("tmdbLookup($title)") { tmdbArtwork(animeUrl, title) }
+        if (isShortReelsSource(source.id)) return emptyList()
+        val art = guarded("tmdbLookup($title)") {
+            tmdbArtwork(source.id, source.name, animeUrl, title)
+        }
             ?: return emptyList()
 
         val recommended = guarded("tmdbRecs(${art.tmdbId})") {
@@ -971,7 +996,11 @@ class AnimeRepository(
         extensions.catalogueSourceById(sourceId)
             ?: error("That source is no longer installed.")
 
-    fun hasSources(): Boolean = extensions.catalogueSources().isNotEmpty()
+    fun hasSources(collection: SourceCollection = SourceCollection.ALL): Boolean =
+        extensions.catalogueSources(collection).isNotEmpty()
+
+    fun isShortReelsSource(sourceId: Long, savedSourceName: String = ""): Boolean =
+        extensions.isShortReelsSource(sourceId, savedSourceName)
 
     /**
      * True for a source whose extension lists streams through hosters.

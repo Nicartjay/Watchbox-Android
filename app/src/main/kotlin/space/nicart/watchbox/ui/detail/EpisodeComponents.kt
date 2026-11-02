@@ -106,6 +106,8 @@ fun EpisodeList(
     onPauseDownload: ((EpisodeEntry) -> Unit)? = null,
     onResumeDownload: ((EpisodeEntry) -> Unit)? = null,
     onDeleteDownload: ((EpisodeEntry) -> Unit)? = null,
+    /** Short dramas have no per-episode metadata; render number-only square buttons. */
+    numberedOnly: Boolean = false,
 ) {
     if (isLoading) {
         Row(
@@ -149,7 +151,9 @@ fun EpisodeList(
     // season's episodes combined do not line up with what a season contains: on a show with
     // 20-episode seasons, a "51-100" chip described episodes that were never in the list the
     // filter produced, so selecting it showed nothing.
-    val ranges = remember(inSeason.size) { episodeRanges(inSeason.size) }
+    val ranges = remember(inSeason.size, numberedOnly) {
+        episodeRanges(inSeason.size, shortReels = numberedOnly)
+    }
 
     // Reset when the season changes: block 3 of season 1 has no meaning in a season with one
     // block, and an index left pointing past the end would be clamped to a block the user
@@ -187,7 +191,22 @@ fun EpisodeList(
 
         val hasStills = shown.any { it.stillUrl != null }
 
-        if (hasStills) {
+        if (numberedOnly) {
+            ShortReelsEpisodeGrid(
+                episodes = shown,
+                firstIndex = ranges.getOrNull(rangeIndex.coerceIn(0, maxOf(ranges.lastIndex, 0)))
+                    ?.fromIndex ?: 0,
+                watchedUrls = watchedUrls,
+                currentUrl = currentUrl,
+                horizontalPadding = horizontalPadding,
+                onPlay = onPlay,
+                downloadStatus = downloadStatus,
+                onDownload = onDownload,
+                onPauseDownload = onPauseDownload,
+                onResumeDownload = onResumeDownload,
+                onDeleteDownload = onDeleteDownload,
+            )
+        } else if (hasStills) {
             EpisodeThumbnailRow(
                 episodes = shown,
                 watchedUrls = watchedUrls,

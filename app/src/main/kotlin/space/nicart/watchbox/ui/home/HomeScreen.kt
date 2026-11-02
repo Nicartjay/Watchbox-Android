@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -79,11 +80,18 @@ fun HomeScreen(
     onInstallExtensions: () -> Unit,
     /** Opens Settings, where repositories are managed. */
     onOpenSettings: () -> Unit,
+    onOpenShortReels: () -> Unit,
     navScrollState: WbNavBarScrollState,
     modifier: Modifier = Modifier,
+    showShortReelsSection: Boolean = false,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val personal by viewModel.personal.collectAsStateWithLifecycle()
+    val shortReelsSources by viewModel.shortReelsSources.collectAsStateWithLifecycle()
+    val phoneRows = remember(state.feed?.rows, shortReelsSources) {
+        phoneHomeRows(state.feed?.rows.orEmpty(), shortReelsSources)
+    }
+    val sourceRows = if (showShortReelsSection) phoneRows.standard else state.feed?.rows.orEmpty()
     val listState = rememberLazyListState()
 
     // Drive the nav-pill collapse from this list's scroll delta.
@@ -99,29 +107,29 @@ fun HomeScreen(
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val sectionPadding = sectionHorizontalPadding(maxWidth)
 
+        if (state.hasOnlyShortReels) {
+            WbEmptyState(
+                title = stringResource(R.string.home_short_reels_title),
+                body = stringResource(R.string.home_short_reels_body),
+                actionLabel = stringResource(R.string.nav_short_reels),
+                onAction = onOpenShortReels,
+                modifier = Modifier.align(Alignment.Center),
+            )
+            return@BoxWithConstraints
+        }
+
         // Nothing installed yet: the feed is empty by definition, so prompt
         // rather than showing an error.
-        if (state.hasNoSources) {
+        if (state.hasNoSources && !showShortReelsSection) {
             // Two different dead ends. With no repository configured the extension
             // list has nothing in it, so sending the user there leaves them stuck -
             // they need to add a repository first, which lives in Settings.
-            if (state.hasNoRepos) {
-                WbEmptyState(
-                    title = stringResource(R.string.empty_no_repos_title),
-                    body = stringResource(R.string.empty_no_repos_body),
-                    actionLabel = stringResource(R.string.action_add_repository),
-                    onAction = onOpenSettings,
-                    modifier = Modifier.align(Alignment.Center),
-                )
-            } else {
-                WbEmptyState(
-                    title = stringResource(R.string.empty_no_sources_title),
-                    body = stringResource(R.string.empty_no_sources_body),
-                    actionLabel = stringResource(R.string.action_browse_extensions),
-                    onAction = onInstallExtensions,
-                    modifier = Modifier.align(Alignment.Center),
-                )
-            }
+            HomeNoSourcesState(
+                hasNoRepos = state.hasNoRepos,
+                onOpenSettings = onOpenSettings,
+                onInstallExtensions = onInstallExtensions,
+                modifier = Modifier.align(Alignment.Center),
+            )
             return@BoxWithConstraints
         }
 
@@ -133,6 +141,17 @@ fun HomeScreen(
             contentPadding = PaddingValues(bottom = 18.dp + NavOverlayPadding),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (state.hasNoSources) {
+                item(key = "onboarding") {
+                    HomeNoSourcesState(
+                        hasNoRepos = state.hasNoRepos,
+                        onOpenSettings = onOpenSettings,
+                        onInstallExtensions = onInstallExtensions,
+                        modifier = Modifier.statusBarsPadding(),
+                    )
+                }
+            }
+
             item(key = "hero") {
                 val hero = state.feed?.hero
                 when {
@@ -143,6 +162,21 @@ fun HomeScreen(
                         // so both buttons are worth having.
                         onOpen = onPlayAnime,
                         onMoreInfo = onOpenAnime,
+                    )
+                }
+            }
+
+            if (showShortReelsSection) {
+                item(key = "short-reels") {
+                    PhoneShortReelsSection(
+                        sources = shortReelsSources,
+                        titles = phoneRows.shortReels,
+                        horizontalPadding = sectionPadding,
+                        hasRepositories = !state.hasNoRepos,
+                        onManageExtensions = if (state.hasNoRepos) onOpenSettings else onInstallExtensions,
+                        onBrowseSource = onBrowseSource,
+                        onOpenAnime = onOpenAnime,
+                        modifier = Modifier.padding(bottom = 12.dp),
                     )
                 }
             }
@@ -200,7 +234,7 @@ fun HomeScreen(
                     WbSkeletonRow(horizontalPadding = sectionPadding)
                 }
             } else {
-                state.feed?.rows?.forEach { row ->
+                sourceRows.forEach { row ->
                     item(key = "row-${row.sourceId}-${row.title}") {
                         WbShelfSection(
                             title = row.title,
@@ -228,6 +262,28 @@ fun HomeScreen(
             }
         }
     }
+}
+
+@Composable
+private fun HomeNoSourcesState(
+    hasNoRepos: Boolean,
+    onOpenSettings: () -> Unit,
+    onInstallExtensions: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    WbEmptyState(
+        title = stringResource(
+            if (hasNoRepos) R.string.empty_no_repos_title else R.string.empty_no_sources_title,
+        ),
+        body = stringResource(
+            if (hasNoRepos) R.string.empty_no_repos_body else R.string.empty_no_sources_body,
+        ),
+        actionLabel = stringResource(
+            if (hasNoRepos) R.string.action_add_repository else R.string.action_browse_extensions,
+        ),
+        onAction = if (hasNoRepos) onOpenSettings else onInstallExtensions,
+        modifier = modifier,
+    )
 }
 
 /**

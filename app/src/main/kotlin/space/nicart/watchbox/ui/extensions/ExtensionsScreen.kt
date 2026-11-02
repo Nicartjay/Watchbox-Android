@@ -47,8 +47,12 @@ import space.nicart.watchbox.core.ui.tvInitialFocus
 import space.nicart.watchbox.R
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.extension.model.Extension
+import space.nicart.watchbox.extension.isShortReels
+import space.nicart.watchbox.extension.SourceCollection
+import space.nicart.watchbox.extension.contentGroups
 import space.nicart.watchbox.extension.model.InstallStep
 import space.nicart.watchbox.ui.components.NavOverlayPadding
+import space.nicart.watchbox.ui.components.ShortsReelsBadge
 import space.nicart.watchbox.ui.components.WbBackButton
 import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbScreenHeader
@@ -74,6 +78,12 @@ fun ExtensionsScreen(
     val tokens = MaterialTheme.wb
     val filterInteraction = remember { MutableInteractionSource() }
     val refreshInteraction = remember { MutableInteractionSource() }
+    val installedGroups = remember(state.installed, viewModel.collection) {
+        contentGroups(state.installed, viewModel.collection) { it.isShortReels }
+    }
+    val availableGroups = remember(state.available, viewModel.collection) {
+        contentGroups(state.available, viewModel.collection) { it.isShortReels }
+    }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val padding = sectionHorizontalPadding(maxWidth)
@@ -98,7 +108,13 @@ fun ExtensionsScreen(
                     WbBackButton(onClick = onBack)
                     Spacer(Modifier.size(8.dp))
                     WbScreenHeader(
-                        title = stringResource(R.string.title_extensions),
+                        title = stringResource(
+                            if (viewModel.collection == SourceCollection.SHORT_REELS) {
+                                R.string.extensions_short_reels
+                            } else {
+                                R.string.title_extensions
+                            },
+                        ),
                         modifier = Modifier.weight(1f),
                     )
                     Box(
@@ -240,16 +256,28 @@ fun ExtensionsScreen(
                 item(key = "installed-label") {
                     SectionLabel(stringResource(R.string.extensions_installed))
                 }
-                items(items = state.installed, key = { it.pkgName }) { extension ->
-                    InstalledRow(
-                        extension = extension,
-                        step = state.installing[extension.pkgName],
-                        onUpdate = { viewModel.update(extension) },
-                        onUninstall = { viewModel.uninstall(extension) },
-                        onOpenSettings = extension
-                            .takeIf { it.hasConfigurableSources() }
-                            ?.let { { onOpenSettings(it) } },
-                    )
+                installedGroups.forEach { group ->
+                    if (viewModel.collection == SourceCollection.ALL) {
+                        item(key = "installed-${group.collection}") {
+                            SectionLabel(
+                                stringResource(
+                                    if (group.collection == SourceCollection.SHORT_REELS) R.string.extensions_short_reels
+                                    else R.string.extensions_standard,
+                                ),
+                            )
+                        }
+                    }
+                    items(items = group.items, key = { it.pkgName }) { extension ->
+                        InstalledRow(
+                            extension = extension,
+                            step = state.installing[extension.pkgName],
+                            onUpdate = { viewModel.update(extension) },
+                            onUninstall = { viewModel.uninstall(extension) },
+                            onOpenSettings = extension
+                                .takeIf { it.hasConfigurableSources() }
+                                ?.let { { onOpenSettings(it) } },
+                        )
+                    }
                 }
             }
 
@@ -274,10 +302,10 @@ fun ExtensionsScreen(
             if (state.available.isEmpty() && !state.isRefreshing) {
                 item(key = "available-empty") {
                     Text(
-                        text = if (state.query.isBlank()) {
-                            stringResource(R.string.extensions_empty_available)
-                        } else {
+                        text = if (state.filters.isActive) {
                             stringResource(R.string.extensions_no_matches)
+                        } else {
+                            stringResource(R.string.extensions_empty_available)
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = tokens.colors.textMuted,
@@ -286,12 +314,24 @@ fun ExtensionsScreen(
                 }
             }
 
-            items(items = state.available, key = { it.pkgName }) { extension ->
-                AvailableRow(
-                    extension = extension,
-                    step = state.installing[extension.pkgName],
-                    onInstall = { viewModel.install(extension) },
-                )
+            availableGroups.forEach { group ->
+                if (viewModel.collection == SourceCollection.ALL) {
+                    item(key = "available-${group.collection}") {
+                        SectionLabel(
+                            stringResource(
+                                if (group.collection == SourceCollection.SHORT_REELS) R.string.extensions_short_reels
+                                else R.string.extensions_standard,
+                            ),
+                        )
+                    }
+                }
+                items(items = group.items, key = { it.pkgName }) { extension ->
+                    AvailableRow(
+                        extension = extension,
+                        step = state.installing[extension.pkgName],
+                        onInstall = { viewModel.install(extension) },
+                    )
+                }
             }
         }
 
@@ -302,9 +342,11 @@ fun ExtensionsScreen(
             visible = state.filterPanelOpen,
             onToggleLanguage = viewModel::toggleLanguage,
             onSetNsfw = viewModel::setNsfwFilter,
+            onSetCollection = viewModel::setCollectionFilter,
             onToggleRepo = viewModel::toggleRepo,
             onReset = viewModel::resetFilters,
             onDismiss = { viewModel.setFilterPanelOpen(false) },
+            showContentTypes = viewModel.collection == SourceCollection.ALL,
         )
     }
 }
@@ -331,6 +373,7 @@ private fun InstalledRow(
 
     ExtensionRow(
         title = extension.name,
+        isShortReels = extension.isShortReels,
         subtitle = buildString {
             append("v${extension.versionName}")
             if (extension.lang.isNotBlank()) append(" · ${extension.lang.uppercase()}")
@@ -397,6 +440,7 @@ private fun AvailableRow(
 
     ExtensionRow(
         title = extension.name,
+        isShortReels = extension.isShortReels,
         subtitle = buildString {
             append("v${extension.versionName}")
             if (extension.lang.isNotBlank()) append(" · ${extension.lang.uppercase()}")
@@ -429,6 +473,7 @@ private fun AvailableRow(
 private fun ExtensionRow(
     title: String,
     subtitle: String,
+    isShortReels: Boolean,
     badge: String?,
     badgeColor: androidx.compose.ui.graphics.Color,
     iconUrl: String?,
@@ -494,6 +539,9 @@ private fun ExtensionRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (isShortReels) {
+                ShortsReelsBadge(modifier = Modifier.padding(top = 4.dp))
+            }
         }
 
         trailing()

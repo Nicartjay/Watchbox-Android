@@ -27,6 +27,10 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
@@ -77,6 +81,9 @@ import space.nicart.watchbox.data.remote.labelRes
 import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.domain.StreamOption
 import space.nicart.watchbox.domain.SubtitleGroup
+import space.nicart.watchbox.ui.components.EPISODE_NUMBER_GAP
+import space.nicart.watchbox.ui.components.EPISODE_NUMBER_MIN_SIZE
+import space.nicart.watchbox.ui.components.NumberedEpisodeButton
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.border
 import androidx.compose.material.icons.rounded.Subtitles
@@ -386,10 +393,8 @@ internal fun PlayerPanels(
                                         onSelectSubtitle(-1)
                                     }
                                     index <= embeddedSubtitles.size -> {
-                                        // Ours has to be cleared as well, or the
-                                        // override for it would win over the
-                                        // embedded track just chosen.
-                                        onSelectSubtitle(-1)
+                                        // This selection clears the source override without
+                                        // recording an intermediate "Off" preference.
                                         onSelectEmbedded(index - 1)
                                     }
                                     else -> {
@@ -405,13 +410,14 @@ internal fun PlayerPanels(
 
                         // Offered even when the source supplied tracks: the usual reason to
                         // come here is that the ones on offer are absent, wrong or out of sync.
-                        PanelActionRow(
-                            label = stringResource(R.string.player_subtitle_search),
-                            onClick = onSearchSubtitles,
-                            icon = Icons.Rounded.Search,
-                        )
-
-                        Spacer(Modifier.height(8.dp))
+                        if (!state.isShortReels) {
+                            PanelActionRow(
+                                label = stringResource(R.string.player_subtitle_search),
+                                onClick = onSearchSubtitles,
+                                icon = Icons.Rounded.Search,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
 
                         PanelActionRow(
                             label = stringResource(R.string.player_subtitle_appearance),
@@ -837,6 +843,31 @@ private fun EpisodePanel(
             color = tokens.colors.textPrimary,
             fontWeight = FontWeight.SemiBold,
         )
+
+        if (state.isShortReels) {
+            val gridState = rememberLazyGridState(
+                initialFirstVisibleItemIndex = state.episodes
+                    .indexOfFirst { it.url == state.episode?.url }
+                    .coerceAtLeast(0),
+            )
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(EPISODE_NUMBER_MIN_SIZE),
+                state = gridState,
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(EPISODE_NUMBER_GAP),
+                verticalArrangement = Arrangement.spacedBy(EPISODE_NUMBER_GAP),
+                contentPadding = PaddingValues(bottom = 8.dp),
+            ) {
+                itemsIndexed(state.episodes, key = { _, episode -> episode.url }) { index, episode ->
+                    NumberedEpisodeButton(
+                        number = episode.numberLabelOrIndex(index),
+                        isCurrent = episode.url == state.episode?.url,
+                        onClick = { onSelect(episode) },
+                    )
+                }
+            }
+            return@Column
+        }
 
         LazyColumn(
             modifier = Modifier

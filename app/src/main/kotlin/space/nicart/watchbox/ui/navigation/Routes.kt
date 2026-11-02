@@ -6,10 +6,12 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.ui.graphics.vector.ImageVector
 import kotlinx.serialization.Serializable
 import space.nicart.watchbox.R
+import space.nicart.watchbox.extension.SourceCollection
 
 /**
  * Navigation graph.
@@ -50,15 +52,17 @@ object Routes {
         val animeUrl: String,
         val episodeUrl: String,
         val resumeMs: Long = 0L,
+        /** Also identifies offline Arvin videos before their saved detail has loaded. */
+        val sourceName: String = "",
     )
 
     /** Popular/latest grid for one source. */
     @Serializable
     data class SourceBrowse(val sourceId: Long, val sourceName: String)
 
-    /** Extension repository manager. */
+    /** Extension manager, restricted to the collection that opened it. */
     @Serializable
-    data object Extensions
+    data class Extensions(val collection: SourceCollection = SourceCollection.ALL)
 
     /**
      * Settings for one extension's sources.
@@ -71,7 +75,7 @@ object Routes {
 }
 
 /**
- * The five bottom-nav destinations, in order.
+ * Main destinations, in order. Short/Reels is shown on tablets and TV only.
  *
  * Browse sits between Search and Library because it is where sources and
  * extensions are reached, which is the most-used screen before a library exists.
@@ -81,6 +85,7 @@ enum class AppTab(
     val icon: ImageVector,
 ) {
     HOME(R.string.nav_home, Icons.Filled.Home),
+    SHORT_REELS(R.string.nav_short_reels, Icons.Rounded.SmartDisplay),
     SEARCH(R.string.nav_search, Icons.Rounded.Search),
     BROWSE(R.string.nav_browse, Icons.Rounded.Explore),
     LIBRARY(R.string.nav_library, Icons.Rounded.VideoLibrary),
@@ -89,4 +94,17 @@ enum class AppTab(
     // icon promised an account or profile, which the app has no concept of - there is no
     // sign-in, so nothing behind it could ever match what it implied.
     SETTINGS(R.string.nav_settings, Icons.Rounded.Settings),
+}
+
+fun appTabs(showShortReels: Boolean): List<AppTab> =
+    AppTab.entries.filter { showShortReels || it != AppTab.SHORT_REELS }
+
+/** Null delegates Back on Home to Android so the activity can close normally. */
+fun AppTab.backDestination(): AppTab? = if (this == AppTab.HOME) null else AppTab.HOME
+
+/** Phones browse both content types; tablet/TV sections keep their separate collections. */
+fun AppTab.extensionCollection(separateShortReels: Boolean = true): SourceCollection = when (this) {
+    AppTab.SHORT_REELS -> SourceCollection.SHORT_REELS
+    AppTab.BROWSE -> if (separateShortReels) SourceCollection.STANDARD else SourceCollection.ALL
+    else -> SourceCollection.ALL
 }

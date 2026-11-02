@@ -17,9 +17,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import space.nicart.watchbox.core.ui.WbTokens
 import space.nicart.watchbox.core.ui.wb
+import space.nicart.watchbox.extension.ExtensionUpdateCounts
 
 /**
- * Update count over the Browse navigation icon.
+ * Update count over the matching navigation icon.
  *
  * Kept in the shared navigation package so the phone bar, tablet rail and TV rail show the
  * same state and styling.
@@ -56,4 +57,14 @@ internal fun navigationBadgeText(count: Int): String? = when {
     count <= 0 -> null
     count > 99 -> "99+"
     else -> count.toString()
+}
+
+internal fun navigationUpdateCount(
+    tab: AppTab,
+    updates: ExtensionUpdateCounts,
+    separateShortReels: Boolean = true,
+): Int = when (tab) {
+    AppTab.BROWSE -> updates.forCollection(tab.extensionCollection(separateShortReels))
+    AppTab.SHORT_REELS -> updates.shortReels
+    else -> 0
 }

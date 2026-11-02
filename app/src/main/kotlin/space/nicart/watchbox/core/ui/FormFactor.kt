@@ -54,6 +54,19 @@ fun detectFormFactor(context: Context, widthDp: Int): FormFactor {
     return if (widthDp >= TABLET_WIDTH_DP) FormFactor.TABLET else FormFactor.COMPACT
 }
 
+/**
+ * Playback follows the hardware, not the APK's UI flavor. The TV APK is also used
+ * on touch tablets, which still need the portrait Arvin player.
+ */
+fun detectPlaybackFormFactor(context: Context, smallestWidthDp: Int): FormFactor =
+    playbackFormFactor(context.looksLikeTelevision(), smallestWidthDp)
+
+internal fun playbackFormFactor(isTelevision: Boolean, smallestWidthDp: Int): FormFactor = when {
+    isTelevision -> FormFactor.TV
+    smallestWidthDp >= 600 -> FormFactor.TABLET
+    else -> FormFactor.COMPACT
+}
+
 private fun Context.looksLikeTelevision(): Boolean {
     val uiMode = (getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager)
         ?.currentModeType
@@ -74,6 +87,13 @@ private fun Context.looksLikeTelevision(): Boolean {
  * rail beside it without cramping.
  */
 private const val TABLET_WIDTH_DP = 840
+
+/**
+ * Content separation follows the device's smallest width, not its current layout:
+ * a portrait tablet still needs Short/Reels, and a landscape phone is still a phone.
+ */
+fun usesShortReelsSection(formFactor: FormFactor, smallestWidthDp: Int): Boolean =
+    formFactor == FormFactor.TV || smallestWidthDp >= 600
 
 /**
  * Layout metrics resolved from the form factor.

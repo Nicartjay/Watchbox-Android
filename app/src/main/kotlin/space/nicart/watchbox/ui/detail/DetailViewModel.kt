@@ -21,9 +21,11 @@ import space.nicart.watchbox.domain.friendlyMessage
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.map
 import space.nicart.watchbox.domain.StreamOption
 import space.nicart.watchbox.download.DownloadController
 import space.nicart.watchbox.download.DownloadStorage
+import space.nicart.watchbox.download.ShortReelsDownloadState
 import space.nicart.watchbox.ui.download.DownloadPickerState
 import space.nicart.watchbox.ui.download.EpisodeDownloadStatus
 import space.nicart.watchbox.ui.download.buildStatusMap
@@ -32,8 +34,10 @@ import space.nicart.watchbox.domain.AnimeStatus
 import space.nicart.watchbox.data.remote.SubtitleQuery
 import space.nicart.watchbox.data.remote.SubtitleResult
 import space.nicart.watchbox.domain.SubtitleRepository
+import space.nicart.watchbox.extension.isShortReelsProvider
 
 data class DetailUiState(
+    val sourceIsShortReels: Boolean = false,
     val isLoading: Boolean = true,
     val detail: AnimeDetail? = null,
     val inWatchlist: Boolean = false,
@@ -61,6 +65,10 @@ data class DetailUiState(
      */
     val trailerMuteButton: Boolean = false,
 ) {
+    /** Includes saved downloads whose extension is no longer installed. */
+    val isShortReels: Boolean
+        get() = sourceIsShortReels || isShortReelsProvider(detail?.sourceName.orEmpty())
+
     /** The episode the play button should open, and where to resume from. */
     val resumeTarget: Pair<EpisodeEntry, Long>?
         get() {
@@ -114,13 +122,19 @@ class DetailViewModel(
     private var trailerJob: Job? = null
     private var downloadResolveJob: Job? = null
 
-    private val _uiState = MutableStateFlow(DetailUiState())
+    private val _uiState = MutableStateFlow(
+        DetailUiState(sourceIsShortReels = repository.isShortReelsSource(sourceId)),
+    )
     val uiState: StateFlow<DetailUiState> = _uiState.asStateFlow()
 
     private val _picker = MutableStateFlow<DownloadPickerState>(DownloadPickerState.Hidden)
 
     /** The download quality prompt, shown when an episode's download button is pressed. */
     val picker: StateFlow<DownloadPickerState> = _picker.asStateFlow()
+
+    val automaticDownload: StateFlow<ShortReelsDownloadState> = downloads.shortReelsDownloads
+        .map { it["$sourceId::$animeUrl"] ?: ShortReelsDownloadState() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ShortReelsDownloadState())
 
     /**
      * Per-episode download status, keyed by episode URL.
@@ -347,12 +361,12 @@ class DetailViewModel(
      */
     private fun loadExtras(detail: AnimeDetail) {
         extrasJob?.cancel()
-        val tmdbId = detail.tmdbId ?: return
+        if (repository.isShortReelsSource(detail.sourceId, detail.sourceName)) return
+        if (detail.tmdbId == null) return
 
         extrasJob = viewModelScope.launch {
             val extras = repository.extras(
-                tmdbId = tmdbId,
-                isMovie = detail.isMovie,
+                detail = detail,
                 country = countryResolver.country(),
             )
             // Guarded: the user may have navigated on, or a reload may have replaced the
@@ -367,9 +381,8 @@ class DetailViewModel(
             // titles have none, so the sections that did arrive are shown first
             // rather than made to wait on a lookup that often adds nothing.
             val withRatings = repository.withRatings(
+                detail = detail,
                 extras = extras,
-                tmdbId = tmdbId,
-                isMovie = detail.isMovie,
             )
             if (withRatings.ratings.isEmpty()) return@launch
             if (_uiState.value.detail?.key != detail.key) return@launch
@@ -392,7 +405,8 @@ class DetailViewModel(
      */
     private fun loadTrailer(detail: AnimeDetail) {
         trailerJob?.cancel()
-        val tmdbId = detail.tmdbId ?: return
+        if (repository.isShortReelsSource(detail.sourceId, detail.sourceName)) return
+        if (detail.tmdbId == null) return
 
         trailerJob = viewModelScope.launch {
             // Both read from the same snapshot, so the button flag cannot disagree with
@@ -400,11 +414,7 @@ class DetailViewModel(
             val settings = store.currentSettings()
             if (!settings.autoplayTrailers) return@launch
 
-            val trailer = repository.trailer(
-                tmdbId = tmdbId,
-                isMovie = detail.isMovie,
-                imdbId = detail.imdbId,
-            )
+            val trailer = repository.trailer(detail)
                 ?: return@launch
 
             // Guarded like the others: the user may have navigated on, or a reload
@@ -445,6 +455,11 @@ class DetailViewModel(
      * inside one opaque request - so the prompt opens on a spinner rather than after one.
      */
     fun requestDownload(episode: EpisodeEntry) {
+        if (_uiState.value.isShortReels) {
+            val detail = _uiState.value.detail ?: return
+            downloads.enqueueShortReels(detail, listOf(episode))
+            return
+        }
         downloadResolveJob?.cancel()
         _picker.value = DownloadPickerState.Resolving(episode.url)
 
@@ -508,6 +523,14 @@ class DetailViewModel(
                 ?.let { _picker.value = it.copy(isLoadingMore = false) }
         }
     }
+
+    fun requestSeriesDownload() {
+        if (!_uiState.value.isShortReels) return
+        val detail = _uiState.value.detail ?: return
+        downloads.enqueueShortReels(detail, detail.episodes)
+    }
+
+    fun cancelAutomaticDownloads() = downloads.cancelShortReelsQueue("$sourceId::$animeUrl")
 
     /** Records the opt-out without disturbing the step the picker is on. */
     fun setDownloadWatchlist(add: Boolean) {
@@ -629,6 +652,7 @@ class DetailViewModel(
         // again. It used to read the stored language raw, which returned nothing whenever the
         // preference held a track label rather than a code - the player normalised it and
         // found results for the very same episode.
+        if (repository.isShortReelsSource(detail.sourceId, detail.sourceName)) return emptyList()
         val query = SubtitleQuery.forEpisode(
             imdbId = detail.imdbId,
             tmdbId = detail.tmdbId,

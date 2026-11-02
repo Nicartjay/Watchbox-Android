@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,6 +32,8 @@ import androidx.media3.common.util.UnstableApi
 import space.nicart.watchbox.AppContainer
 import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.ui.navigation.AppTab
+import space.nicart.watchbox.ui.navigation.appTabs
+import space.nicart.watchbox.ui.navigation.backDestination
 import space.nicart.watchbox.ui.navigation.WbNavigationRail
 
 /**
@@ -78,10 +81,11 @@ fun TvTabShell(
     // drawer is covering it so the hero carousel can hold still, and it is a sibling that
     // cannot see this state.
     val pickerOpen by sourceViewModel.pickerOpen.collectAsStateWithLifecycle()
-    val extensionUpdateCount by container.extensionManager.updateCount
+    val extensionUpdateCounts by container.extensionManager.updateCounts
         .collectAsStateWithLifecycle()
 
-    var selectedTab by remember { mutableStateOf(AppTab.HOME) }
+    // Returning from a provider or extension page must not reset Short/Reels to Home.
+    var selectedTab by rememberSaveable { mutableStateOf(AppTab.HOME) }
     var railFocused by remember { mutableStateOf(false) }
     val stateHolder = rememberSaveableStateHolder()
 
@@ -122,23 +126,10 @@ fun TvTabShell(
         }
     }
 
-    /**
-     * Back moves focus to the navigation rail before it will leave the app.
-     *
-     * On a television Back is the only way out of a section, and exiting the app from
-     * inside a content row is almost never what was meant: the remote has no other
-     * "go up a level", so Back is what a viewer reaches for to get back to the menu.
-     *
-     * Disabled once the rail already has focus, so a second press falls through to the
-     * system and closes the app as normal - otherwise there would be no way out at all.
-     *
-     * Also disabled while the source picker is open, which owns Back for itself.
-     */
-    BackHandler(enabled = !railFocused && !pickerOpen) {
-        // A single request, not a retry loop: the rail is already composed here, unlike
-        // the tab-switch case above, so its requester has a node. A loop would also spin
-        // without yielding, so `railFocused` could not update between attempts and every
-        // iteration would see the stale value.
+    // The source picker owns Back while open. Other top-level sections return Home;
+    // Back on Home is left to Android, regardless of whether the rail has focus.
+    BackHandler(enabled = selectedTab.backDestination() != null && !pickerOpen) {
+        selectedTab = selectedTab.backDestination() ?: AppTab.HOME
         runCatching { railFocusRequester.requestFocus() }
     }
 
@@ -192,8 +183,9 @@ fun TvTabShell(
                 selected = selectedTab,
                 onSelect = { selectedTab = it },
                 expanded = railFocused,
-                browseUpdateCount = extensionUpdateCount,
-                footer = { expanded ->
+                updateCounts = extensionUpdateCounts,
+                tabs = appTabs(showShortReels = true),
+                footer = if (selectedTab == AppTab.SHORT_REELS) null else { expanded ->
                     TvRailSourceButton(
                         source = selectedSource,
                         expanded = expanded,

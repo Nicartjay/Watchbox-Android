@@ -309,6 +309,14 @@ internal fun List<StreamOption>.qualityChoices(
         }
 }
 
+/** Match the quality panel, including its flat-list fallback, and ignore duplicate files. */
+internal fun List<StreamOption>.hasMultipleQualityChoices(selected: StreamOption?): Boolean {
+    val current = selected?.facets
+    val choices = qualityChoices(current?.server, current?.dub)
+    return if (choices.isEmpty()) distinctBy { it.url }.size > 1
+    else choices.distinctBy { it.stream.url }.size > 1
+}
+
 /**
  * Audio tracks available on [server], in source order.
  *

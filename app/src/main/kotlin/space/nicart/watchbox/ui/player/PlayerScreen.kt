@@ -18,7 +18,6 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -31,6 +30,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -46,6 +46,7 @@ import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -56,6 +57,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.nicart.watchbox.cast.CastManager
 import space.nicart.watchbox.cast.CastProtocol
 import space.nicart.watchbox.core.ui.LocalLayoutMetrics
+import space.nicart.watchbox.core.ui.detectPlaybackFormFactor
 import space.nicart.watchbox.cast.CastPermissions
 import space.nicart.watchbox.cast.ExternalCast
 import space.nicart.watchbox.cast.CastMedia
@@ -74,16 +76,24 @@ import space.nicart.watchbox.ui.components.WbLoading
 import space.nicart.watchbox.ui.components.WbLoadingStatus
 import space.nicart.watchbox.WatchBoxApplication
 
+/** Track groups are valid only for the media item that produced them. */
+private data class PlayerTrackIdentity(
+    val episodeUrl: String?,
+    val streamUrl: String?,
+    val subtitleUrls: List<String>,
+)
+
 /**
  * Full-screen player.
  *
  * Structure follows NuvioMobile `features/player/PlayerScreenContent.kt`: a black
- * full-size surface locked to landscape with immersive system bars, the video
+ * full-size surface with immersive system bars, the video
  * behind, and the control overlay in an `AnimatedVisibility` gated on
  * `controlsVisible && !locked`.
  *
  * Gestures (`PlayerSurfaceGestures.kt`): single tap toggles controls, double tap
- * seeks +/-10s, horizontal drag scrubs with duration-scaled sensitivity.
+ * seeks +/-10s, horizontal drag scrubs with duration-scaled sensitivity. Arvin
+ * sources on touch devices use portrait chrome and vertical episode swipes instead.
  */
 private const val CONTROLS_AUTO_HIDE_MS = 3_000L
 
@@ -147,12 +157,24 @@ fun PlayerScreen(
     val context = LocalContext.current
     val activityForBrightness = context as? Activity
     val lifecycleOwner = LocalLifecycleOwner.current
+    val metricsForFocus = LocalLayoutMetrics.current
+    val configuration = LocalConfiguration.current
+    val deviceFormFactor = remember(context, configuration.smallestScreenWidthDp, configuration.uiMode) {
+        detectPlaybackFormFactor(context, configuration.smallestScreenWidthDp)
+    }
+    val portraitPlayer = usesPortraitPlayer(state.isShortReels, deviceFormFactor)
+    val focusDrivenPlayer = metricsForFocus.isFocusDriven && !portraitPlayer
+    val requestedOrientation = if (portraitPlayer) {
+        ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+    } else {
+        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    }
 
-    // --- landscape lock + keep-awake + immersive, restored on exit
-    DisposableEffect(Unit) {
+    // --- orientation + keep-awake + immersive, restored on exit
+    DisposableEffect(requestedOrientation) {
         val activity = context as? Activity
         val originalOrientation = activity?.requestedOrientation
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        activity?.requestedOrientation = requestedOrientation
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         val insetsController = activity?.window?.let {
@@ -314,7 +336,6 @@ fun PlayerScreen(
 
     val playerFocusRequester = remember { FocusRequester() }
     val playFocusRequester = remember { FocusRequester() }
-    val metricsForFocus = LocalLayoutMetrics.current
 
     /** Observed focus, not assumed - see the retry below. */
     var playHasFocus by remember { mutableStateOf(false) }
@@ -363,7 +384,7 @@ fun PlayerScreen(
     // otherwise claim focus the moment the controls hide - this one for the video surface,
     // the button for itself - and whichever ran second would win, non-deterministically.
     // The button is the useful target while it is showing, so it takes precedence.
-    val skipButtonOwnsFocus = metricsForFocus.isFocusDriven &&
+    val skipButtonOwnsFocus = focusDrivenPlayer &&
         !controlsOwnFocus &&
         !state.locked &&
         state.skipIntervals.any { it.contains(positionMs) }
@@ -375,8 +396,9 @@ fun PlayerScreen(
         state.isResolving,
         skipButtonOwnsFocus,
         playbackError,
+        focusDrivenPlayer,
     ) {
-        if (!metricsForFocus.isFocusDriven) return@LaunchedEffect
+        if (!focusDrivenPlayer) return@LaunchedEffect
 
         if (openPanel != PlayerPanel.NONE) return@LaunchedEffect
 
@@ -420,7 +442,12 @@ fun PlayerScreen(
     }
 
     val transportPlay: () -> Unit = {
-        if (castState.isCasting) castManager.play() else exoPlayer.play()
+        if (castState.isCasting) {
+            castManager.play()
+        } else {
+            if (exoPlayer.playbackState == Player.STATE_ENDED) exoPlayer.seekTo(0L)
+            exoPlayer.play()
+        }
     }
 
     val transportPause: () -> Unit = {
@@ -486,6 +513,38 @@ fun PlayerScreen(
         seekTapBump++
     }
 
+    fun flushCurrentProgress() {
+        // Ignore the old player's clock between an episode selection and preparation.
+        if (!state.isResolving && positionEpisodeUrl != null &&
+            positionEpisodeUrl == state.episode?.url
+        ) {
+            viewModel.flushProgress(
+                transportPosition(),
+                if (castState.isCasting) durationMs else exoPlayer.duration,
+            )
+        }
+    }
+
+    fun selectEpisode(episode: EpisodeEntry) {
+        if (episode.url == state.episode?.url) return
+        flushCurrentProgress()
+        viewModel.goToEpisode(episode)
+        openPanel = PlayerPanel.NONE
+        controlsVisible = true
+    }
+
+    // Pointer-input coroutines outlive recompositions. These callbacks must see the
+    // latest episode, seekability and cast transport without restarting every tick.
+    val latestSeekByAnnounced by rememberUpdatedState<(Long) -> Unit>(::seekByAnnounced)
+    val latestTogglePlay by rememberUpdatedState(transportTogglePlay)
+    val latestReelSwipe by rememberUpdatedState<(Float, Float) -> Unit>({ dragY, threshold ->
+        when (reelSwipeAction(dragY, threshold, state.hasNextEpisode, state.hasPreviousEpisode)) {
+            ReelSwipeAction.NEXT -> state.nextEpisode?.let(::selectEpisode)
+            ReelSwipeAction.PREVIOUS -> state.previousEpisode?.let(::selectEpisode)
+            ReelSwipeAction.NONE -> Unit
+        }
+    })
+
     /**
      * Applies a mapped remote action.
      *
@@ -532,11 +591,11 @@ fun PlayerScreen(
             }
 
             PlayerKeyAction.NEXT_EPISODE -> {
-                state.nextEpisode?.let(viewModel::goToEpisode) != null
+                state.nextEpisode?.let(::selectEpisode) != null
             }
 
             PlayerKeyAction.PREVIOUS_EPISODE -> {
-                state.previousEpisode?.let(viewModel::goToEpisode) != null
+                state.previousEpisode?.let(::selectEpisode) != null
             }
 
             // Returns false so the system handles Back when there is nothing of ours
@@ -560,6 +619,14 @@ fun PlayerScreen(
         runCatching { playerFocusRequester.requestFocus() }
     }
     var castPanelOpen by remember { mutableStateOf(false) }
+
+    fun openCastingPanel() {
+        castPanelOpen = true
+        CastPermissions.required
+            ?.takeIf { !CastPermissions.isGranted(context) }
+            ?.let(nearbyPermission::launch)
+        castManager.discover()
+    }
 
     // Brightness is window-scoped, so it is tied to this activity; volume is a
     // system stream and re-synced whenever a gesture starts.
@@ -589,7 +656,14 @@ fun PlayerScreen(
 
     // The player's current track list, mirrored into state so the subtitle-selection effect
     // re-runs when a sideloaded track finishes parsing.
-    var tracks by remember { mutableStateOf<androidx.media3.common.Tracks?>(null) }
+    val trackIdentity = PlayerTrackIdentity(
+        state.episode?.url, state.selectedStream?.url, state.subtitles.map { it.url },
+    )
+    val loadedTrackIdentity = remember { arrayOfNulls<PlayerTrackIdentity>(1) }
+    var trackSnapshot by remember {
+        mutableStateOf<Pair<PlayerTrackIdentity?, androidx.media3.common.Tracks>?>(null)
+    }
+    val tracks = trackSnapshot?.takeIf { it.first == trackIdentity }?.second
 
     /**
      * Text tracks belonging to the stream itself, as opposed to ours.
@@ -604,12 +678,24 @@ fun PlayerScreen(
         textGroups.take((textGroups.size - state.subtitles.size).coerceAtLeast(0))
     }
 
-    /** Which embedded track the viewer chose, or -1 for none. */
-    var selectedEmbeddedIndex by remember { mutableIntStateOf(-1) }
-
-    // Reset when the stream changes: track groups belong to the media that was
-    // playing, so an index kept across a switch would point at a different track.
-    LaunchedEffect(state.selectedStream?.url) { selectedEmbeddedIndex = -1 }
+    val subtitleTrackFallback = stringResource(R.string.player_subtitle_track)
+    val embeddedSubtitleTracks = remember(embeddedTextGroups, subtitleTrackFallback) {
+        embeddedTextGroups.mapIndexed { index, group ->
+            val format = group.mediaTrackGroup.getFormat(0)
+            EmbeddedSubtitleTrack(
+                label = format.label
+                    ?: format.language?.takeIf { it.isNotBlank() && it != "und" }
+                    ?: "$subtitleTrackFallback ${index + 1}",
+                language = format.language.orEmpty(),
+            )
+        }
+    }
+    val selectedEmbeddedIndex = state.selectedEmbeddedSubtitleIndex
+    LaunchedEffect(trackIdentity, embeddedSubtitleTracks) {
+        viewModel.setEmbeddedSubtitleTracks(
+            trackIdentity.episodeUrl, trackIdentity.streamUrl, embeddedSubtitleTracks,
+        )
+    }
 
     /**
      * Audio tracks the player can choose between, in track-group order.
@@ -691,7 +777,7 @@ fun PlayerScreen(
             // after preparation - so the selection effect has to re-run when they land rather
             // than read them once.
             override fun onTracksChanged(newTracks: androidx.media3.common.Tracks) {
-                tracks = newTracks
+                trackSnapshot = loadedTrackIdentity[0] to newTracks
             }
 
             // Video-surface diagnostics. A black screen with working audio means
@@ -729,7 +815,7 @@ fun PlayerScreen(
                     // either way: leaving the app is exactly when the position must survive, and
                     // a background session can still be killed by the system at any point.
                     if (!state.backgroundPlayback) exoPlayer.pause()
-                    viewModel.flushProgress(exoPlayer.currentPosition, exoPlayer.duration)
+                    flushCurrentProgress()
                 }
 
                 else -> Unit
@@ -753,14 +839,31 @@ fun PlayerScreen(
     // position across meant a new episode opened at wherever the last one had reached - so the
     // position is used only when it belongs to the episode being prepared.
     LaunchedEffect(
+        state.episode?.url,
         state.selectedStream?.url,
         state.subtitles.map { it.url },
         // Merged audio is part of the source, so it can only change by rebuilding it.
         state.selectedStream?.audioTracks?.map { it.url },
     ) {
-        val stream = state.selectedStream ?: return@LaunchedEffect
         val episodeUrl = state.episode?.url
         val sameEpisode = positionEpisodeUrl != null && positionEpisodeUrl == episodeUrl
+        if (!sameEpisode) {
+            // Clear the old surface/audio immediately while the next reel resolves.
+            // Otherwise the old reel keeps playing under the new episode's title.
+            exoPlayer.pause()
+            exoPlayer.clearMediaItems()
+            tempStream?.close()
+            tempStream = null
+            positionMs = 0L
+            durationMs = 0L
+            bufferedMs = 0L
+            playbackError = null
+            seekTapAccumulatedMs = 0L
+        }
+        val stream = state.selectedStream ?: return@LaunchedEffect
+        // Do not apply the previous file's text groups while the new reel is preparing.
+        loadedTrackIdentity[0] = trackIdentity
+        trackSnapshot = null
 
         // A no-seek stream starts from 0: its temp file is empty until the download begins, and
         // a resume point would sit waiting for everything before it to arrive.
@@ -1009,7 +1112,7 @@ fun PlayerScreen(
     //
     // History is still written, from whichever clock is authoritative. Keyed on isCasting so
     // the loop switches sources when a session starts or ends.
-    LaunchedEffect(exoPlayer, state.selectedStream?.url, castState.isCasting) {
+    LaunchedEffect(exoPlayer, state.episode?.url, state.selectedStream?.url, castState.isCasting) {
         while (true) {
             if (castState.isCasting) {
                 positionMs = castState.positionMs.coerceAtLeast(0L)
@@ -1035,13 +1138,17 @@ fun PlayerScreen(
                 // Recorded even though the phone is not playing: the episode is being
                 // watched, and stopping would lose the position and leave Continue Watching
                 // pointing at wherever the cast happened to start.
-                if (castState.isRemotePlaying) viewModel.onProgress(positionMs, durationMs)
+                if (castState.isRemotePlaying && !state.isResolving &&
+                    positionEpisodeUrl == state.episode?.url
+                ) viewModel.onProgress(positionMs, durationMs)
             } else {
                 positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
                 bufferedMs = tempStream?.let { tempDownloadedMs(tempProgress, durationMs) }
                     ?: exoPlayer.bufferedPosition.coerceAtLeast(0L)
                 if (exoPlayer.duration > 0) durationMs = exoPlayer.duration
-                if (isPlaying) viewModel.onProgress(positionMs, durationMs)
+                if (isPlaying && !state.isResolving &&
+                    positionEpisodeUrl == state.episode?.url
+                ) viewModel.onProgress(positionMs, durationMs)
             }
             delay(500)
         }
@@ -1075,7 +1182,7 @@ fun PlayerScreen(
     // enableOnBackInvokedCallback, so on API 33+ the system consumes KEYCODE_BACK before the
     // view tree sees it and the DISMISS branch of the key mapping never runs.
     BackHandler {
-        val controlsAreABackLayer = metricsForFocus.isFocusDriven && controlsVisible
+        val controlsAreABackLayer = focusDrivenPlayer && controlsVisible
 
         when {
             castPanelOpen -> castPanelOpen = false
@@ -1084,7 +1191,7 @@ fun PlayerScreen(
             controlsAreABackLayer -> controlsVisible = false
             keepTempPrompt != null -> keepTempPrompt = null
             else -> {
-                viewModel.flushProgress(exoPlayer.currentPosition, exoPlayer.duration)
+                flushCurrentProgress()
                 leaveAfterTempCheck(onBack)
             }
         }
@@ -1121,7 +1228,8 @@ fun PlayerScreen(
         onDismiss = { keepTempPrompt = null },
     )
 
-    BoxWithConstraints(
+    PlayerViewport(
+        portrait = portraitPlayer,
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
@@ -1168,10 +1276,14 @@ fun PlayerScreen(
                 // Re-asserted here too: on configuration change Compose may reuse
                 // the view while the effect above has not re-run yet.
                 if (view.player !== exoPlayer) view.player = exoPlayer
-                view.resizeMode = when (state.aspectMode) {
-                    AspectMode.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    AspectMode.FILL -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                    AspectMode.ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                view.resizeMode = if (portraitPlayer) {
+                    AspectRatioFrameLayout.RESIZE_MODE_FIT
+                } else {
+                    when (state.aspectMode) {
+                        AspectMode.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        AspectMode.FILL -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                        AspectMode.ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    }
                 }
             },
             modifier = Modifier.fillMaxSize(),
@@ -1191,29 +1303,26 @@ fun PlayerScreen(
                 // inside its bounds - see controlsOwnFocus.
                 .focusRequester(playerFocusRequester)
                 .focusable(enabled = !controlsOwnFocus)
-                // Re-keyed on the player instance, not just the lock. The instance is stable
-                // now, but keeping it in the key list costs nothing and keeps the detector
-                // correct if the player is ever rebuilt again.
-                //
-                // durationMs is included for the same reason as the drag detector below: the
-                // clamp inside transportSeekTo reads it.
-                .pointerInput(state.locked, exoPlayer, durationMs) {
+                // Updated callbacks carry the live seek limit and transport into this
+                // detector without cancelling a double-tap when a playback tick arrives.
+                .pointerInput(state.locked, portraitPlayer, exoPlayer) {
                     detectTapGestures(
                         onTap = {
                             if (state.locked) {
                                 // Reveal the locked overlay briefly rather than
                                 // toggling controls.
                                 controlsVisible = false
+                            } else if (portraitPlayer) {
+                                latestTogglePlay()
+                                controlsVisible = true
+                                lastInteraction++
                             } else {
                                 controlsVisible = !controlsVisible
                             }
                         },
                         onDoubleTap = { offset ->
                             if (state.locked) return@detectTapGestures
-                            val forward = offset.x > size.width / 2f
-                            val delta = if (forward) 10_000L else -10_000L
-
-                            seekByAnnounced(delta)
+                            latestSeekByAnnounced(doubleTapSeekDelta(offset.x, size.width))
                         },
                     )
                 }
@@ -1221,7 +1330,7 @@ fun PlayerScreen(
                 // modifiers would compete for the same pointer, so the axis is
                 // decided once per drag and then locked: a seek never turns into
                 // a volume change halfway through.
-                .pointerInput(state.locked, durationMs) {
+                .pointerInput(state.locked, portraitPlayer, state.episode?.url, durationMs) {
                     if (state.locked) return@pointerInput
 
                     val slop = viewConfiguration.touchSlop
@@ -1229,6 +1338,37 @@ fun PlayerScreen(
 
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
+
+                        if (portraitPlayer) {
+                            if (isInSystemEdgeZone(down.position.y, size.height, edgePx)) {
+                                return@awaitEachGesture
+                            }
+                            var dx = 0f
+                            var dy = 0f
+                            var vertical = false
+                            val threshold = maxOf(slop * 3, minOf(size.height * 0.12f, 96.dp.toPx()))
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                // Multi-touch/cancelled gestures never navigate.
+                                if (event.changes.any { it.id != down.id && it.pressed } ||
+                                    change.isConsumed
+                                ) break
+                                if (change.changedToUpIgnoreConsumed()) {
+                                    if (vertical) latestReelSwipe(dy, threshold)
+                                    break
+                                }
+                                val delta = change.positionChange()
+                                dx += delta.x
+                                dy += delta.y
+                                if (!vertical && kotlin.math.hypot(dx, dy) > slop) {
+                                    if (!isVerticalDrag(dx, dy)) break
+                                    vertical = true
+                                }
+                                if (vertical) change.consume()
+                            }
+                            return@awaitEachGesture
+                        }
 
                         var axis = DragAxis.UNDECIDED
                         var seekAccumulated = 0f
@@ -1320,11 +1460,13 @@ fun PlayerScreen(
         // its touch height, the timecode row and the pill row, all of which scale with
         // screen width. Animated so both rise and settle with the overlay instead of
         // jumping between two positions.
-        val controlsUp = controlsVisible && !state.isResolving
+        val controlsUp = (portraitPlayer || controlsVisible) && !state.locked && !state.isResolving
         // The subtitles clear the same stack but need no button clearance, and they have
         // their own resting gap, so they animate on a slightly smaller value.
         val subtitleLift by animateDpAsState(
-            targetValue = if (controlsUp) {
+            targetValue = if (controlsUp && portraitPlayer) {
+                SHORT_REELS_BOTTOM_INSET
+            } else if (controlsUp) {
                 metrics.sliderBottomOffset + metrics.sliderTouchHeight + CONTROL_STACK_HEIGHT
             } else {
                 0.dp
@@ -1334,7 +1476,9 @@ fun PlayerScreen(
         )
 
         val bottomOverlayLift by animateDpAsState(
-            targetValue = if (controlsUp) {
+            targetValue = if (controlsUp && portraitPlayer) {
+                SHORT_REELS_BOTTOM_INSET + SKIP_CLEARANCE
+            } else if (controlsUp) {
                 metrics.sliderBottomOffset +
                     metrics.sliderTouchHeight +
                     CONTROL_STACK_HEIGHT +
@@ -1467,8 +1611,37 @@ fun PlayerScreen(
         )
 
         // --- controls
+        if (portraitPlayer && !state.locked) {
+            ShortReelsControls(
+                state = state,
+                isPlaying = transportIsPlaying(),
+                isBuffering = isBuffering && !castState.isCasting && playbackError == null,
+                showPlaybackControl = controlsVisible,
+                hideTransport = playbackError != null,
+                seekable = tempStream != null || state.selectedStream?.canSeek != false,
+                positionMs = positionMs,
+                durationMs = durationMs,
+                isCasting = castState.isCasting,
+                audioTrackCount = embeddedAudioTracks.size,
+                onPlayPause = {
+                    transportTogglePlay()
+                    controlsVisible = true
+                    lastInteraction++
+                },
+                onSeek = transportSeekTo,
+                onBack = {
+                    flushCurrentProgress()
+                    leaveAfterTempCheck(onBack)
+                },
+                onPrevious = { state.previousEpisode?.let(::selectEpisode) },
+                onNext = { state.nextEpisode?.let(::selectEpisode) },
+                onOpenPanel = { openPanel = it },
+                onOpenCast = ::openCastingPanel,
+                onLock = { viewModel.setLocked(true) },
+            )
+        }
         AnimatedVisibility(
-            visible = controlsVisible && !state.locked && !state.isResolving,
+            visible = !portraitPlayer && controlsVisible && !state.locked && !state.isResolving,
             enter = fadeIn(),
             exit = fadeOut(),
         ) {
@@ -1508,14 +1681,13 @@ fun PlayerScreen(
                     {
                         // Flushed first: the episode is about to change, and the position for the
                         // one being left would otherwise be written against the new one.
-                        viewModel.flushProgress(exoPlayer.currentPosition, exoPlayer.duration)
-                        viewModel.nextEpisode()
+                        state.nextEpisode?.let(::selectEpisode)
                     }
                 } else {
                     null
                 },
                 onBack = {
-                    viewModel.flushProgress(exoPlayer.currentPosition, exoPlayer.duration)
+                    flushCurrentProgress()
                     leaveAfterTempCheck(onBack)
                 },
                 onToggleLock = { viewModel.setLocked(true) },
@@ -1526,19 +1698,7 @@ fun PlayerScreen(
                 playFocusRequester = playFocusRequester,
                 onPlayFocusChanged = { playHasFocus = it },
                 audioTrackCount = embeddedAudioTracks.size,
-                onOpenCast = {
-                    castPanelOpen = true
-                    // Requested here rather than at startup: it is only needed for
-                    // discovery, and asking before the user shows any interest in
-                    // casting is the kind of prompt people reflexively deny.
-                    CastPermissions.required
-                        ?.takeIf { !CastPermissions.isGranted(context) }
-                        ?.let(nearbyPermission::launch)
-
-                    // Rescan on open: renderers come and go, so a list cached
-                    // from a previous session is usually stale.
-                    castManager.discover()
-                },
+                onOpenCast = ::openCastingPanel,
             )
         }
 
@@ -1606,16 +1766,12 @@ fun PlayerScreen(
         PlayerPanels(
             panel = openPanel,
             state = state,
-            embeddedSubtitles = embeddedTextGroups.mapIndexed { index, group ->
-                val format = group.mediaTrackGroup.getFormat(0)
-                format.label
-                    ?: format.language?.takeIf { it.isNotBlank() && it != "und" }
-                    ?: "${stringResource(R.string.player_subtitle_track)} ${index + 1}"
-            },
+            embeddedSubtitles = embeddedSubtitleTracks.map { it.label },
             selectedEmbeddedIndex = selectedEmbeddedIndex,
             onSelectEmbedded = { index ->
-                if (index != selectedEmbeddedIndex) viewModel.resetSubtitleTiming()
-                selectedEmbeddedIndex = index
+                // A negative index only clears the old UI path before selecting a source
+                // track or Off. Those selections record their own preference below.
+                if (index >= 0) viewModel.selectEmbeddedSubtitle(index)
                 openPanel = PlayerPanel.NONE
             },
             embeddedAudioTracks = embeddedAudioTracks,
@@ -1663,8 +1819,7 @@ fun PlayerScreen(
                 openPanel = PlayerPanel.NONE
             },
             onSelectEpisode = { episode: EpisodeEntry ->
-                viewModel.goToEpisode(episode)
-                openPanel = PlayerPanel.NONE
+                selectEpisode(episode)
             },
             onOpenSubtitleSettings = { openPanel = PlayerPanel.SUBTITLE_STYLE },
             onSearchSubtitles = {

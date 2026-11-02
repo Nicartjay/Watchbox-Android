@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import space.nicart.watchbox.core.ui.rememberFocusInteraction
 import space.nicart.watchbox.core.ui.tvFocusOutline
 import space.nicart.watchbox.core.ui.wb
+import space.nicart.watchbox.extension.ExtensionUpdateCounts
 
 /**
  * Left navigation rail for TV and large tablets.
@@ -63,7 +64,8 @@ fun WbNavigationRail(
     onSelect: (AppTab) -> Unit,
     modifier: Modifier = Modifier,
     expanded: Boolean = false,
-    browseUpdateCount: Int = 0,
+    updateCounts: ExtensionUpdateCounts = ExtensionUpdateCounts(),
+    tabs: List<AppTab> = appTabs(showShortReels = false),
     /**
      * Optional content pinned to the bottom of the rail.
      *
@@ -106,12 +108,14 @@ fun WbNavigationRail(
         // large screen rather than the top corner.
         Spacer(Modifier.height(24.dp))
 
-        AppTab.entries.forEach { tab ->
+        tabs.forEach { tab ->
             RailItem(
                 tab = tab,
                 selected = tab == selected,
                 showLabel = expanded,
-                badgeCount = browseUpdateCount.takeIf { tab == AppTab.BROWSE } ?: 0,
+                badgeCount = navigationUpdateCount(
+                    tab, updateCounts, separateShortReels = AppTab.SHORT_REELS in tabs,
+                ),
                 onClick = { onSelect(tab) },
             )
         }

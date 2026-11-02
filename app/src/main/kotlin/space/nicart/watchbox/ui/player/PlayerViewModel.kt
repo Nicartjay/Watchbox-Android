@@ -4,7 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,7 +28,7 @@ import androidx.media3.common.util.UnstableApi
 import space.nicart.watchbox.download.DownloadEngine
 import space.nicart.watchbox.data.local.DownloadEntry
 import space.nicart.watchbox.data.local.DownloadedSubtitle
-import space.nicart.watchbox.data.remote.SubtitleApi.Companion.toIso639_1
+import space.nicart.watchbox.extension.isShortReelsProvider
 
 /**
  * The online subtitle search, as a state machine.
@@ -88,6 +90,8 @@ enum class AspectMode(val label: String) {
 }
 
 data class PlayerUiState(
+    /** Known before stream resolution, so Arvin playback never opens in landscape first. */
+    val sourceIsShortReels: Boolean = false,
     val isResolving: Boolean = true,
     /**
      * True while more streams may still arrive for a stream set already being played.
@@ -113,6 +117,9 @@ data class PlayerUiState(
     val streams: List<StreamOption> = emptyList(),
     val selectedStream: StreamOption? = null,
     val selectedSubtitleIndex: Int = -1,
+    val subtitlePreference: SubtitlePreference = SubtitlePreference(),
+    val embeddedSubtitleTracks: List<EmbeddedSubtitleTrack> = emptyList(),
+    val selectedEmbeddedSubtitleIndex: Int = -1,
     val resumeMs: Long = 0L,
     val speed: Float = 1f,
     val aspectMode: AspectMode = AspectMode.FIT,
@@ -169,6 +176,10 @@ data class PlayerUiState(
      */
     val offsetCues: List<SubtitleCue> = emptyList(),
 ) {
+    /** The saved detail also identifies downloads whose extension has been removed. */
+    val isShortReels: Boolean
+        get() = sourceIsShortReels || isShortReelsProvider(detail?.sourceName.orEmpty())
+
     /**
      * True when the selected subtitle cannot be shifted earlier, only later.
      *
@@ -178,8 +189,9 @@ data class PlayerUiState(
      * impossible for these - a real limit of the format rather than a missing feature.
      */
     val subtitleIsEmbedded: Boolean
-        get() = selectedSubtitleIndex >= 0 &&
-            subtitles.getOrNull(selectedSubtitleIndex)?.url.isNullOrBlank()
+        get() = selectedEmbeddedSubtitleIndex >= 0 ||
+            (selectedSubtitleIndex >= 0 &&
+                subtitles.getOrNull(selectedSubtitleIndex)?.url.isNullOrBlank())
 
     val title: String get() = detail?.title.orEmpty()
 
@@ -232,12 +244,20 @@ class PlayerViewModel(
     private val animeUrl: String,
     private val initialEpisodeUrl: String,
     initialResumeMs: Long,
+    savedSourceName: String = "",
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(PlayerUiState(resumeMs = initialResumeMs))
+    private val _uiState = MutableStateFlow(
+        PlayerUiState(
+            resumeMs = initialResumeMs,
+            sourceIsShortReels = repository.isShortReelsSource(sourceId, savedSourceName),
+        ),
+    )
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
     private var resolveJob: Job? = null
+    private var episodeJob: Job? = null
+    private var autoNextJob: Job? = null
 
     /** Elapsed-time ticker for the resolve, cancelled with it. */
     private var resolveTicker: Job? = null
@@ -291,6 +311,10 @@ class PlayerViewModel(
                 backgroundPlayback = settings.backgroundPlayback,
                 subtitleOffsetMs = settings.subtitleOffsetMs,
                 audioLanguage = settings.audioLanguage,
+                subtitlePreference = SubtitlePreference(
+                    enabled = !stored.equals("off", ignoreCase = true),
+                    language = subtitleLanguage.takeUnless { it.equals("off", true) }.orEmpty(),
+                ),
             )
             loadDetail()
         }
@@ -322,9 +346,12 @@ class PlayerViewModel(
             // Still fetched, because episode navigation and the skip markers want the live
             // list - but it is no longer the only source of a title, so failing is survivable.
             repository.detail(sourceId, animeUrl).onSuccess { detail ->
+                // The user may already have swiped to another downloaded episode
+                // while the online refresh was running.
+                val currentEpisodeUrl = _uiState.value.episode?.url ?: initialEpisodeUrl
                 _uiState.value = _uiState.value.copy(
                     detail = detail,
-                    episode = detail.episodes.firstOrNull { it.url == initialEpisodeUrl }
+                    episode = detail.episodes.firstOrNull { it.url == currentEpisodeUrl }
                         ?: _uiState.value.episode,
                 )
             }
@@ -440,10 +467,14 @@ class PlayerViewModel(
         )
 
         _uiState.value = _uiState.value.copy(
+            sourceIsShortReels = _uiState.value.isShortReels ||
+                repository.isShortReelsSource(entry.sourceId, entry.sourceName),
             isResolving = false,
             episode = _uiState.value.episode ?: episode,
             streams = listOf(stream),
             selectedStream = stream,
+            externalSubtitles = emptyList(),
+            embeddedSubtitleTracks = emptyList(),
             // Progressive only. An adaptive stream is matched through its manifest URI, and
             // handing a custom key to a media item Media3 treats as adaptive would put the
             // cache lookup back on a key nothing was written under.
@@ -451,7 +482,8 @@ class PlayerViewModel(
             // matched through its manifest URI, the second is read straight off disk.
             offlineCacheKey = entry.key.takeUnless { entry.isAdaptive || entry.isRemuxed },
             errorMessage = null,
-        )
+        ).withSubtitleSelection()
+        refreshOffsetCues()
     }
 
     private fun resolve(episode: EpisodeEntry) {
@@ -465,6 +497,9 @@ class PlayerViewModel(
             errorMessage = null,
             streams = emptyList(),
             selectedStream = null,
+            selectedSubtitleIndex = -1,
+            selectedEmbeddedSubtitleIndex = -1,
+            embeddedSubtitleTracks = emptyList(),
         )
 
         // Counts while the single resolve call runs. Separate job so it can be
@@ -486,7 +521,6 @@ class PlayerViewModel(
 
             // Fetched once rather than per emission: neither depends on which streams arrived,
             // and a progressive source emits several times.
-            val subtitleLang = store.currentSettings().subtitleLanguage
             val offlineSubtitles = store
                 .downloadFor(sourceId, animeUrl, episode.url)
                 ?.allSubtitles
@@ -506,6 +540,10 @@ class PlayerViewModel(
             var playing = false
 
             repository.streamsFlow(sourceId, episode.url).collect { result ->
+                // A blocking extension may return after cancellation. Rapid reel swipes
+                // must never let that old response replace the newly selected episode.
+                currentCoroutineContext().ensureActive()
+                if (_uiState.value.episode?.url != episode.url) return@collect
                 result
                     .onSuccess { streams ->
                         // The first batch starts playback. Later ones only widen the picker.
@@ -527,9 +565,6 @@ class PlayerViewModel(
                         // match was wrong, and why no setting means the source's own order is
                         // kept.
                         val chosen = defaultStream(streams, preferredHeight)
-                        val subtitleIndex = chosen?.subtitles
-                            ?.indexOfFirst { it.language.equals(subtitleLang, true) }
-                            ?: -1
 
                         _uiState.value = _uiState.value.copy(
                             isResolving = false,
@@ -538,10 +573,9 @@ class PlayerViewModel(
                             isLoadingMoreStreams = true,
                             streams = streams,
                             selectedStream = chosen,
-                            selectedSubtitleIndex = subtitleIndex,
                             externalSubtitles = offlineSubtitles,
                             errorMessage = if (chosen == null) NO_STREAM else null,
-                        )
+                        ).withSubtitleSelection()
 
                         // Loads the cues for the subtitle picked here.
                         //
@@ -591,7 +625,11 @@ class PlayerViewModel(
     // ---------------------------------------------------------- selections
 
     fun selectStream(stream: StreamOption) {
-        _uiState.value = _uiState.value.copy(selectedStream = stream)
+        _uiState.value = _uiState.value.copy(
+            selectedStream = stream,
+            embeddedSubtitleTracks = emptyList(),
+        ).withSubtitleSelection()
+        refreshOffsetCues()
         viewModelScope.launch {
             store.setPreferredQuality(
                 stream.resolution.takeIf { it > 0 }?.toString() ?: "auto",
@@ -600,8 +638,11 @@ class PlayerViewModel(
     }
 
     fun selectSubtitle(index: Int) {
-        val changed = index != _uiState.value.selectedSubtitleIndex
-        _uiState.value = _uiState.value.copy(selectedSubtitleIndex = index)
+        val state = _uiState.value
+        val changed = index != state.selectedSubtitleIndex || state.selectedEmbeddedSubtitleIndex >= 0
+        val preference = state.subtitles.getOrNull(index)?.let(::sourceSubtitlePreference)
+            ?: SubtitlePreference()
+        _uiState.value = state.copy(subtitlePreference = preference).withSubtitleSelection()
         // A correction was measured against one file's timing; another file needs its own.
         if (changed) resetSubtitleTiming()
 
@@ -614,24 +655,48 @@ class PlayerViewModel(
         // An unrecognised label leaves the stored preference alone rather than overwriting it
         // with something unusable: the track still plays, and a language that cannot be coded
         // is no basis for a search.
-        val raw = _uiState.value.subtitles.getOrNull(index)?.language
-        val code = raw?.toIso639_1().orEmpty()
-
-        // Only a real language updates the search default: "off" is a state, not a language,
-        // and letting it through would make a later search have nothing to look for.
-        if (code.isNotBlank()) subtitleLanguage = code
-
-        viewModelScope.launch {
-            store.setSubtitleLanguage(
-                when {
-                    raw == null -> "off"
-                    code.isNotBlank() -> code
-                    // Nothing usable, so what was already stored is kept.
-                    else -> subtitleLanguage.ifBlank { DEFAULT_SUBTITLE_LANGUAGE }
-                },
-            )
-        }
+        rememberSubtitlePreference(preference)
         refreshOffsetCues()
+    }
+
+    /** Container tracks follow the same persistent language/Off preference as source tracks. */
+    fun selectEmbeddedSubtitle(index: Int) {
+        val state = _uiState.value
+        val track = state.embeddedSubtitleTracks.getOrNull(index) ?: return
+        val preference = SubtitlePreference(
+            enabled = true,
+            language = subtitleLanguageCode(track.language, track.label),
+            label = track.label,
+            preferEmbedded = true,
+            embeddedIndex = index,
+            embeddedMedia = state.episode?.url to state.selectedStream?.url,
+        )
+        val changed = index != state.selectedEmbeddedSubtitleIndex || state.selectedSubtitleIndex >= 0
+        _uiState.value = state.copy(subtitlePreference = preference).withSubtitleSelection()
+        if (changed) resetSubtitleTiming()
+        rememberSubtitlePreference(preference)
+        refreshOffsetCues()
+    }
+
+    fun setEmbeddedSubtitleTracks(
+        episodeUrl: String?,
+        streamUrl: String?,
+        tracks: List<EmbeddedSubtitleTrack>,
+    ) {
+        val state = _uiState.value
+        if (state.episode?.url != episodeUrl || state.selectedStream?.url != streamUrl ||
+            state.embeddedSubtitleTracks == tracks
+        ) return
+        _uiState.value = state.copy(embeddedSubtitleTracks = tracks).withSubtitleSelection()
+        refreshOffsetCues()
+    }
+
+    private fun rememberSubtitlePreference(preference: SubtitlePreference) {
+        val code = preference.language
+        if (code.isNotBlank()) subtitleLanguage = code
+        // Kept in state immediately: a quick episode swipe must not race a DataStore write.
+        val stored = if (!preference.enabled) "off" else code.takeIf { it.isNotBlank() }
+        if (stored != null) viewModelScope.launch { store.setSubtitleLanguage(stored) }
     }
 
     /**
@@ -719,6 +784,13 @@ class PlayerViewModel(
         val detail = state.detail
         val episode = state.episode
 
+        // Use only the extension's own/embedded tracks for short dramas, never movie/TV ids
+        // left in an older saved detail.
+        if (state.isShortReels) {
+            _uiState.value = state.copy(subtitleSearch = SubtitleSearchState.Unsupported)
+            return
+        }
+
         // Built through the shared helper, so the download flow's own search cannot drift from
         // this one. `subtitleLanguage` is the already-repaired field rather than the raw
         // setting; normalising again is harmless and keeps the two paths identical.
@@ -783,6 +855,7 @@ class PlayerViewModel(
         downloadJob?.cancel()
 
         downloadJob = viewModelScope.launch {
+            val episodeUrl = _uiState.value.episode?.url
             val shown = (_uiState.value.subtitleSearch as? SubtitleSearchState.Results)
                 ?.groups
                 .orEmpty()
@@ -792,6 +865,8 @@ class PlayerViewModel(
             )
 
             val option = subtitles.download(result)
+            currentCoroutineContext().ensureActive()
+            if (_uiState.value.episode?.url != episodeUrl) return@launch
             subtitleJob?.cancel()
             if (option == null) {
                 _uiState.value = _uiState.value.copy(
@@ -805,13 +880,13 @@ class PlayerViewModel(
             // the same thing, and a panel filling up with near-identical release names makes
             // the working one harder to find.
             val external = current.externalSubtitles.filterNot { it.url == option.url } + option
-            val sourceCount = current.selectedStream?.subtitles?.size ?: 0
-
+            val preference = sourceSubtitlePreference(option)
             _uiState.value = current.copy(
                 externalSubtitles = external,
-                selectedSubtitleIndex = sourceCount + external.lastIndex,
+                subtitlePreference = preference,
                 subtitleSearch = SubtitleSearchState.Applied,
-            )
+            ).withSubtitleSelection()
+            rememberSubtitlePreference(preference)
             // A freshly downloaded file starts from its own timing, not the last one's fix.
             resetSubtitleTiming()
 
@@ -844,6 +919,10 @@ class PlayerViewModel(
         if (episodeLengthMs <= 0) return
 
         val state = _uiState.value
+        if (state.isShortReels) {
+            _uiState.value = state.copy(skipIntervals = emptyList())
+            return
+        }
         skipJob = viewModelScope.launch {
             val intervals = skips.skipTimes(
                 detail = state.detail,
@@ -979,18 +1058,33 @@ class PlayerViewModel(
     fun goToEpisode(episode: EpisodeEntry) {
         if (episode.url == _uiState.value.episode?.url) return
 
+        episodeJob?.cancel()
+        autoNextJob?.cancel()
+        resolveJob?.cancel()
+        resolveTicker?.cancel()
+        cuesJob?.cancel()
         // Downloaded subtitles are dropped with the episode. They are timed against one
         // specific release, so carrying them over would leave the next episode showing the
         // previous one's dialogue - worse than no subtitles, because it looks like it works.
         subtitleJob?.cancel()
+        downloadJob?.cancel()
         skipJob?.cancel()
         subtitles.clearCache()
 
         _uiState.value = _uiState.value.copy(
             episode = episode,
+            isResolving = true,
+            isLoadingMoreStreams = false,
+            resolveSeconds = 0,
+            selectedStream = null,
+            streams = emptyList(),
+            offlineCacheKey = null,
+            errorMessage = null,
             resumeMs = 0L,
             externalSubtitles = emptyList(),
             selectedSubtitleIndex = -1,
+            selectedEmbeddedSubtitleIndex = -1,
+            embeddedSubtitleTracks = emptyList(),
             subtitleSearch = SubtitleSearchState.Idle,
             // The previous episode's opening is not this one's.
             skipIntervals = emptyList(),
@@ -1003,12 +1097,15 @@ class PlayerViewModel(
         // subtitle URL as already loaded and never refetch. Some sources reuse a URL
         // shape per episode, so this is not hypothetical.
         cuesLoadedFor = null
+        lastHistoryWrite = 0L
 
         // The downloaded copy first here as well, or moving to the next episode of a show that
         // was downloaded whole would go back to the network for one that is already on disk -
         // and fail outright with no connection.
-        viewModelScope.launch {
+        episodeJob = viewModelScope.launch {
             val offline = offlineEntryFor(episode.url)
+            currentCoroutineContext().ensureActive()
+            if (_uiState.value.episode?.url != episode.url) return@launch
             if (offline != null) {
                 playOffline(offline)
                 refreshOffsetCues()
@@ -1099,10 +1196,12 @@ class PlayerViewModel(
     fun onPlaybackEnded(positionMs: Long, durationMs: Long) {
         flushProgress(durationMs.takeIf { it > 0 } ?: positionMs, durationMs)
 
+        autoNextJob?.cancel()
+        val endedEpisodeUrl = _uiState.value.episode?.url
         if (_uiState.value.autoPlayNext && _uiState.value.hasNextEpisode) {
-            viewModelScope.launch {
+            autoNextJob = viewModelScope.launch {
                 delay(600)
-                nextEpisode()
+                if (_uiState.value.episode?.url == endedEpisodeUrl) nextEpisode()
             }
         }
     }
@@ -1123,6 +1222,7 @@ class PlayerViewModel(
             animeUrl: String,
             episodeUrl: String,
             resumeMs: Long,
+            savedSourceName: String = "",
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = PlayerViewModel(
@@ -1135,6 +1235,7 @@ class PlayerViewModel(
                 animeUrl = animeUrl,
                 initialEpisodeUrl = episodeUrl,
                 initialResumeMs = resumeMs,
+                savedSourceName = savedSourceName,
             ) as T
         }
     }

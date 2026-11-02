@@ -80,8 +80,12 @@ data class EpisodeRange(val label: String, val fromIndex: Int, val toIndex: Int)
  *
  * Labels are one-based because episode numbering is, even though the indices are not.
  */
-fun episodeRanges(count: Int, size: Int = EPISODE_RANGE_SIZE): List<EpisodeRange> {
-    if (count <= size) return emptyList()
+fun episodeRanges(
+    count: Int,
+    size: Int = EPISODE_RANGE_SIZE,
+    shortReels: Boolean = false,
+): List<EpisodeRange> {
+    if (shortReels || count <= size) return emptyList()
 
     return (0 until count step size).map { start ->
         val end = (start + size - 1).coerceAtMost(count - 1)

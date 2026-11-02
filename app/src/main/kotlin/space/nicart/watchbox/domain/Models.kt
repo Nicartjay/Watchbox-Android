@@ -304,6 +304,10 @@ data class EpisodeEntry(
 
     val numberLabel: String? get() = number.takeIf { it >= 0 }?.tidy()
 
+    /** Number-only pickers use the source number, or a one-based position when it is unknown. */
+    fun numberLabelOrIndex(index: Int): String =
+        numberLabel?.takeIf { number.isFinite() } ?: (index + 1).toString()
+
     private companion object {
         val GENERIC_NAME = Regex("""(?i)^(episode|ep\.?|cap[íi]tulo)?\s*\d+(\.\d+)?$""")
     }

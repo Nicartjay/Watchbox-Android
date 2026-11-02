@@ -105,6 +105,7 @@ fun DetailScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val downloadStatus by viewModel.downloadStatus.collectAsStateWithLifecycle()
     val downloadPicker by viewModel.picker.collectAsStateWithLifecycle()
+    val automaticDownload by viewModel.automaticDownload.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // Asked for the first time a download is started, not on arrival.
@@ -116,6 +117,21 @@ fun DetailScreen(
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { /* Declined is survivable: the download still runs, just quietly. */ }
+
+    fun requestDownloadNotification() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    fun requestEpisodeDownload(episode: EpisodeEntry) {
+        if (state.isShortReels) requestDownloadNotification()
+        viewModel.requestDownload(episode)
+    }
 
     // Held at screen level, not in the episode row: a row scrolled out of view is destroyed,
     // and a dialog owned by one would vanish with it mid-question.
@@ -452,7 +468,7 @@ fun DetailScreen(
                                             {
                                                 EpisodeDownloadButton(
                                                     status = downloadStatus[ep.url],
-                                                    onDownload = { viewModel.requestDownload(ep) },
+                                                    onDownload = { requestEpisodeDownload(ep) },
                                                     onPause = { viewModel.pauseDownload(ep.url) },
                                                     onResume = { viewModel.resumeDownload(ep.url) },
                                                     onDelete = {
@@ -536,7 +552,7 @@ fun DetailScreen(
                                     {
                                         EpisodeDownloadButton(
                                             status = downloadStatus[ep.url],
-                                            onDownload = { viewModel.requestDownload(ep) },
+                                            onDownload = { requestEpisodeDownload(ep) },
                                             onPause = { viewModel.pauseDownload(ep.url) },
                                             onResume = { viewModel.resumeDownload(ep.url) },
                                             onDelete = {
@@ -584,6 +600,21 @@ fun DetailScreen(
                                 isTablet = isTablet,
                                 horizontalPadding = contentPadding,
                                 modifier = Modifier.padding(bottom = 20.dp),
+                            )
+                        }
+                    }
+
+                    if (state.isShortReels && (detail.episodes.size > 1 || automaticDownload.total > 0)) {
+                        item(key = "short-reels-download-all") {
+                            ShortReelsDownloadBar(
+                                episodeCount = detail.episodes.size,
+                                state = automaticDownload,
+                                onDownloadAll = {
+                                    requestDownloadNotification()
+                                    viewModel.requestSeriesDownload()
+                                },
+                                onStopAdding = viewModel::cancelAutomaticDownloads,
+                                modifier = Modifier.padding(horizontal = contentPadding),
                             )
                         }
                     }
@@ -664,6 +695,7 @@ fun DetailScreen(
                                 // season, so they live where the season is known.
                                 EpisodeList(
                                     episodes = detail.episodes,
+                                    numberedOnly = state.isShortReels,
                                     watchedUrls = state.watchedEpisodeUrls,
                                     currentUrl = state.history?.episodeUrl,
                                     isLoading = false,
@@ -671,7 +703,7 @@ fun DetailScreen(
                                     onPlay = { onPlay(it, 0L) },
                                     modifier = Modifier.padding(bottom = 20.dp),
                                     downloadStatus = downloadStatus,
-                                    onDownload = viewModel::requestDownload,
+                                    onDownload = ::requestEpisodeDownload,
                                     onPauseDownload = { viewModel.pauseDownload(it.url) },
                                     onResumeDownload = { viewModel.resumeDownload(it.url) },
                                     onDeleteDownload = { episode ->
@@ -871,14 +903,7 @@ fun DetailScreen(
         DownloadQualityDialog(
             state = downloadPicker,
             onPick = { stream ->
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
-                    ContextCompat.checkSelfPermission(
-                        context,
-                        android.Manifest.permission.POST_NOTIFICATIONS,
-                    ) != PackageManager.PERMISSION_GRANTED
-                ) {
-                    notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                }
+                requestDownloadNotification()
                 viewModel.confirmDownload(stream)
             },
             onPickSubtitle = viewModel::confirmDownloadWithSubtitle,

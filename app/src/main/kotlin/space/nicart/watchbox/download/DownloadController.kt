@@ -10,13 +10,28 @@ import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.exoplayer.scheduler.Requirements
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.sync.Semaphore
+import java.util.concurrent.ConcurrentHashMap
 import space.nicart.watchbox.data.local.DownloadEntry
 import space.nicart.watchbox.data.local.DownloadState
 import space.nicart.watchbox.data.local.DownloadedSubtitle
@@ -30,6 +45,7 @@ import space.nicart.watchbox.domain.SubtitleRepository
 import java.io.File
 import space.nicart.watchbox.domain.SubtitleOption
 import space.nicart.watchbox.data.remote.SubtitleResult
+import space.nicart.watchbox.R
 
 /**
  * The app's handle on downloading.
@@ -63,7 +79,66 @@ class DownloadController(
     private val subtitleRepository: SubtitleRepository? = null,
 ) {
 
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val ready = CompletableDeferred<Unit>()
+    private val remuxJobs = ConcurrentHashMap<String, Job>()
+
+    private val shortReelsQueue: ShortReelsDownloadQueue by lazy {
+        ShortReelsDownloadQueue(
+            scope = scope,
+            existingDownloads = {
+                ready.await()
+                store.currentDownloads()
+            },
+            onStart = { detail ->
+                val settings = store.currentSettings()
+                check(!settings.downloadWifiOnly || !isMetered()) {
+                    context.getString(R.string.download_short_reels_wifi_required)
+                }
+                withContext(Dispatchers.Main) { FfmpegDownloadService.start(context, detail.title) }
+                cacheDetail(detail)
+            },
+            prepare = { detail, episode ->
+                val streams = withTimeout(45_000L) {
+                    repository.streamsFlow(detail.sourceId, episode.url).first().getOrThrow()
+                }
+                currentCoroutineContext().ensureActive()
+                val preferred = store.currentSettings().preferredQuality.filter(Char::isDigit).toIntOrNull()
+                val stream = automaticDownloadStream(streams, preferred)
+                    ?: error(context.getString(R.string.download_short_reels_no_stream))
+                check(
+                    store.currentDownloads().let { entries ->
+                        entries.size < DownloadEntry.MAX_ENTRIES ||
+                            entries.any { it.key == "${detail.key}::${episode.url}" }
+                    },
+                ) { "Download limit reached. Remove older downloads first." }
+                val registration = enqueue(
+                    sourceId = detail.sourceId,
+                    animeUrl = detail.url,
+                    title = detail.title,
+                    posterUrl = detail.posterUrl,
+                    sourceName = detail.sourceName,
+                    episode = episode,
+                    stream = stream,
+                )
+                // Once registration starts, let that episode finish joining the engine queue.
+                // Stopping a batch cancels the remaining episodes, not this already-added one.
+                withContext(NonCancellable) { registration.await() }
+            },
+            onIdle = { stopFfmpegServiceIfIdle() },
+        )
+    }
+
+    val shortReelsDownloads: StateFlow<Map<String, ShortReelsDownloadState>>
+        get() = shortReelsQueue.states
+
+    fun enqueueShortReels(detail: AnimeDetail, episodes: List<EpisodeEntry>) {
+        if (!repository.isShortReelsSource(detail.sourceId, detail.sourceName)) return
+        start()
+        shortReelsQueue.enqueue(detail, episodes)
+    }
+
+    fun cancelShortReelsQueue(titleKey: String) = shortReelsQueue.cancel(titleKey)
 
     private val _progress = MutableStateFlow<Map<String, DownloadProgress>>(emptyMap())
 
@@ -77,20 +152,27 @@ class DownloadController(
      * manager opens a database and scans the cache index, and most sessions never download
      * anything.
      */
+    @Synchronized
     fun start() {
         if (started) return
         started = true
 
         scope.launch {
-            val settings = store.currentSettings()
-            engine.useVolume(settings.downloadVolume)
-            engine.useConcurrency(settings.downloadConcurrency)
-
-            val manager = engine.manager()
-            manager.addListener(listener)
-            applyRequirements(settings.downloadWifiOnly)
-            reconcile()
-            pollProgress(manager)
+            try {
+                val settings = store.currentSettings()
+                engine.useVolume(settings.downloadVolume)
+                engine.useConcurrency(settings.downloadConcurrency)
+                val manager = engine.manager()
+                manager.addListener(listener)
+                applyRequirements(settings.downloadWifiOnly)
+                reconcile()
+                ready.complete(Unit)
+                pollProgress(manager)
+            } catch (error: Exception) {
+                ready.completeExceptionally(error)
+                android.util.Log.e(TAG, "Could not initialize downloads", error)
+                return@launch
+            }
         }
     }
 
@@ -177,7 +259,7 @@ class DownloadController(
          * a detail to hand, and failing the download over a page would be the wrong trade.
          */
         detail: AnimeDetail? = null,
-    ) {
+    ): Deferred<Unit> {
         // Two engines, split by format rather than by preference.
         //
         // FFmpeg takes anything segmented - HLS, DASH - and anything served through a proxy
@@ -194,14 +276,15 @@ class DownloadController(
         // an interrupted segmented download starts again. Progressive files keep both, which is
         // why they stay on Media3 rather than everything moving across.
         if (stream.isLocalProxy || stream.isHls || stream.isDash) {
-            enqueueViaFfmpeg(sourceId, animeUrl, title, posterUrl, sourceName, episode, stream, subtitle)
             detail?.let { scope.launch { cacheDetail(it) } }
-            return
+            return scope.async {
+                enqueueViaFfmpeg(sourceId, animeUrl, title, posterUrl, sourceName, episode, stream, subtitle)
+            }
         }
 
         detail?.let { scope.launch { cacheDetail(it) } }
 
-        scope.launch {
+        return scope.async {
             val settings = store.currentSettings()
             engine.useVolume(settings.downloadVolume)
 
@@ -226,6 +309,8 @@ class DownloadController(
                 createdAt = System.currentTimeMillis(),
             )
             store.saveDownload(entry)
+            val shortReels = repository.isShortReelsSource(sourceId, sourceName)
+            if (shortReels) fetchSubtitles(entry, stream.subtitles, null, stream.headers)
 
             // The engine needs to know which download it is working on before the first
             // request, because the data source asks the resolver for headers rather than
@@ -280,7 +365,7 @@ class DownloadController(
             //
             // The stream's own tracks are passed in because the choice between them and an
             // online search is made from what this particular stream offers.
-            fetchSubtitles(entry, stream.subtitles, subtitle, stream.headers)
+            if (!shortReels) fetchSubtitles(entry, stream.subtitles, subtitle, stream.headers)
         }
     }
 
@@ -355,11 +440,12 @@ class DownloadController(
         tracks: List<SubtitleOption>,
         streamHeaders: Map<String, String>,
     ): List<DownloadedSubtitle> {
-        if (tracks.isEmpty()) return emptyList()
+        val available = downloadableSubtitleTracks(tracks)
+        if (available.isEmpty()) return emptyList()
 
         val dir = storage.subtitleDir(entry.volumeId, entry.key)
 
-        return tracks.mapIndexedNotNull { index, track ->
+        return available.mapIndexedNotNull { index, track ->
             runCatching {
                 val text = subtitleRepository?.rawText(track.url, streamHeaders).orEmpty()
                 if (text.isBlank()) return@runCatching null
@@ -468,7 +554,7 @@ class DownloadController(
         true
     }
 
-    private fun enqueueViaFfmpeg(
+    private suspend fun enqueueViaFfmpeg(
         sourceId: Long,
         animeUrl: String,
         title: String,
@@ -478,102 +564,98 @@ class DownloadController(
         stream: StreamOption,
         subtitle: SubtitleResult?,
     ) {
-        scope.launch {
-            val settings = store.currentSettings()
-            val volumeId = settings.downloadVolume ?: VOLUME_INTERNAL
-
-            // Resized on each use rather than held, since the preference can change between
-            // downloads and a Semaphore's limit is fixed at construction.
+        val settings = store.currentSettings()
+        val volumeId = settings.downloadVolume ?: VOLUME_INTERNAL
+        val entry = DownloadEntry(
+            sourceId = sourceId,
+            animeUrl = animeUrl,
+            episodeUrl = episode.url,
+            title = title,
+            episodeName = episode.name,
+            episodeNumber = episode.number,
+            posterUrl = posterUrl,
+            sourceName = sourceName,
+            streamLabel = stream.label,
+            isRemuxed = true,
+            volumeId = volumeId,
+            state = DownloadState.QUEUED,
+            createdAt = System.currentTimeMillis(),
+        )
+        val queuedAt = System.nanoTime()
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             val slots = ffmpegSlots(settings.downloadConcurrency)
-
-            val entry = DownloadEntry(
-                sourceId = sourceId,
-                animeUrl = animeUrl,
-                episodeUrl = episode.url,
-                title = title,
-                episodeName = episode.name,
-                episodeNumber = episode.number,
-                posterUrl = posterUrl,
-                sourceName = sourceName,
-                streamLabel = stream.label,
-                // Remuxed to a single file, so it is neither adaptive nor cache-backed as far as
-                // playback is concerned - it is a plain file on disk.
-                isAdaptive = false,
-                isRemuxed = true,
-                volumeId = volumeId,
-                state = DownloadState.DOWNLOADING,
-                createdAt = System.currentTimeMillis(),
-            )
-            store.saveDownload(entry)
-
-            val target = storage.remuxFile(volumeId, entry.key)
-
-            // The Wi-Fi rule, enforced here because the platform cannot enforce it for us.
-            //
-            // Media3's queue has this applied through Requirements, but an ffmpeg session runs in
-            // this process and the download service knows nothing about it - so without this
-            // check the setting silently did not apply to most downloads. Refused rather than
-            // held: there is no scheduler here to release it later, and a download that sat
-            // waiting forever with no way to see why would be worse than one that says no.
-            if (settings.downloadWifiOnly && isMetered()) {
-                android.util.Log.i(TAG, "refusing ${entry.key}: Wi-Fi only and connection is metered")
-                store.saveDownload(entry.copy(state = DownloadState.FAILED))
-                return@launch
-            }
-
-            // Queued behind the concurrency limit, except for a proxied stream which cannot
-            // wait. Marked queued while it waits so the UI does not claim it is transferring.
-            val proxied = stream.isLocalProxy
-            if (!proxied) {
-                store.saveDownload(entry.copy(state = DownloadState.QUEUED))
-                slots.acquire()
-                store.saveDownload(
-                    entryFor(entry.key)?.copy(state = DownloadState.DOWNLOADING) ?: entry,
-                )
-            }
-
-            val ok = try {
-                ffmpeg.download(
-                    key = entry.key,
-                    stream = stream,
-                    target = target,
-                ) { written, percent ->
-                    // In memory only, like Media3's own progress: this fires several times a
-                    // second and every registry write rewrites the whole preferences blob.
-                    _progress.value = _progress.value + (
-                        entry.key to DownloadProgress(
-                            // From ffprobe's duration, so this is real progress through the
-                            // timeline. Zero when the probe could not read a length, in which
-                            // case the UI falls back to showing the size written.
-                            percent = percent,
-                            bytesDownloaded = written,
-                        )
-                        )
+            var acquired = false
+            try {
+                if (!stream.isLocalProxy) {
+                    slots.acquire()
+                    acquired = true
                 }
-            } finally {
-                if (!proxied) slots.release()
-            }
+                currentCoroutineContext().ensureActive()
+                if (entryFor(entry.key) == null) return@launch
+                val currentSettings = store.currentSettings()
+                check(!currentSettings.downloadWifiOnly || !isMetered()) {
+                    context.getString(R.string.download_short_reels_wifi_required)
+                }
+                check(storage.isVolumeAvailable(volumeId)) { "Download storage is unavailable." }
 
-            _progress.value = _progress.value - entry.key
-            stopFfmpegServiceIfIdle()
+                // Batch requests may wait minutes for a slot. Resolve their expiring URLs
+                // again immediately before transfer, not while another episode is downloading.
+                val waitedMs = (System.nanoTime() - queuedAt) / 1_000_000
+                val actual = if (!stream.isLocalProxy && waitedMs > 5_000) {
+                    val fresh = withTimeout(45_000L) { repository.streams(sourceId, episode.url).getOrThrow() }
+                    matchLabel(fresh, stream.label) ?: error("No downloadable stream is available.")
+                } else {
+                    stream
+                }
+                val shortReels = repository.isShortReelsSource(sourceId, sourceName)
+                val current = entryFor(entry.key) ?: return@launch
+                store.saveDownload(current.copy(state = DownloadState.DOWNLOADING, streamLabel = actual.label))
+                withContext(Dispatchers.Main) { FfmpegDownloadService.start(context, title) }
+                val target = storage.remuxFile(volumeId, entry.key)
 
-            val current = entryFor(entry.key) ?: entry
-            if (ok) {
+                // Save reel sidecars separately. A bad subtitle URL must not fail the video;
+                // native in-file subtitles are still retained by FFmpeg's video-input mapping.
+                val media = if (shortReels) actual.copy(subtitles = emptyList()) else actual
+                val ok = ffmpeg.download(entry.key, media, target) { written, percent ->
+                    _progress.value = _progress.value + (
+                        entry.key to DownloadProgress(percent = percent, bytesDownloaded = written)
+                    )
+                }
+                currentCoroutineContext().ensureActive()
+                if (shortReels && ok) fetchSubtitles(current, actual.subtitles, null, actual.headers)
+                val latest = entryFor(entry.key) ?: return@launch
                 store.saveDownload(
-                    current.copy(
+                    if (ok) latest.copy(
                         state = DownloadState.COMPLETED,
                         sizeBytes = target.length(),
                         downloadUri = target.toURI().toString(),
                         completedAt = System.currentTimeMillis(),
-                    ),
+                    ) else latest.copy(state = DownloadState.FAILED),
                 )
-                // No source tracks here: ffmpeg has already muxed those into the file, so
-                // fetching them again as sidecars would store the same cues twice and show
-                // every language in the panel two times over.
-                fetchSubtitles(current, emptyList(), subtitle, stream.headers)
-            } else {
-                store.saveDownload(current.copy(state = DownloadState.FAILED))
+                if (!shortReels && ok) fetchSubtitles(latest, emptyList(), subtitle, actual.headers)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                android.util.Log.w(TAG, "remux failed: ${entry.key}", error)
+                entryFor(entry.key)?.let { store.saveDownload(it.copy(state = DownloadState.FAILED)) }
+            } finally {
+                if (acquired) slots.release()
+                _progress.value = _progress.value - entry.key
+                currentCoroutineContext()[Job]?.let { remuxJobs.remove(entry.key, it) }
+                withContext(NonCancellable) { stopFfmpegServiceIfIdle() }
             }
+        }
+        if (remuxJobs.putIfAbsent(entry.key, job) != null) {
+            job.cancel()
+            return
+        }
+        try {
+            store.saveDownload(entry)
+            job.start()
+        } catch (error: Exception) {
+            remuxJobs.remove(entry.key, job)
+            job.cancel()
+            throw error
         }
     }
 
@@ -689,9 +771,20 @@ class DownloadController(
             // already running is left alone; one that failed is started again from nothing,
             // which is the only thing an ffmpeg session can do.
             if (entry.isRemuxed) {
-                if (ffmpeg.isRunning(key)) {
+                if (ffmpeg.isRunning(key) || remuxJobs[key]?.isActive == true) {
                     android.util.Log.i(TAG, "resume ignored: $key is already running")
                     return@launch
+                }
+                if (entry.state == DownloadState.FAILED &&
+                    repository.isShortReelsSource(entry.sourceId, entry.sourceName)
+                ) {
+                    val detail = store.offlineDetail(entry.sourceId, entry.animeUrl)?.toDetail()
+                        ?: repository.detail(entry.sourceId, entry.animeUrl).getOrNull()
+                    val episode = detail?.episodes?.firstOrNull { it.url == entry.episodeUrl }
+                    if (detail != null && episode != null) {
+                        enqueueShortReels(detail, listOf(episode))
+                        return@launch
+                    }
                 }
                 android.util.Log.i(TAG, "restarting remuxed download $key from the beginning")
                 restartRemuxed(entry)
@@ -804,6 +897,7 @@ class DownloadController(
             // An ffmpeg session is not in Media3's queue, so the service knows nothing about it
             // and it has to be stopped directly.
             if (ffmpeg.isRunning(key)) ffmpeg.cancel(key)
+            remuxJobs[key]?.cancelAndJoin()
             if (entry?.isRemuxed == true) {
                 runCatching { storage.remuxFile(volumeId, key).delete() }
             }
@@ -839,6 +933,7 @@ class DownloadController(
     /** Cancels every download and deletes what they had written. */
     fun removeAll() {
         scope.launch {
+            shortReelsQueue.cancelAll()
             // Both engines, and the sidecars.
             //
             // Clearing Media3's queue alone left every remuxed file on disk with nothing
@@ -847,6 +942,7 @@ class DownloadController(
             // queue, so they have to be stopped and their files removed here.
             store.currentDownloads().forEach { entry ->
                 if (ffmpeg.isRunning(entry.key)) ffmpeg.cancel(entry.key)
+                remuxJobs[entry.key]?.cancelAndJoin()
                 if (entry.isRemuxed) {
                     runCatching { storage.remuxFile(entry.volumeId, entry.key).delete() }
                 }
@@ -1029,6 +1125,9 @@ class DownloadController(
                 }
                 return@forEach
             }
+            // A queued/probing job or one saving subtitle files is not an orphaned,
+            // completed remux just because no native FFmpeg session exists at this instant.
+            if (remuxJobs[entry.key]?.isActive == true) return@forEach
 
             // No session and no file: nothing is happening, and something claimed otherwise.
             if (size <= 0L) {
@@ -1062,7 +1161,8 @@ class DownloadController(
      */
     private suspend fun stopFfmpegServiceIfIdle() {
         val stillRunning = store.currentDownloads().any { ffmpeg.isRunning(it.key) }
-        if (!stillRunning) {
+        val preparing = shortReelsQueue.states.value.values.any { it.isRunning }
+        if (!stillRunning && remuxJobs.isEmpty() && !preparing) {
             withContext(Dispatchers.Main) { FfmpegDownloadService.stop(context) }
         }
     }
@@ -1184,16 +1284,17 @@ class DownloadController(
 
     /** Semaphore sized to the current concurrency preference, rebuilt when it changes. */
     private var slotsLimit = 0
-    private var slots: java.util.concurrent.Semaphore? = null
+    private var slots: Semaphore? = null
 
-    private fun ffmpegSlots(limit: Int): java.util.concurrent.Semaphore {
+    @Synchronized
+    private fun ffmpegSlots(limit: Int): Semaphore {
         val clamped = limit.coerceAtLeast(1)
         val existing = slots
         if (existing != null && slotsLimit == clamped) return existing
         // A permit held under the old limit is released against the new semaphore, which is
         // harmless: the release is what the finally block does and an unmatched one only raises
         // the ceiling for a moment.
-        return java.util.concurrent.Semaphore(clamped, true).also {
+        return Semaphore(clamped).also {
             slots = it
             slotsLimit = clamped
         }

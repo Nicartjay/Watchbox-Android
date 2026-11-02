@@ -97,8 +97,12 @@ class ExtensionManager(
      * Exposed as a flow so a badge can react without the Extensions screen having
      * been opened.
      */
-    val updateCount: StateFlow<Int> = _installed
-        .map { list -> list.count { it.hasUpdate } }
+    val updateCounts: StateFlow<ExtensionUpdateCounts> = _installed
+        .map { list -> list.extensionUpdateCounts() }
+        .stateIn(scope, SharingStarted.Eagerly, ExtensionUpdateCounts())
+
+    val updateCount: StateFlow<Int> = updateCounts
+        .map { it.total }
         .stateIn(scope, SharingStarted.Eagerly, 0)
 
     // ------------------------------------------------------------ installed
@@ -147,10 +151,22 @@ class ExtensionManager(
     fun catalogueSourceById(id: Long): AnimeCatalogueSource? =
         _sources.value[id] as? AnimeCatalogueSource
 
-    /** Every browsable source, in a stable display order. */
-    fun catalogueSources(): List<AnimeCatalogueSource> = _installed.value
-        .flatMap { it.sources }
-        .filterIsInstance<AnimeCatalogueSource>()
+    /** Also accepts a saved name so downloaded content remains identifiable offline. */
+    fun isShortReelsSource(sourceId: Long, savedSourceName: String = ""): Boolean {
+        val extension = extensionForSource(sourceId)
+        val source = extension?.sources?.firstOrNull { it.id == sourceId } ?: sourceById(sourceId)
+        return isShortReelsProvider(source?.name.orEmpty(), extension?.name.orEmpty()) ||
+            isShortReelsProvider(savedSourceName)
+    }
+
+    /** Every browsable source in the requested collection, in a stable display order. */
+    fun catalogueSources(
+        collection: SourceCollection = SourceCollection.ALL,
+    ): List<AnimeCatalogueSource> = _installed.value
+        .flatMap { extension ->
+            extension.sources.filterIsInstance<AnimeCatalogueSource>()
+                .filter { collection.includes(isShortReelsProvider(it.name, extension.name)) }
+        }
         .sortedBy { it.name.lowercase() }
 
     // ------------------------------------------------------------ available

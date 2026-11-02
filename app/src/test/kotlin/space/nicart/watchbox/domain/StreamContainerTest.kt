@@ -75,6 +75,26 @@ class StreamContainerTest {
     }
 
     @Test
+    fun `Arvin HD media playlists behind stream redirects keep their HLS declaration`() {
+        val s = stream(
+            "HepDrama · Original · Video · HLS",
+            "https://hepdrama.test/api/stream/episode-id/original",
+        )
+        assertTrue(s.isHls)
+        assertFalse(s.isDash)
+    }
+
+    @Test
+    fun `a client-only HLS fragment identifies an opaque Arvin stream URL`() {
+        val s = stream(
+            "HepDrama · Original · Video",
+            "https://hepdrama.test/api/stream/episode-id/original#.m3u8",
+        )
+        assertTrue(s.isHls)
+        assertFalse(s.isDash)
+    }
+
+    @Test
     fun `a jpg url is hls when the label says so`() {
         // Nebula's variants end .jpg and are served as image/jpeg, but the segments are
         // genuine fMP4 behind those names.

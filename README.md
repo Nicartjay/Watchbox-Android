@@ -86,8 +86,10 @@ doing on a tablet to compare before settling on one.
 
 Neither of these is a bug:
 
-- **It is landscape-only.** Locked to `sensorLandscape`, so it will not rotate to
-  portrait. If you hold your tablet in portrait, use the phone APK.
+- **The browsing UI is landscape-only.** Regular playback also stays in landscape.
+  Arvin short-form videos are the exception: on a touch tablet, they use the portrait
+  Short/Reels player even with the TV APK. Actual televisions keep the regular player.
+  For portrait browsing as well, use the phone APK.
 - **Affordance is focus-based, not touch-based.** Taps work — every control is
   genuinely clickable — but the highlight and scale follow *focus*, and ripples are
   switched off because they are invisible at three metres. A tap therefore acts
@@ -188,6 +190,69 @@ smaller-screen design given more room.
 </details>
 
 ---
+
+## 📱 Short/Reels
+
+Extensions whose source or extension name starts with **`Arvin-`** are treated as
+portrait short-drama providers. The suffix is not an allowlist: `Arvin-HD`,
+`Arvin-RF`, and future `Arvin-*` providers follow the same rules.
+
+- **Phones:** Home has a **Shorts/Reels** section with Arvin provider shortcuts,
+  recent titles alternating across providers, and an extension-install entry.
+  Browse and its Extensions page include both normal and Arvin providers in
+  separate **Normal extensions** and **Shorts/Reels** groups.
+  Shorts/Reels never enters the Home hero or Featured selection. Their videos
+  open in the portrait player.
+- **Tablets:** Arvin providers have a dedicated **Short/Reels** navigation section,
+  rather than appearing in Home, its spotlight, or its personal shelves.
+- **TV:** the same **Short/Reels** section lists the providers, but playback keeps
+  the existing landscape player and remote controls.
+- **Touch tablets using the TV APK** still get portrait Arvin playback. On devices
+  that do not honor orientation requests, the video stays in a centered portrait
+  stage rather than being stretched across the display.
+
+In the portrait player, tap to pause/play, swipe up/down for the next/previous
+episode, and **double-tap the left/right half to rewind/advance 10 seconds**.
+**Lock** is an icon beside **Cast**, with a gap between them. **Quality, Subs, and
+Speed** are icon-only buttons on the right, above **Previous Episode**. The episode
+picker and detail page use **number-only square episode buttons**; hold a
+detail-page episode to start downloading immediately. Holding a saved or queued
+episode exposes its download controls.
+Short/Reels shows **all episodes without groups of fifty**. Quality is shown only
+when its picker has more than one distinct stream option. Subs is hidden when
+there are no provider-supplied, downloaded, or in-file subtitle tracks. Your subtitle language
+or **Off** choice carries to the next episode, including in-file tracks, without
+reusing the previous episode's subtitle file.
+The timeline and casting remain available. Ordinary providers keep their existing
+player, detailed episode lists, and gestures.
+
+Short/Reels downloads have **no server, quality, or subtitle prompt**: they use the
+saved quality preference (or the provider's default) and automatically save any
+supplied subtitle tracks, even if playback subtitles are Off. In-file subtitles
+are retained too; no movie/TV subtitle search is involved. **Download all** on a
+series queues every episode, skips existing downloads, and reports preparation
+failures without stopping the remaining episodes. Preparation is app-owned and
+continues when leaving the detail page. **Stop adding** leaves already-queued
+downloads running. Wi-Fi-only and concurrency preferences still apply, and queued
+stream URLs are refreshed when needed before transfer.
+
+At the main navigation level, **Back returns to Home** from other sections;
+**Back on Home exits**. Detail and player routes retain their normal Back stack.
+
+Short/Reels content is **not matched against TMDB**: no TMDB artwork, episode
+stills, recommendations, extras, ratings, or trailers are requested for it, even
+when an older saved entry contains a TMDB id. Subtitles come from the extension
+or the video file, not movie/TV subtitle searches.
+
+Arvin entries carry a **Shorts/Reels** tag in both installed and available
+extension lists, and on provider-selection tiles. On **tablets and TV**, the
+**Extensions** button in **Short/Reels** lists only short-form extensions; the one
+in **Browse** lists only normal extensions. This applies to both installed and available entries,
+and clearing search or filters does not mix the two collections.
+
+Tablet and TV update badges follow the same split: Arvin updates badge **Short/Reels**,
+while normal-extension updates badge **Browse**. Each section's Extensions button
+shows only its own update count. On phones, **Browse** badges updates for both types.
 
 ## ⬇️ Downloads
 

@@ -120,6 +120,7 @@ fun TvHomeScreen(
     onOpenAnime: (AnimeCard) -> Unit,
     onResume: (WatchHistoryEntry) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenShortReels: () -> Unit,
     onPlay: (TvPlayRequest.Ready) -> Unit = {},
     pickerOpen: Boolean = false,
     modifier: Modifier = Modifier,
@@ -166,6 +167,8 @@ fun TvHomeScreen(
     if (state.hasNoSources) {
         TvHomeEmpty(
             hasNoRepos = state.hasNoRepos,
+            hasShortReels = state.hasShortReels,
+            onOpenShortReels = onOpenShortReels,
             // Both branches land in Settings, because that is where the TV build keeps the
             // extension list - there is no separate destination to send the user to.
             onOpenSettings = onOpenSettings,
@@ -416,6 +419,8 @@ fun TvHomeScreen(
 @Composable
 private fun TvHomeEmpty(
     hasNoRepos: Boolean,
+    hasShortReels: Boolean,
+    onOpenShortReels: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -428,7 +433,14 @@ private fun TvHomeEmpty(
         // Two different dead ends, and sending the user to the wrong one leaves them
         // stuck: with no repository the extension list is empty, and once one exists the
         // remaining step is installing from it rather than adding another.
-        if (hasNoRepos) {
+        if (hasShortReels) {
+            WbEmptyState(
+                title = stringResource(R.string.home_short_reels_title),
+                body = stringResource(R.string.home_short_reels_body),
+                actionLabel = stringResource(R.string.nav_short_reels),
+                onAction = onOpenShortReels,
+            )
+        } else if (hasNoRepos) {
             WbEmptyState(
                 title = stringResource(R.string.empty_no_repos_title),
                 body = stringResource(R.string.empty_no_repos_body),

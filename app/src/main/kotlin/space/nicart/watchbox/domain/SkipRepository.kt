@@ -5,6 +5,7 @@ import space.nicart.watchbox.data.remote.AniSkipApi
 import space.nicart.watchbox.data.remote.ArmApi
 import space.nicart.watchbox.data.remote.IntroDbApi
 import space.nicart.watchbox.data.remote.SkipInterval
+import space.nicart.watchbox.extension.isShortReelsProvider
 
 /**
  * Opening and ending timestamps for an episode, when they can be established.
@@ -44,6 +45,7 @@ class SkipRepository(
         episodeLengthMs: Long,
     ): List<SkipInterval> {
         if (detail == null || episode == null) return emptyList()
+        if (isShortReelsProvider(detail.sourceName)) return emptyList()
         val number = episode.number.toInt().takeIf { it > 0 } ?: return emptyList()
 
         // A film has no opening to skip, and asking would spend requests to be told so.

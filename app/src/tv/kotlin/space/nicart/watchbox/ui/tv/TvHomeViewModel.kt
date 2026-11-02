@@ -3,7 +3,6 @@ package space.nicart.watchbox.ui.tv
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -11,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
@@ -23,6 +23,7 @@ import space.nicart.watchbox.domain.AnimeRepository
 import space.nicart.watchbox.domain.friendlyMessage
 import space.nicart.watchbox.extension.ExtensionManager
 import space.nicart.watchbox.ui.browse.SourceEntry
+import space.nicart.watchbox.ui.browse.sourceEntries
 import space.nicart.watchbox.data.local.ARTWORK_LANGUAGE_DEFAULT
 import kotlin.random.Random
 
@@ -63,6 +64,7 @@ data class TvHomeState(
      * Once one exists the prompt has to change, or it keeps pointing at a step already done.
      */
     val hasNoRepos: Boolean = true,
+    val hasShortReels: Boolean = false,
     /**
      * Seed for the hero's shuffle.
      *
@@ -176,13 +178,16 @@ class TvHomeViewModel(
      * Filtered exactly as the phone home does - finished titles are resume candidates
      * for nobody, and an entry barely started is noise.
      */
-    val continueWatching: StateFlow<List<WatchHistoryEntry>> = store.history
-        .map { history ->
-            history
-                .filterNot { it.isFinished }
-                .filter { it.progress > 0.005f }
-                .sortedByDescending { it.updatedAt }
-        }
+    val continueWatching: StateFlow<List<WatchHistoryEntry>> = combine(
+        store.history,
+        extensions.installed,
+    ) { history, _ ->
+        history
+            .filterNot { extensions.isShortReelsSource(it.sourceId, it.sourceName) }
+            .filterNot { it.isFinished }
+            .filter { it.progress > 0.005f }
+            .sortedByDescending { it.updatedAt }
+    }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -300,20 +305,8 @@ class TvHomeViewModel(
             // Re-derived whenever extensions change, so installing one appears here
             // without leaving the screen.
             extensions.installed.collect { installed ->
-                val sources = installed.flatMap { extension ->
-                    extension.sources
-                        .filterIsInstance<AnimeCatalogueSource>()
-                        .map { source ->
-                            SourceEntry(
-                                id = source.id,
-                                name = source.name,
-                                lang = source.lang,
-                                supportsLatest = runCatching { source.supportsLatest }
-                                    .getOrDefault(false),
-                                icon = extension.icon,
-                            )
-                        }
-                }.sortedBy { it.name.lowercase() }
+                val allSources = installed.sourceEntries()
+                val sources = allSources.filterNot { it.isShortReels }
 
                 // The current selection is kept across reloads unless it disappeared,
                 // so installing a second extension does not move the user's feed. On the
@@ -324,12 +317,17 @@ class TvHomeViewModel(
                     sources.firstOrNull { it.id == id }
                 }
 
-                _state.value = _state.value.copy(sources = sources, selected = keep)
+                _state.value = _state.value.copy(
+                    sources = sources,
+                    selected = keep,
+                    hasShortReels = allSources.any { it.isShortReels },
+                )
 
                 val target = keep ?: sources.firstOrNull()
                 if (target != null && (keep == null || _state.value.isEmpty)) {
                     select(target)
                 } else if (sources.isEmpty()) {
+                    loadJob?.cancel()
                     _state.value = _state.value.copy(
                         isLoading = false,
                         popular = emptyList(),
@@ -347,6 +345,7 @@ class TvHomeViewModel(
      * would loop through the settings flow that drives this method.
      */
     fun select(source: SourceEntry) {
+        if (source.isShortReels) return
         loadJob?.cancel()
 
         // Back to the first spotlight. The index is a position in a shortlist that is about
