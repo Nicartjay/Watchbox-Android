@@ -763,7 +763,13 @@ fun PlayerScreen(
                     durationMs = exoPlayer.duration.coerceAtLeast(0L)
                     playbackError = null
                 }
-                if (playbackState == Player.STATE_ENDED) {
+                // A genuine end only. Switching episode calls clearMediaItems() on the player
+                // that is still prepared, and media3 reports removing the current item with
+                // nothing after it as STATE_ENDED. Treating that as the episode finishing
+                // started the auto-next timer against the episode just chosen, which then
+                // cleared the player again - so one press of next/previous ran straight
+                // through every episode. A real end always still has its media item loaded.
+                if (playbackState == Player.STATE_ENDED && exoPlayer.mediaItemCount > 0) {
                     viewModel.onPlaybackEnded(exoPlayer.currentPosition, exoPlayer.duration)
                 }
             }
