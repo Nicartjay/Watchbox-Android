@@ -35,6 +35,8 @@ import space.nicart.watchbox.data.remote.SubtitleQuery
 import space.nicart.watchbox.data.remote.SubtitleResult
 import space.nicart.watchbox.domain.SubtitleRepository
 import space.nicart.watchbox.extension.isShortReelsProvider
+import eu.kanade.tachiyomi.network.interceptor.cloudflareRequest
+import okhttp3.Request
 
 data class DetailUiState(
     val sourceIsShortReels: Boolean = false,
@@ -45,6 +47,7 @@ data class DetailUiState(
     val suggestionsLoading: Boolean = false,
     val history: WatchHistoryEntry? = null,
     val errorMessage: String? = null,
+    val verificationRequest: Request? = null,
     /** This title's page on the source's site, when it has one. */
     val webUrl: String? = null,
     /**
@@ -171,7 +174,9 @@ class DetailViewModel(
 
     private fun load() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
+            _uiState.value = _uiState.value.copy(
+                isLoading = true, errorMessage = null, verificationRequest = null,
+            )
 
             // The page saved when something was downloaded, shown before the network is tried.
             //
@@ -225,6 +230,7 @@ class DetailViewModel(
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         errorMessage = error.friendlyMessage(),
+                        verificationRequest = error.cloudflareRequest(),
                     )
                 }
         }

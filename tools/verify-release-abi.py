@@ -52,6 +52,7 @@ REQUIRED_CLASSES = [
     "animesource/online/AnimeHttpSource",
     "animesource/online/ParsedAnimeHttpSource",
     "network/NetworkHelper",
+    "network/AndroidCookieJar",
     # Kotlin file facades: the name comes from the filename, so moving a
     # top-level function to another file silently breaks callers.
     "network/RequestsKt",
@@ -102,6 +103,12 @@ REQUIRED_EXTERNAL = [
 
 # Members extensions call or override, which must not be obfuscated.
 REQUIRED_MEMBERS = {
+    "network/NetworkHelper": [
+        "getClient", "getCloudflareClient", "getCookieJar", "defaultUserAgentProvider",
+    ],
+    "network/AndroidCookieJar": [
+        "get", "remove", "remove$default", "removeAll", "loadForRequest", "saveFromResponse",
+    ],
     "animesource/online/AnimeHttpSource": [
         "popularAnimeRequest", "popularAnimeParse",
         "latestUpdatesRequest", "latestUpdatesParse",
@@ -165,7 +172,10 @@ def main():
         for name in dexes:
             dump += subprocess.run(
                 [dexdump, "-f", os.path.join(workdir, name)],
-                capture_output=True, text=True,
+                # DEX strings use modified UTF-8; dexdump can emit those bytes
+                # verbatim. Class/member names checked below are ASCII, so an
+                # unrelated string literal must not crash the ABI audit.
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
             ).stdout
 
         total = len(re.findall(r"Class descriptor", dump))

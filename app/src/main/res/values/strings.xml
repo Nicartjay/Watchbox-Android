@@ -108,7 +108,13 @@
     <string name="hero_type_movie">Movie</string>
     <string name="hero_type_series">TV</string>
     <string name="section_featured">Featured</string>
-    <string name="source_open_site">Open site</string>
+    <string name="source_open_webview">Open WebView</string>
+    <string name="source_webview_reload">Reload</string>
+    <string name="source_webview_clear_cookies">Clear cookies</string>
+    <string name="source_webview_done">Done / Retry</string>
+    <string name="source_webview_hint">Complete any site verification, then choose Done / Retry to return to WatchBox. Cookies are shared with your extensions.</string>
+    <string name="source_webview_unavailable">Install or update Android System WebView (or Chrome) to verify this source.</string>
+    <string name="source_webview_renderer_error">The browser stopped. Return to WatchBox and open WebView again. If this repeats, update Android System WebView.</string>
     <string name="source_open_site_failed">No app available to open this link.</string>
     <string name="source_filters">Filters</string>
     <string name="source_filters_apply">Apply</string>

@@ -31,6 +31,9 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Verification is optional; ordinary sources still work on TVs without WebView. -->
+    <uses-feature android:name="android.software.webview" android:required="false" />
+
     <!--
       Needed only to install our own update APK. Extensions do NOT use this: they
       are loaded from private storage via a classloader, which needs no install
@@ -152,6 +155,12 @@
                 <data android:scheme="watchbox" android:host="add-repo" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".ui.webview.SourceWebViewActivity"
+            android:exported="false"
+            android:theme="@style/Theme.WatchBox"
+            android:windowSoftInputMode="adjustResize" />
 
         <!--
           The Cast SDK loads this class reflectively by name, so it must also be

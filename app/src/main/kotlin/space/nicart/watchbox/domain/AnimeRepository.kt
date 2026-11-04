@@ -7,6 +7,8 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.HttpException
+import eu.kanade.tachiyomi.network.GET
+import okhttp3.Request
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -385,6 +387,12 @@ class AnimeRepository(
     fun siteUrl(sourceId: Long): String? {
         val source = extensions.catalogueSourceById(sourceId) as? AnimeHttpSource ?: return null
         return runCatching { source.baseUrl }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+    }
+
+    /** Preserve a source's own UA/Referer when opening its site for verification. */
+    fun siteRequest(sourceId: Long): Request? {
+        val source = extensions.catalogueSourceById(sourceId) as? AnimeHttpSource ?: return null
+        return runCatching { GET(source.baseUrl, source.headers) }.getOrNull()
     }
 
     /**
@@ -1042,7 +1050,9 @@ class AnimeRepository(
     private companion object {
         const val TAG = "AnimeRepository"
         const val NO_SOURCES = "No sources installed yet."
-        const val SOURCE_TIMEOUT_MS = 15_000L
+        // A non-interactive Cloudflare check alone can take up to 30 seconds.
+        // Home/search must not cancel it before the shared session is ready.
+        const val SOURCE_TIMEOUT_MS = 45_000L
         const val MAX_SUGGESTIONS = 8
 
         /**

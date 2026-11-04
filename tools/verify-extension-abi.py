@@ -166,7 +166,8 @@ CHECKS = [
    "getSearchAnime","getFilterList","getSupportsLatest"]),
  ("animesource.ConfigurableAnimeSource", ["setupPreferenceScreen","getSourcePreferences"]),
  ("animesource.AnimeSourceFactory", ["createSources"]),
- ("network.NetworkHelper", ["getClient","defaultUserAgentProvider","getCloudflareClient"]),
+ ("network.NetworkHelper", ["getClient","defaultUserAgentProvider","getCloudflareClient","getCookieJar"]),
+ ("network.AndroidCookieJar", ["get","remove","remove$default","removeAll","loadForRequest","saveFromResponse"]),
  ("network.OkHttpExtensionsKt", ["await","awaitSuccess","asObservable","asObservableSuccess"]),
  # get/post are the lib 16 suspend helpers, called through get$default.
  ("network.RequestsKt", ["GET","POST","get$default","post$default"]),

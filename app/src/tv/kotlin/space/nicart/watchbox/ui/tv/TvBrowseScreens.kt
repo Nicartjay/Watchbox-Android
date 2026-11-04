@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Extension
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -63,6 +64,8 @@ import space.nicart.watchbox.ui.components.ShortsReelsBadge
 import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
 import space.nicart.watchbox.ui.extensions.ExtensionIconSlot
+import space.nicart.watchbox.ui.webview.SourceErrorState
+import space.nicart.watchbox.ui.webview.rememberSourceWebView
 
 /**
  * TV source list: a grid of installed sources led by their extension icons.
@@ -266,10 +269,11 @@ fun TvSourceBrowseScreen(
         when {
             state.isLoading -> WbLoading()
 
-            state.items.isEmpty() -> WbEmptyState(
+            state.items.isEmpty() -> SourceErrorState(
                 title = state.errorMessage ?: stringResource(R.string.empty_search_title),
-                actionLabel = stringResource(R.string.action_retry),
-                onAction = viewModel::retry,
+                onRetry = viewModel::retry,
+                verificationRequest = state.verificationRequest
+                    ?: state.siteRequest?.takeIf { state.errorMessage != null },
                 modifier = Modifier.align(Alignment.Center),
             )
 
@@ -298,6 +302,7 @@ fun TvSourceBrowseScreen(
                         onSubmitQuery = viewModel::submitQuery,
                         onSetMode = viewModel::setMode,
                         onOpenFilters = { viewModel.setFilterPanelOpen(true) },
+                        onReturnFromWebView = viewModel::retry,
                     )
                 }
 
@@ -337,9 +342,12 @@ private fun TvBrowseHeader(
     onSubmitQuery: () -> Unit,
     onSetMode: (BrowseMode) -> Unit,
     onOpenFilters: () -> Unit,
+    onReturnFromWebView: () -> Unit,
 ) {
     val tokens = MaterialTheme.wb
     val filterInteraction = rememberFocusInteraction()
+    val browserInteraction = rememberFocusInteraction()
+    val openWebView = rememberSourceWebView(onReturn = onReturnFromWebView)
 
     Column(modifier = Modifier.padding(bottom = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -350,6 +358,28 @@ private fun TvBrowseHeader(
                 color = tokens.colors.textPrimary,
                 modifier = Modifier.weight(1f),
             )
+
+            state.siteRequest?.let { request ->
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(tokens.colors.surface)
+                        .adaptiveFocus(browserInteraction, RoundedCornerShape(12.dp), scale = false)
+                        .clickable(
+                            interactionSource = browserInteraction,
+                            indication = null,
+                            onClick = { openWebView(state.verificationRequest ?: request) },
+                        )
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Language,
+                        contentDescription = stringResource(R.string.source_open_webview),
+                        tint = tokens.colors.textSecondary,
+                    )
+                }
+                Spacer(Modifier.size(12.dp))
+            }
 
             // Only offered when the source declares filters, so the button never opens
             // an empty panel.

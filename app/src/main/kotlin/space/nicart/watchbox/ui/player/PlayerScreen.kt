@@ -1,5 +1,7 @@
 package space.nicart.watchbox.ui.player
 
+import space.nicart.watchbox.ui.webview.SourceErrorState
+
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.view.WindowManager
@@ -1528,11 +1530,11 @@ fun PlayerScreen(
                 ),
             )
 
-            state.errorMessage != null && state.selectedStream == null -> WbEmptyState(
+            state.errorMessage != null && state.selectedStream == null -> SourceErrorState(
                 title = stringResource(R.string.error_no_source),
                 body = state.errorMessage,
-                actionLabel = stringResource(R.string.action_retry),
-                onAction = viewModel::retry,
+                onRetry = viewModel::retry,
+                verificationRequest = state.verificationRequest,
                 modifier = Modifier.align(Alignment.Center),
             )
 

@@ -198,7 +198,7 @@ fun EpisodeRangeRow(
  *
  * Every TMDB video is a YouTube link and the payload carries no direct stream, so tapping
  * one hands off to whatever plays YouTube on the device. Media3 cannot play a watch page,
- * and the app carries no WebView.
+ * so trailers use the YouTube app/browser, not the source-verification WebView.
  *
  * Thumbnails come from YouTube's own image host rather than TMDB, which publishes none for
  * videos - so they cost no API key and no extra request.

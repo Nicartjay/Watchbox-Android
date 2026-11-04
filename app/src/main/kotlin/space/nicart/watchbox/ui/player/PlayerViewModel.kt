@@ -29,6 +29,8 @@ import space.nicart.watchbox.download.DownloadEngine
 import space.nicart.watchbox.data.local.DownloadEntry
 import space.nicart.watchbox.data.local.DownloadedSubtitle
 import space.nicart.watchbox.extension.isShortReelsProvider
+import eu.kanade.tachiyomi.network.interceptor.cloudflareRequest
+import okhttp3.Request
 
 /**
  * The online subtitle search, as a state machine.
@@ -128,6 +130,7 @@ data class PlayerUiState(
     /** Keep playing when the app is backgrounded; off by default. */
     val backgroundPlayback: Boolean = false,
     val errorMessage: String? = null,
+    val verificationRequest: Request? = null,
     /**
      * Subtitles fetched online, appended after the ones the source supplied.
      *
@@ -390,6 +393,7 @@ class PlayerViewModel(
                 _uiState.value = _uiState.value.copy(
                     isResolving = false,
                     errorMessage = error.message ?: "Could not load this title.",
+                    verificationRequest = error.cloudflareRequest(),
                 )
             }
     }
@@ -495,6 +499,7 @@ class PlayerViewModel(
             isLoadingMoreStreams = false,
             resolveSeconds = 0,
             errorMessage = null,
+            verificationRequest = null,
             streams = emptyList(),
             selectedStream = null,
             selectedSubtitleIndex = -1,
@@ -593,6 +598,7 @@ class PlayerViewModel(
                             isResolving = false,
                             isLoadingMoreStreams = false,
                             errorMessage = error.message ?: NO_STREAM,
+                            verificationRequest = error.cloudflareRequest(),
                         )
                     }
             }
@@ -1124,7 +1130,17 @@ class PlayerViewModel(
     }
 
     fun retry() {
-        _uiState.value.episode?.let(::resolve)
+        val episode = _uiState.value.episode
+        if (episode != null) {
+            resolve(episode)
+        } else {
+            viewModelScope.launch {
+                _uiState.value = _uiState.value.copy(
+                    isResolving = true, errorMessage = null, verificationRequest = null,
+                )
+                loadDetail()
+            }
+        }
     }
 
     // ------------------------------------------------------------ history

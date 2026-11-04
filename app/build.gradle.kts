@@ -260,6 +260,15 @@ android {
     }
 }
 
+// Local unit tests have no Android Application/asset manager. Use OkHttp's
+// matching JVM artifact there so cookie/public-suffix tests use its bundled
+// suffix database instead of Android assets. APKs still use okhttp-android.
+configurations.configureEach {
+    if (name.contains("UnitTest")) {
+        exclude(group = "com.squareup.okhttp3", module = "okhttp-android")
+    }
+}
+
 dependencies {
     implementation(platform(libs.compose.bom))
 
@@ -332,6 +341,7 @@ dependencies {
     // Unit tests for the pure logic that is expensive to verify on a device:
     // HLS manifest rewriting and version comparison.
     testImplementation(libs.kotlin.test)
+    testImplementation(libs.okhttp.jvm)
 
     implementation(libs.kotlinx.serialization.json)
     // These four are not our choices: they are the "common" dependency bundle
@@ -356,6 +366,7 @@ dependencies {
     implementation(libs.okhttp.logging)
     implementation(libs.okhttp.brotli)
     implementation(libs.androidx.preference)
+    implementation(libs.androidx.webkit)
 
     // ---- Casting ------------------------------------------------------
     // Chromecast discovery, the session lifecycle and the standard cast button.

@@ -6,6 +6,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.network.interceptor.cloudflareRequest
+import okhttp3.Request
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -83,12 +85,14 @@ data class BrowseUiState(
     val hasFilters: Boolean = false,
     val filtersActive: Boolean = false,
     /**
-     * The source's site, when it has one.
+     * The source's site and its own request headers, when it has one.
      *
      * Held in state rather than resolved in the composable because it comes from
      * extension code, which must not be called during composition.
      */
-    val siteUrl: String? = null,
+    val siteRequest: Request? = null,
+    /** The challenged portal may differ from this source's baseUrl. */
+    val verificationRequest: Request? = null,
 )
 
 /** Backs the source list on the Browse tab. */
@@ -151,7 +155,9 @@ class BrowseViewModel(
 
     init {
         loadFilters()
-        _uiState.value = _uiState.value.copy(siteUrl = repository.siteUrl(sourceId))
+        _uiState.value = _uiState.value.copy(
+            siteRequest = repository.siteRequest(sourceId),
+        )
         load(BrowseMode.POPULAR, reset = true)
     }
 
@@ -244,6 +250,7 @@ class BrowseViewModel(
             isLoading = reset,
             isAppending = !reset,
             errorMessage = null,
+            verificationRequest = null,
             items = if (reset) emptyList() else _uiState.value.items,
         )
 
@@ -290,6 +297,7 @@ class BrowseViewModel(
                         isAppending = false,
                         // Keep whatever is already on screen; only report the failure.
                         errorMessage = error.friendlyMessage(),
+                        verificationRequest = error.cloudflareRequest(),
                         hasMore = false,
                     )
                 }

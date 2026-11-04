@@ -1,6 +1,5 @@
 package space.nicart.watchbox.ui.browse
 
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -39,7 +38,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,7 +54,8 @@ import space.nicart.watchbox.extension.SourceCollection
 import space.nicart.watchbox.extension.contentGroups
 import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.ShortsReelsBadge
-import space.nicart.watchbox.ui.components.openInBrowser
+import space.nicart.watchbox.ui.webview.SourceErrorState
+import space.nicart.watchbox.ui.webview.rememberSourceWebView
 import space.nicart.watchbox.ui.components.WbBackButton
 import space.nicart.watchbox.ui.extensions.ExtensionIconSlot
 import space.nicart.watchbox.ui.components.WbChip
@@ -284,7 +283,7 @@ fun BrowseScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val gridState = rememberLazyGridState()
     val tokens = MaterialTheme.wb
-    val context = LocalContext.current
+    val openWebView = rememberSourceWebView(onReturn = viewModel::retry)
 
     val shouldAppend by remember {
         derivedStateOf {
@@ -317,35 +316,21 @@ fun BrowseScreen(
                     Spacer(Modifier.size(8.dp))
                     WbScreenHeader(title = sourceName, modifier = Modifier.weight(1f))
 
-                    // Opens the source's own site, so a failing catalogue can be
-                    // checked against the real page: an extension whose API has moved
-                    // looks identical from in here to a site that is simply down.
-                    //
-                    // Only shown when the source actually exposes an address - a
-                    // non-HTTP source has no page to open.
-                    state.siteUrl?.let { siteUrl ->
+                    // Unlike an external browser, this shares the extensions'
+                    // session cookies and can actually clear a site challenge.
+                    state.siteRequest?.let { siteRequest ->
                         Box(
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(tokens.colors.surface)
-                                .clickable {
-                                    if (!context.openInBrowser(siteUrl)) {
-                                        // Silence would be indistinguishable from a
-                                        // dead button on a device with no browser.
-                                        Toast.makeText(
-                                            context,
-                                            context.getString(R.string.source_open_site_failed),
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
-                                    }
-                                },
+                                .clickable { openWebView(state.verificationRequest ?: siteRequest) },
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.Language,
                                 contentDescription = stringResource(
-                                    R.string.source_open_site,
+                                    R.string.source_open_webview,
                                 ),
                                 tint = tokens.colors.textSecondary,
                                 modifier = Modifier.size(20.dp),
@@ -420,10 +405,11 @@ fun BrowseScreen(
                 when {
                     state.isLoading -> WbLoading()
 
-                    state.items.isEmpty() -> WbEmptyState(
+                    state.items.isEmpty() -> SourceErrorState(
                         title = state.errorMessage ?: stringResource(R.string.empty_search_title),
-                        actionLabel = stringResource(R.string.action_retry),
-                        onAction = viewModel::retry,
+                        onRetry = viewModel::retry,
+                        verificationRequest = state.verificationRequest
+                            ?: state.siteRequest?.takeIf { state.errorMessage != null },
                         modifier = Modifier.align(Alignment.TopCenter),
                     )
 

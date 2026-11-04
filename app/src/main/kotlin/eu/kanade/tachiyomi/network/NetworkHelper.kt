@@ -1,8 +1,11 @@
 package eu.kanade.tachiyomi.network
 
 import android.content.Context
-import okhttp3.Cache
+import android.webkit.WebSettings
+import eu.kanade.tachiyomi.network.interceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UserAgentInterceptor
+import eu.kanade.tachiyomi.network.interceptor.WebViewChallengeSolver
+import okhttp3.Cache
 import okhttp3.OkHttpClient
 import okhttp3.brotli.BrotliInterceptor
 import java.util.concurrent.TimeUnit
@@ -14,10 +17,9 @@ import java.util.concurrent.TimeUnit
  * singleton during startup. Extensions reach it via `network.client` and may
  * wrap it with their own interceptors.
  *
- * `cloudflareClient` exists because a number of extensions reference it by
- * name. A real Cloudflare bypass needs a WebView to run the JS challenge; that
- * is out of scope here, so it is an alias for [client] with a longer timeout.
- * Sources behind an active challenge will fail rather than silently hang.
+ * Both client names handle Cloudflare, sharing cookies with the in-app WebView.
+ * Checks needing human interaction surface an Open WebView action instead of
+ * being fed to an extension as HTML/JSON or silently looping.
  *
  * See the note in [eu.kanade.tachiyomi.animesource.model.SAnime] for why this
  * package reproduces the Aniyomi ABI.
@@ -26,7 +28,14 @@ class NetworkHelper(context: Context) {
 
     private val cacheDir = context.cacheDir.resolve("network_cache")
 
-    val cookieJar = SimpleCookieJar()
+    val cookieJar = AndroidCookieJar()
+
+    // NetworkHelper is installed on Main before extensions are loaded. Resolve
+    // the UA once so native requests and every challenge WebView use the same
+    // installed Chromium version, including sources which cache their headers.
+    private val userAgent = runCatching {
+        inferBrowserUserAgent(WebSettings.getDefaultUserAgent(context)).ifBlank { DEFAULT_USER_AGENT }
+    }.getOrDefault(DEFAULT_USER_AGENT)
 
     val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -38,7 +47,13 @@ class NetworkHelper(context: Context) {
             .retryOnConnectionFailure(true)
             .followRedirects(true)
             .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
-            // Brotli, because the default User-Agent claims Chrome 120 and servers
+            .addInterceptor(
+                CloudflareInterceptor(
+                    cookieJar,
+                    WebViewChallengeSolver(context, cookieJar, ::defaultUserAgentProvider),
+                ),
+            )
+            // Brotli, because the default User-Agent claims Chrome and servers
             // take that at face value.
             //
             // OkHttp only negotiates and decodes gzip on its own. Advertising a modern
@@ -54,17 +69,10 @@ class NetworkHelper(context: Context) {
             .build()
     }
 
-    /**
-     * Kept for ABI compatibility. Not an actual challenge solver — see the class
-     * note.
-     */
-    val cloudflareClient: OkHttpClient by lazy {
-        client.newBuilder()
-            .readTimeout(60, TimeUnit.SECONDS)
-            .build()
-    }
+    /** Legacy extension ABI; regular requests also handle challenges, as in Mihon. */
+    val cloudflareClient: OkHttpClient get() = client
 
-    fun defaultUserAgentProvider(): String = DEFAULT_USER_AGENT
+    fun defaultUserAgentProvider(): String = userAgent
 
     private companion object {
         const val CACHE_SIZE = 5L * 1024 * 1024

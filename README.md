@@ -397,9 +397,11 @@ not implement.
 <details>
 <summary><b>Known limitations</b></summary>
 
-- **Cloudflare-protected sources will not work.** Solving those needs a WebView to run
-  the JS challenge. `cloudflareClient` exists for ABI compatibility but is not a
-  solver, so affected sources fail rather than hang.
+- **Cloudflare checks need an up-to-date Android System WebView or Chrome.** Both
+  extension HTTP clients handle non-interactive challenges and share cookies with
+  the in-app WebView. A check requiring a tap offers **Open WebView**; complete it
+  there, then choose **Done / Retry**. A site can still refuse a device or network;
+  repeated challenges are reported rather than retried indefinitely.
 - **Extensions are private to this app.** Stored in internal storage rather than
   installed system-wide, which avoids needing `REQUEST_INSTALL_PACKAGES` and
   `QUERY_ALL_PACKAGES` — but means they are not shared with other Aniyomi clients.
@@ -643,9 +645,13 @@ at launch rather than at install.
 The app ships with no repository on purpose — see [First run](#-first-run).
 
 **Why does a source show nothing?**
-Most often the source is Cloudflare-protected, or its host is unreachable. Failures
-are surfaced per source rather than hidden, so the rail reports rather than silently
-emptying.
+Check the reported error: the host may be unreachable, the extension may need an
+update, or the site may require an interactive Cloudflare check. For the latter,
+choose **Open WebView** on the error screen (or the source's globe button), complete
+the site's check, and choose **Done / Retry**. Verification uses the actual
+challenged portal, which can differ from the source's home page — especially for
+Arvin-DF. An external browser's cookies are not shared with WatchBox. Update Android
+System WebView or Chrome if the verification page cannot load.
 
 **Chromecast finds no devices — why?**
 Chromecast discovery needs genuine Google Play Services. Devices with a sideloaded or

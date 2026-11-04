@@ -54,7 +54,7 @@ import space.nicart.watchbox.domain.AnimeCard
 import space.nicart.watchbox.domain.EpisodeEntry
 import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.WbBackButton
-import space.nicart.watchbox.ui.components.WbEmptyState
+import space.nicart.watchbox.ui.webview.SourceErrorState
 import space.nicart.watchbox.ui.components.WbLoading
 import space.nicart.watchbox.ui.components.WbPosterCard
 import space.nicart.watchbox.ui.components.WbShelfSection
@@ -381,11 +381,11 @@ fun DetailScreen(
         when {
             state.isLoading && detail == null -> WbLoading()
 
-            detail == null -> WbEmptyState(
+            detail == null -> SourceErrorState(
                 title = stringResource(R.string.error_generic),
                 body = state.errorMessage,
-                actionLabel = stringResource(R.string.action_retry),
-                onAction = viewModel::retry,
+                onRetry = viewModel::retry,
+                verificationRequest = state.verificationRequest,
                 modifier = Modifier.align(Alignment.Center),
             )
 

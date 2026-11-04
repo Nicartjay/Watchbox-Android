@@ -30,10 +30,9 @@ object HttpClientFactory {
     /**
      * Chrome UA sent on every first-party request.
      *
-     * Deliberately kept identical to the value [NetworkHelper] hands extensions
-     * and to the one the WatchBox Next web front end's stream proxy spoofs, so a
-     * host that accepts one accepts all three. Changing it here without changing
-     * it there reintroduces the class of 403 that only appears on one client.
+     * Only for plain metadata/repository requests, which carry no source session.
+     * Extension requests use NetworkHelper's installed-WebView UA instead; the
+     * browser and HTTP user agents must match to reuse Cloudflare clearance.
      */
     const val USER_AGENT: String =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
