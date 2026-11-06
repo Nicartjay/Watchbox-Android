@@ -233,7 +233,10 @@ jobs:
           path: |
             ${{ steps.apk.outputs.files }}
           if-no-files-found: error
-          retention-days: 90
+          # The release step publishes the APKs from the workspace, so this copy is only a backup
+          # for the run; it is not kept (the same as Watchbox-Desktop, whose private repo ran out of
+          # artifact storage on 5 Nov 2026).
+          retention-days: 1
 
       - name: Generate release notes
         if: inputs.mode != 'dry-run' || github.ref_type == 'tag'
