@@ -657,21 +657,13 @@ System WebView or Chrome if the verification page cannot load.
 Chromecast discovery needs genuine Google Play Services. Devices with a sideloaded or
 spoofed GMS register no cast routes at all. DLNA still works.
 
-**How do I sign in to Arvin-HD (HepDrama)?**
-Open the extension's settings, type the email of your existing HepDrama account,
-and press **Enter / Done** to save it. Type your password in the masked password
-field, then press **Enter / Done** to sign in. Typing alone never submits it, and
-the password is cleared after submission rather than saved. **Check status** and
-**Sign out** are buttons. Any email-verification or security check required by
-HepDrama must be completed in WatchBox's **WebView**.
-
-**How do I sign in to Arvin-HP (HotPlot)?**
-Open the extension's settings, type your email, and press **Enter / Done** on the
-keyboard to save it. Accept HotPlot's Terms if you agree, then tap **send sign-in
-code**. Type the six-digit code from your inbox and press **Enter / Done** to sign
-in; typing alone never submits it, and the code is not saved. **Check status**
-confirms the current session. If HotPlot requests a Cloudflare check, complete it
-in WatchBox's **WebView**, not an external browser.
+**How do I apply extension settings?**
+Text fields keep a local draft until you press **Enter / Done**; typing alone
+never submits a setting or sign-in attempt. Account actions provided by an
+extension appear as buttons. Password fields are masked, and credentials marked
+as transient by the extension are cleared after submission rather than saved.
+Follow the extension's own account instructions, and complete any requested
+verification in WatchBox's **WebView**.
 
 **Can I watch downloads with no connection?**
 Yes. A finished download plays from disk with no network and no call into the extension,

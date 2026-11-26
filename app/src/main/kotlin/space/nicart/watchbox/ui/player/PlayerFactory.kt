@@ -213,7 +213,7 @@ object PlayerFactory {
 
         val audio = usable.map { track ->
             // MovieBox serves its separate AAC rendition from an extensionless `/api?...`
-            // URL. Rentaro appends `#.m3u8`, but Media3's URI inference reads the path rather
+            // URL. Extensions can append `#.m3u8`, but Media3's URI inference reads the path rather
             // than the fragment and creates a progressive source. That source tries to parse
             // the playlist as audio bytes and the whole MergingMediaSource fails, including
             // the otherwise-valid video. Honour only explicit adaptive hints here; unknown
@@ -262,8 +262,8 @@ internal fun adaptiveMimeType(url: String): String? {
  * Picks a subtitle MIME type from the file extension or a client-only fragment hint.
  *
  * Wing serves SubRip from extensionless `/sub/<token>` URLs. Without a hint Media3 assumes
- * WebVTT, so the track appears in the picker but every cue fails to parse. Rentaro now appends
- * `#.srt`; the host check keeps already-installed extension builds working as well.
+ * WebVTT, so the track appears in the picker but every cue fails to parse. Extensions can append
+ * `#.srt`; the host check also supports already-installed builds without that hint.
  */
 internal fun subtitleMimeType(url: String): String {
     val path = url.substringBefore('#').substringBefore('?').lowercase()

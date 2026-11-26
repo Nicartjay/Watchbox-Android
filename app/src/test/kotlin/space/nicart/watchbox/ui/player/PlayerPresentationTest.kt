@@ -138,7 +138,7 @@ class PlayerPresentationTest {
             episodes = emptyList(),
         )
         assertTrue(PlayerUiState(detail = saved).isShortReels)
-        assertFalse(PlayerUiState(detail = saved.copy(sourceName = "Rentaro")).isShortReels)
+        assertFalse(PlayerUiState(detail = saved.copy(sourceName = "Regular")).isShortReels)
     }
 
     @Test

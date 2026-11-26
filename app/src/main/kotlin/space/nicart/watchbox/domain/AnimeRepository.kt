@@ -904,8 +904,8 @@ class AnimeRepository(
      * Resolves streams for an episode.
      *
      * The source's own ordering is kept. Extensions sort to put their configured
-     * preference first - Rentaro, for one, promotes whatever its quality setting
-     * names - and re-sorting by height here discarded that, so a source set to
+     * preference first - for example, promoting the configured quality -
+     * and re-sorting by height here discarded that, so a source set to
      * 1080p still had 2160p chosen for it. Which stream actually plays is decided
      * from the viewer's setting in [space.nicart.watchbox.ui.player.PlayerViewModel],
      * and the picker shows the list as the source ordered it.

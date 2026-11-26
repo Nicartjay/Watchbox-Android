@@ -13,7 +13,7 @@ class HomeSpotlightTest {
     @Test
     fun `home hero candidates exclude every Arvin provider`() {
         val rows = listOf(
-            row(1L, "Rentaro", 20),
+            row(1L, "Regular", 20),
             row(2L, "Arvin-RF", 20),
             row(3L, "Arvin-HD", 20),
             row(4L, "Arvin-XY", 20),
@@ -21,12 +21,12 @@ class HomeSpotlightTest {
 
         val pool = homeSpotlightCandidates(rows, isShortReels)
         assertEquals(20, pool.size)
-        assertTrue(pool.all { it.sourceName == "Rentaro" })
+        assertTrue(pool.all { it.sourceName == "Regular" })
     }
 
     @Test
     fun `an Arvin factory with another source name cannot enter the hero`() {
-        val rows = listOf(row(42L, "Drama provider", 10), row(1L, "Rentaro", 10))
+        val rows = listOf(row(42L, "Drama provider", 10), row(1L, "Regular", 10))
         assertEquals(
             setOf(1L),
             homeSpotlightCandidates(rows, isShortReels).map { it.sourceId }.toSet(),
@@ -42,7 +42,7 @@ class HomeSpotlightTest {
 
     @Test
     fun `filtering shorts does not consume normal hero or Featured slots`() {
-        val normal = row(1L, "Rentaro", 20)
+        val normal = row(1L, "Regular", 20)
         val rows = listOf(row(2L, "Arvin-RF", 200), normal)
         val pool = homeSpotlightCandidates(rows, isShortReels)
 
@@ -52,7 +52,7 @@ class HomeSpotlightTest {
 
     @Test
     fun `normal titles are still deduplicated by source and URL`() {
-        val normal = row(1L, "Rentaro", 2)
+        val normal = row(1L, "Regular", 2)
         val otherSource = row(5L, "Cineby", 2)
         val pool = homeSpotlightCandidates(listOf(normal, normal, otherSource), isShortReels)
 

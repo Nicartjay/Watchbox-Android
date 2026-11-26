@@ -10,10 +10,10 @@ import kotlin.test.assertTrue
 class PhoneHomeRowsTest {
     @Test
     fun `phone Home groups Arvin titles under Shorts Reels and retains normal rows`() {
-        val rows = listOf(row(1L, "Rentaro"), row(2L, "Arvin-RF"), row(3L, "Arvin-HD"))
+        val rows = listOf(row(1L, "Regular"), row(2L, "Arvin-RF"), row(3L, "Arvin-HD"))
         val result = phoneHomeRows(rows, emptyList())
 
-        assertEquals(listOf("Rentaro"), result.standard.map { it.sourceName })
+        assertEquals(listOf("Regular"), result.standard.map { it.sourceName })
         assertEquals(listOf("Arvin-RF", "Arvin-HD"), result.shortReels.map { it.sourceName })
     }
 
@@ -35,7 +35,7 @@ class PhoneHomeRowsTest {
 
     @Test
     fun `a phone without Arvin keeps its normal Home content intact`() {
-        val rows = listOf(row(1L, "Rentaro"))
+        val rows = listOf(row(1L, "Regular"))
         val result = phoneHomeRows(rows, emptyList())
 
         assertEquals(rows, result.standard)

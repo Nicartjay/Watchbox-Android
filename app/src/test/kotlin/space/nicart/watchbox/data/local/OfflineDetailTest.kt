@@ -44,7 +44,7 @@ class OfflineDetailTest {
         episodes: List<EpisodeEntry> = listOf(episode("/e1", "Episode 1", 1f)),
     ) = AnimeDetail(
         sourceId = 7L,
-        sourceName = "Rentaro",
+        sourceName = "Regular",
         url = "/anime/test",
         title = "A Show",
         posterUrl = "https://img.test/poster.jpg",
@@ -107,7 +107,7 @@ class OfflineDetailTest {
         val restored = OfflineDetail.from(detail(), "/files/poster", null, 0L).toDetail()
 
         assertEquals("A Show", restored.title)
-        assertEquals("Rentaro", restored.sourceName)
+        assertEquals("Regular", restored.sourceName)
         assertEquals(7L, restored.sourceId)
         assertEquals("/anime/test", restored.url)
         assertEquals("/files/poster", restored.posterUrl)

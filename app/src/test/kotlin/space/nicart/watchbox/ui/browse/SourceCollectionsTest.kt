@@ -32,7 +32,7 @@ class SourceCollectionsTest {
     )
 
     private val installed = listOf(
-        extension("Rentaro", source(1, "Rentaro")),
+        extension("Regular", source(1, "Regular")),
         extension("Arvin-RF", source(2, "Arvin-RF")),
         extension("Arvin-HD", source(3, "Arvin-HD")),
         extension("Zoro", source(4, "Zoro")),
@@ -41,7 +41,7 @@ class SourceCollectionsTest {
     @Test
     fun `tablet and TV home source pickers exclude every Arvin provider`() {
         assertEquals(
-            listOf("Rentaro", "Zoro"),
+            listOf("Regular", "Zoro"),
             installed.sourceEntries(SourceCollection.STANDARD).map { it.name },
         )
     }
@@ -64,7 +64,7 @@ class SourceCollectionsTest {
         val groups = contentGroups(entries, SourceCollection.ALL) { it.isShortReels }
 
         assertEquals(listOf(SourceCollection.STANDARD, SourceCollection.SHORT_REELS), groups.map { it.collection })
-        assertEquals(listOf("Rentaro", "Zoro"), groups[0].items.map { it.name })
+        assertEquals(listOf("Regular", "Zoro"), groups[0].items.map { it.name })
         assertEquals(listOf("Arvin-HD", "Arvin-RF"), groups[1].items.map { it.name })
     }
 

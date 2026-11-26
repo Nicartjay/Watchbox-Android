@@ -130,6 +130,6 @@ class SourcePreferenceEditingTest {
         assertEquals(3, setOf(send, status, signOut).size)
         assertNotEquals("", send)
         assertEquals(sourcePreferenceUiKey(null, 2), sourcePreferenceUiKey("", 2))
-        assertEquals("hotplot_email", sourcePreferenceUiKey("hotplot_email", 0))
+        assertEquals("account_email", sourcePreferenceUiKey("account_email", 0))
     }
 }

@@ -19,20 +19,20 @@ class ExtensionUpdateCountsTest {
 
     @Test
     fun `no pending updates means no badges`() {
-        val counts = listOf(installed("Rentaro"), installed("Arvin-HD")).extensionUpdateCounts()
+        val counts = listOf(installed("Regular"), installed("Arvin-HD")).extensionUpdateCounts()
         assertEquals(ExtensionUpdateCounts(), counts)
     }
 
     @Test
     fun `normal updates do not badge Short Reels`() {
-        val counts = listOf(installed("Rentaro", true), installed("Arvin-HD")).extensionUpdateCounts()
+        val counts = listOf(installed("Regular", true), installed("Arvin-HD")).extensionUpdateCounts()
         assertEquals(1, counts.standard)
         assertEquals(0, counts.shortReels)
     }
 
     @Test
     fun `Arvin updates do not badge Browse`() {
-        val counts = listOf(installed("Rentaro"), installed("Arvin-HD", true)).extensionUpdateCounts()
+        val counts = listOf(installed("Regular"), installed("Arvin-HD", true)).extensionUpdateCounts()
         assertEquals(0, counts.standard)
         assertEquals(1, counts.shortReels)
     }
@@ -40,7 +40,7 @@ class ExtensionUpdateCountsTest {
     @Test
     fun `mixed updates are counted in their own collections`() {
         val counts = listOf(
-            installed("Rentaro", true),
+            installed("Regular", true),
             installed("AniDB", true),
             installed("Arvin-HD", true),
             installed("Arvin-XY", true),
@@ -53,7 +53,7 @@ class ExtensionUpdateCountsTest {
 
     @Test
     fun `finishing a short update only clears the short badge`() {
-        val entries = listOf(installed("Rentaro", true), installed("Arvin-HD", true))
+        val entries = listOf(installed("Regular", true), installed("Arvin-HD", true))
         val after = entries.map { if (it.isShortReels) it.copy(hasUpdate = false) else it }
             .extensionUpdateCounts()
         assertEquals(ExtensionUpdateCounts(standard = 1), after)

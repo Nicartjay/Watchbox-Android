@@ -52,7 +52,7 @@ class SourceMetadataPolicyTest {
         val policy = SourceMetadataPolicy { _, _ -> false }
         var requests = 0
 
-        listOf("Rentaro", "Cineby", "ArvinHD", "My Arvin-HD").forEach { name ->
+        listOf("Regular", "Cineby", "ArvinHD", "My Arvin-HD").forEach { name ->
             assertEquals(
                 "TMDB result",
                 policy.load(2L, name, fallback = "source only") {

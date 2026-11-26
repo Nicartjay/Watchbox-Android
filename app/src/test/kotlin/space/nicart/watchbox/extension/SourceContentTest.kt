@@ -19,7 +19,7 @@ class SourceContentTest {
 
     @Test
     fun `the prefix must be at the start and include the hyphen`() {
-        listOf("", "Arvin", "ArvinHD", "My Arvin-HD", "Rentaro", "Cineby")
+        listOf("", "Arvin", "ArvinHD", "My Arvin-HD", "Regular", "Cineby")
             .forEach { assertFalse(isShortReelsProvider(it), it) }
     }
 

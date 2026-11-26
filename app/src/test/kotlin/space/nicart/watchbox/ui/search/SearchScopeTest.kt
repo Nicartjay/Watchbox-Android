@@ -9,7 +9,7 @@ class SearchScopeTest {
     @Test
     fun `a sole installed source is queried directly`() {
         val state = SearchUiState(
-            sources = listOf(SearchSource(id = 42L, name = "Rentaro")),
+            sources = listOf(SearchSource(id = 42L, name = "Regular")),
         )
 
         assertEquals(42L, state.effectiveSourceId())

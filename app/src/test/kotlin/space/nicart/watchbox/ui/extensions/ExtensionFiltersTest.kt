@@ -203,13 +203,13 @@ class ExtensionFiltersTest {
 
     @Test
     fun `installed extensions use the same content type filter`() {
-        val entries = listOf(installed("Rentaro"), installed("Arvin-HD"), installed("Arvin-RF"))
+        val entries = listOf(installed("Regular"), installed("Arvin-HD"), installed("Arvin-RF"))
         assertEquals(
             listOf("Arvin-HD", "Arvin-RF"),
             entries.applyFilters(ExtensionFilters(collection = SourceCollection.SHORT_REELS)).map { it.name },
         )
         assertEquals(
-            listOf("Rentaro"),
+            listOf("Regular"),
             entries.applyFilters(ExtensionFilters(collection = SourceCollection.STANDARD)).map { it.name },
         )
     }
@@ -236,7 +236,7 @@ class ExtensionFiltersTest {
 
     @Test
     fun `content type filtering never changes the installed repository rule`() {
-        val entries = listOf(installed("Arvin-HD"), installed("Rentaro"))
+        val entries = listOf(installed("Arvin-HD"), installed("Regular"))
         val result = entries.applyFilters(
             ExtensionFilters(collection = SourceCollection.SHORT_REELS, repoUrls = setOf(REPO_B)),
         )
@@ -259,7 +259,7 @@ class ExtensionFiltersTest {
             listOf(entry),
             listOf(entry).applyFilters(ExtensionFilters(collection = SourceCollection.SHORT_REELS)),
         )
-        assertFalse(installed("Rentaro").copy(hasUpdate = true).isShortReels)
+        assertFalse(installed("Regular").copy(hasUpdate = true).isShortReels)
     }
 
     @Test
@@ -300,7 +300,7 @@ class ExtensionFiltersTest {
         val filters = ExtensionFilters()
         assertEquals(
             listOf("Arvin-HD"),
-            listOf(installed("Rentaro"), installed("Arvin-HD"))
+            listOf(installed("Regular"), installed("Arvin-HD"))
                 .applyFilters(filters, scope = SourceCollection.SHORT_REELS).map { it.name },
         )
         assertEquals(
@@ -321,7 +321,7 @@ class ExtensionFiltersTest {
 
     @Test
     fun `clearing filters cannot widen the Short Reels scope`() {
-        val entries = listOf(available("Rentaro"), available("Arvin-HD"))
+        val entries = listOf(available("Regular"), available("Arvin-HD"))
         val cleared = ExtensionFilters()
         assertEquals(
             listOf("Arvin-HD"),
@@ -331,7 +331,7 @@ class ExtensionFiltersTest {
 
     @Test
     fun `an opposite manual filter cannot leak extensions from another scope`() {
-        val entries = listOf(available("Rentaro"), available("Arvin-HD"))
+        val entries = listOf(available("Regular"), available("Arvin-HD"))
         assertTrue(
             entries.applyFilters(
                 ExtensionFilters(collection = SourceCollection.STANDARD),

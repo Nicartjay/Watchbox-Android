@@ -226,7 +226,7 @@ class SubtitleApi(private val client: HttpClient) {
     }
 
     /**
-     * VidLove's keyless catalogue (the subtitles the Rentaro extension's Yoru server carries).
+     * VidLove's keyless subtitle catalogue.
      *
      * `api.vidlove.cc/subtitles/{movie|tv}/<tmdb>[/<season>/<episode>]` returns every language
      * as WebVTT behind its own `/subtitle?url=` proxy - often several cuts per language, labelled
@@ -658,7 +658,7 @@ enum class SubtitleProvider {
 
     /**
      * Keyless VidLove catalogue, indexed by TMDB id. Every language as WebVTT, usually with
-     * several alternative cuts per language. The same source the Rentaro Yoru server uses.
+     * several alternative cuts per language.
      */
     VIDLOVE,
 }

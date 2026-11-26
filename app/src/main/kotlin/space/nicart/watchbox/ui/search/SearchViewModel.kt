@@ -39,9 +39,9 @@ data class SearchSource(val id: Long, val name: String)
  *
  * A single installed source is not a multi-source search just because the "All" scope is
  * represented by null. Treating it as one sent the phone through [AnimeRepository.searchAll],
- * while TV explicitly selected Rentaro and used [AnimeRepository.search]. Besides doing
+ * while TV explicitly selected the source and used [AnimeRepository.search]. Besides doing
  * unnecessary fan-out bookkeeping, the all-source path has a per-source timeout intended to
- * protect a group from one slow extension. With Rentaro as the only source that timeout merely
+ * protect a group from one slow extension. With only one source that timeout merely
  * turned a slow response into an empty result, which is why the same extension worked on TV but
  * appeared not to search on a phone.
  */

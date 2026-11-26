@@ -158,7 +158,7 @@ fun SearchScreen(
 
                     // With one source there is no grouping to preserve, so use the poster grid
                     // this screen was designed for. The old horizontal shelf hid most of
-                    // Rentaro's result set behind a sideways gesture on a phone.
+                    // the provider's result set behind a sideways gesture on a phone.
                     state.results.size == 1 -> {
                         val row = state.results.single()
                         LazyVerticalGrid(

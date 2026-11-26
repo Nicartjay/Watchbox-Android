@@ -25,7 +25,7 @@ class ShortReelsDetailTest {
     @Test
     fun `ordinary providers retain their detailed episode presentation`() {
         assertFalse(DetailUiState().isShortReels)
-        assertFalse(DetailUiState(detail = detail("Rentaro")).isShortReels)
+        assertFalse(DetailUiState(detail = detail("Regular")).isShortReels)
     }
 
     private fun detail(sourceName: String) = AnimeDetail(

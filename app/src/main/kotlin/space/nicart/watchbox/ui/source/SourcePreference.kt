@@ -170,7 +170,7 @@ private fun Preference.toSourcePreference(uiKey: String): SourcePreference? {
     val text = summary?.toString()
 
     return when (this) {
-        // Extensions such as Arvin-HP use keyless switches as one-shot actions:
+        // Some extensions use keyless switches as one-shot actions:
         // their change listener runs a request and returns false. They have no
         // stored value, but still need a visible, repeatable control.
         is TwoStatePreference -> if (!hasKey()) {
