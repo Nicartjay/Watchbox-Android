@@ -40,7 +40,11 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import space.nicart.watchbox.core.ui.wb
 
@@ -65,9 +69,13 @@ fun WbSearchField(
     onSubmit: (() -> Unit)? = null,
     /** Set false when reused as a plain text field rather than a search box. */
     showSearchIcon: Boolean = true,
+    imeAction: ImeAction = if (onSubmit != null) ImeAction.Search else ImeAction.Done,
+    keyboardType: KeyboardType = KeyboardType.Text,
 ) {
     val tokens = MaterialTheme.wb
     val metrics = LocalLayoutMetrics.current
+    val visualTransformation = remember(keyboardType) { textFieldVisualTransformation(keyboardType) }
+    val isPassword = keyboardType == KeyboardType.Password || keyboardType == KeyboardType.NumberPassword
 
     /**
      * True once the user has asked to type.
@@ -84,7 +92,8 @@ fun WbSearchField(
 
     if (metrics.isFocusDriven && !editing) {
         WbSearchFieldButton(
-            value = value,
+            // A TV's closed/focusable preview must not expose an unsubmitted password.
+            value = visualTransformation.filter(AnnotatedString(value)).text.text,
             placeholder = placeholder,
             showSearchIcon = showSearchIcon,
             onClick = { editing = true },
@@ -131,9 +140,12 @@ fun WbSearchField(
             }
         },
         singleLine = true,
+        visualTransformation = visualTransformation,
         shape = RoundedCornerShape(12.dp),
         keyboardOptions = KeyboardOptions(
-            imeAction = if (onSubmit != null) ImeAction.Search else ImeAction.Done,
+            imeAction = imeAction,
+            keyboardType = keyboardType,
+            autoCorrectEnabled = if (isPassword) false else null,
         ),
         keyboardActions = KeyboardActions(
             onSearch = {
@@ -167,6 +179,16 @@ fun WbSearchField(
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
 
                 when (event.key) {
+                    Key.Enter, Key.NumPadEnter -> {
+                        if (onSubmit == null) return@onPreviewKeyEvent false
+                        // Consume hardware Enter so the TextField does not also
+                        // dispatch an IME action and submit the same code twice.
+                        onSubmit()
+                        editing = false
+                        focusManager.clearFocus()
+                        true
+                    }
+
                     // Both give the field back, so focus is never trapped in it.
                     Key.Back, Key.Escape, Key.DirectionUp -> {
                         editing = false
@@ -181,6 +203,12 @@ fun WbSearchField(
             },
     )
 }
+
+internal fun textFieldVisualTransformation(keyboardType: KeyboardType): VisualTransformation =
+    when (keyboardType) {
+        KeyboardType.Password, KeyboardType.NumberPassword -> PasswordVisualTransformation()
+        else -> VisualTransformation.None
+    }
 
 /**
  * The closed state of a search field on a focus-driven device.

@@ -121,6 +121,8 @@
     <string name="source_filters_reset">Reset</string>
     <string name="source_filters_none">This source has no filters.</string>
     <string name="source_no_preferences">This source has no settings.</string>
+    <string name="source_preference_submit_hint">Press Enter or Done on the keyboard to apply.</string>
+    <string name="source_preference_input_unavailable">This input could not be configured by the extension.</string>
 
     <!-- Common -->
     <string name="action_play">Play</string>

@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import space.nicart.watchbox.R
@@ -37,6 +38,7 @@ import space.nicart.watchbox.core.ui.wb
 import space.nicart.watchbox.ui.components.NavOverlayPadding
 import space.nicart.watchbox.ui.components.WbBackButton
 import space.nicart.watchbox.ui.components.WbEmptyState
+import space.nicart.watchbox.ui.components.WbPillButton
 import space.nicart.watchbox.ui.components.WbScreenHeader
 import space.nicart.watchbox.ui.components.WbSearchField
 import space.nicart.watchbox.ui.components.sectionHorizontalPadding
@@ -137,6 +139,7 @@ private fun SourcePreferenceRow(preference: SourcePreference) {
     ) {
         when (preference) {
             is SourcePreference.Switch -> SwitchRow(preference)
+            is SourcePreference.Action -> ActionRow(preference)
             is SourcePreference.Select -> SelectRow(preference)
             is SourcePreference.MultiSelect -> MultiSelectRow(preference)
             is SourcePreference.Text -> TextRow(preference)
@@ -182,8 +185,7 @@ private fun SwitchRow(preference: SourcePreference.Switch) {
         Switch(
             checked = checked,
             onCheckedChange = {
-                checked = it
-                preference.onChange(it)
+                checked = preference.onChange(it)
             },
             colors = SwitchDefaults.colors(
                 checkedThumbColor = tokens.colors.onAccent,
@@ -191,6 +193,22 @@ private fun SwitchRow(preference: SourcePreference.Switch) {
                 uncheckedThumbColor = tokens.colors.textMuted,
                 uncheckedTrackColor = tokens.colors.surface,
             ),
+        )
+    }
+}
+
+@Composable
+private fun ActionRow(preference: SourcePreference.Action) {
+    WbPillButton(
+        label = preference.title,
+        onClick = preference.onClick,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    preference.summary?.takeIf { it.isNotBlank() }?.let {
+        Text(
+            text = it,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.wb.colors.textMuted,
         )
     }
 }
@@ -261,17 +279,24 @@ private fun MultiSelectRow(preference: SourcePreference.MultiSelect) {
 
 @Composable
 private fun TextRow(preference: SourcePreference.Text) {
-    var value by remember(preference.key) { mutableStateOf(preference.value) }
+    val editor = remember(preference) {
+        SourcePreferenceTextEditor(preference.readValue(), preference.onSubmit)
+    }
 
     LabelAndSummary(preference.title, preference.summary)
 
     WbSearchField(
-        value = value,
-        onValueChange = {
-            value = it
-            preference.onChange(it)
-        },
+        value = editor.value,
+        onValueChange = editor::edit,
+        onSubmit = editor::submit,
         placeholder = preference.title,
         showSearchIcon = false,
+        imeAction = ImeAction.Done,
+        keyboardType = sourcePreferenceKeyboardType(preference.inputType),
+    )
+    Text(
+        text = stringResource(R.string.source_preference_submit_hint),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.wb.colors.textMuted,
     )
 }

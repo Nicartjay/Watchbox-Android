@@ -10,9 +10,11 @@ import androidx.preference.Preference
 import androidx.preference.PreferenceGroup
 import androidx.preference.PreferenceManager
 import androidx.preference.TwoStatePreference
+import androidx.preference.readBoundInputType
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.preferenceKey
+import space.nicart.watchbox.R
 
 /**
  * A source preference, flattened out of the `androidx.preference` tree into
@@ -39,7 +41,15 @@ sealed interface SourcePreference {
         override val summary: String?,
         override val key: String,
         val checked: Boolean,
-        val onChange: (Boolean) -> Unit,
+        /** Returns the actual checked state, including an extension's veto. */
+        val onChange: (Boolean) -> Boolean,
+    ) : SourcePreference
+
+    data class Action(
+        override val title: String,
+        override val summary: String?,
+        override val key: String,
+        val onClick: () -> Unit,
     ) : SourcePreference
 
     data class Select(
@@ -66,8 +76,11 @@ sealed interface SourcePreference {
         override val title: String,
         override val summary: String?,
         override val key: String,
-        val value: String,
-        val onChange: (String) -> Unit,
+        val inputType: Int,
+        /** Read again when a lazy row is recreated, rather than showing an old snapshot. */
+        val readValue: () -> String,
+        /** Called only on explicit submission; returns the value the extension kept. */
+        val onSubmit: (String) -> String,
     ) : SourcePreference
 
     /** Anything with no editable state — rendered as a plain informational row. */
@@ -124,7 +137,9 @@ fun readSourcePreferences(context: Context, source: AnimeSource): List<SourcePre
             return emptyList()
         }
 
-    val prefs = screen.flatten().mapNotNull { it.toSourcePreference() }
+    val prefs = screen.flatten().mapIndexedNotNull { index, preference ->
+        preference.toSourcePreference(sourcePreferenceUiKey(preference.key, index))
+    }
 
     // The fourth path, and the least obvious: the screen was built without error but nothing in
     // it survived conversion - an unsupported preference type, or a blank label.
@@ -144,31 +159,46 @@ private fun PreferenceGroup.flatten(): List<Preference> =
         }
     }
 
+// performClick is restricted to AndroidX's group, but is the native dispatch
+// needed to run keyless actions with their original listener/veto semantics.
+@SuppressLint("RestrictedApi")
 @Suppress("UNCHECKED_CAST")
-private fun Preference.toSourcePreference(): SourcePreference? {
+private fun Preference.toSourcePreference(uiKey: String): SourcePreference? {
     val label = title?.toString().orEmpty().ifBlank { key.orEmpty() }
     if (label.isBlank()) return null
 
-    val prefKey = key ?: return null
     val text = summary?.toString()
 
     return when (this) {
-        is TwoStatePreference -> SourcePreference.Switch(
-            title = label,
-            summary = text,
-            key = prefKey,
-            checked = isChecked,
-            onChange = { next ->
-                // callChangeListener first: an extension may veto the value, and
-                // persisting before asking would leave the two out of step.
-                if (callChangeListener(next)) isChecked = next
-            },
-        )
+        // Extensions such as Arvin-HP use keyless switches as one-shot actions:
+        // their change listener runs a request and returns false. They have no
+        // stored value, but still need a visible, repeatable control.
+        is TwoStatePreference -> if (!hasKey()) {
+            SourcePreference.Action(
+                title = label,
+                summary = text,
+                key = uiKey,
+                onClick = { performClick() },
+            )
+        } else {
+            SourcePreference.Switch(
+                title = label,
+                summary = text,
+                key = uiKey,
+                checked = isChecked,
+                onChange = { next ->
+                    // callChangeListener first: an extension may veto the value, and
+                    // persisting before asking would leave the two out of step.
+                    if (callChangeListener(next)) isChecked = next
+                    isChecked
+                },
+            )
+        }
 
         is MultiSelectListPreference -> SourcePreference.MultiSelect(
             title = label,
             summary = text,
-            key = prefKey,
+            key = uiKey,
             entries = entries.map { it.toString() },
             values = entryValues.map { it.toString() },
             selected = values ?: emptySet(),
@@ -182,7 +212,7 @@ private fun Preference.toSourcePreference(): SourcePreference? {
         is ListPreference -> SourcePreference.Select(
             title = label,
             summary = text,
-            key = prefKey,
+            key = uiKey,
             entries = entries.map { it.toString() },
             selectedIndex = entryValues.indexOfFirst { it.toString() == value }
                 .coerceAtLeast(0),
@@ -192,16 +222,41 @@ private fun Preference.toSourcePreference(): SourcePreference? {
             },
         )
 
-        is EditTextPreference -> SourcePreference.Text(
-            title = label,
-            summary = text,
-            key = prefKey,
-            value = getText() ?: "",
-            onChange = { next ->
-                if (callChangeListener(next)) setText(next)
-            },
-        )
+        is EditTextPreference -> {
+            val inputType = runCatching { readBoundInputType() }.getOrElse {
+                // Do not fall back to a visible text field when a password's
+                // binding fails, and never log the field's contents.
+                Log.w(TAG, "EditTextPreference binding failed: ${it.javaClass.simpleName}")
+                return SourcePreference.Info(
+                    title = label,
+                    summary = context.getString(R.string.source_preference_input_unavailable),
+                    key = uiKey,
+                )
+            }
+            SourcePreference.Text(
+                title = label,
+                summary = text,
+                key = uiKey,
+                inputType = inputType,
+                readValue = { getText().orEmpty() },
+                onSubmit = { next ->
+                    if (callChangeListener(next)) setText(next)
+                    // Transient passwords/codes deliberately return false, so
+                    // they are neither saved nor left in the submitted field.
+                    getText().orEmpty()
+                },
+            )
+        }
 
-        else -> SourcePreference.Info(title = label, summary = text, key = prefKey)
+        else -> if (onPreferenceClickListener != null || intent != null) {
+            SourcePreference.Action(
+                title = label,
+                summary = text,
+                key = uiKey,
+                onClick = { performClick() },
+            )
+        } else {
+            SourcePreference.Info(title = label, summary = text, key = uiKey)
+        }
     }
 }
