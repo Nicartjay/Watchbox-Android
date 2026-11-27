@@ -245,6 +245,9 @@ fun TvSourceBrowseScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val artwork by artworkViewModel.artwork.collectAsStateWithLifecycle()
+    val searchInput = remember(viewModel, state.query) {
+        TvBrowseSearchInput(state.query, viewModel::submitQuery)
+    }
 
     // Re-requested as the page grows: each key covers one page, so appending a page
     // enriches only the new cards rather than re-walking the whole grid.
@@ -257,8 +260,7 @@ fun TvSourceBrowseScreen(
     val shouldAppend by remember {
         derivedStateOf {
             val last = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            val total = gridState.layoutInfo.totalItemsCount
-            total > 0 && last >= total - TV_POSTER_GRID_COLUMNS * 2
+            state.shouldAppendTvBrowse(last, gridState.layoutInfo.totalItemsCount)
         }
     }
     LaunchedEffect(shouldAppend) {
@@ -266,47 +268,54 @@ fun TvSourceBrowseScreen(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        when {
-            state.isLoading -> WbLoading()
+        // Keep the search header mounted like TV Search does. Swapping out the
+        // entire grid during loading used to dispose the field and close the IME.
+        LazyVerticalGrid(
+            state = gridState,
+            columns = GridCells.Fixed(
+                (TV_POSTER_GRID_COLUMNS / LocalPosterScale.current).toInt()
+                    .coerceAtLeast(2),
+            ),
+            contentPadding = PaddingValues(
+                start = TV_CONTENT_START,
+                end = 48.dp,
+                top = 40.dp,
+                bottom = 48.dp,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
+                TvBrowseHeader(
+                    sourceName = sourceName,
+                    state = state,
+                    query = searchInput.query,
+                    supportsLatest = supportsLatest,
+                    onQueryChange = searchInput::edit,
+                    onSubmitQuery = searchInput::submit,
+                    onSetMode = viewModel::setMode,
+                    onOpenFilters = { viewModel.setFilterPanelOpen(true) },
+                    onReturnFromWebView = viewModel::retry,
+                )
+            }
 
-            state.items.isEmpty() -> SourceErrorState(
-                title = state.errorMessage ?: stringResource(R.string.empty_search_title),
-                onRetry = viewModel::retry,
-                verificationRequest = state.verificationRequest
-                    ?: state.siteRequest?.takeIf { state.errorMessage != null },
-                modifier = Modifier.align(Alignment.Center),
-            )
+            when {
+                state.isLoading -> item(key = "loading", span = { GridItemSpan(maxLineSpan) }) {
+                    Box(modifier = Modifier.fillMaxWidth().height(240.dp)) { WbLoading() }
+                }
 
-            else -> LazyVerticalGrid(
-                state = gridState,
-                columns = GridCells.Fixed(
-                    (TV_POSTER_GRID_COLUMNS / LocalPosterScale.current).toInt()
-                        .coerceAtLeast(2),
-                ),
-                contentPadding = PaddingValues(
-                    start = TV_CONTENT_START,
-                    end = 48.dp,
-                    top = 40.dp,
-                    bottom = 48.dp,
-                ),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
-                    TvBrowseHeader(
-                        sourceName = sourceName,
-                        state = state,
-                        supportsLatest = supportsLatest,
-                        onQueryChange = viewModel::onQueryChange,
-                        onSubmitQuery = viewModel::submitQuery,
-                        onSetMode = viewModel::setMode,
-                        onOpenFilters = { viewModel.setFilterPanelOpen(true) },
-                        onReturnFromWebView = viewModel::retry,
+                state.items.isEmpty() -> item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
+                    SourceErrorState(
+                        title = state.errorMessage ?: stringResource(R.string.empty_search_title),
+                        onRetry = viewModel::retry,
+                        verificationRequest = state.verificationRequest
+                            ?: state.siteRequest?.takeIf { state.errorMessage != null },
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
 
-                items(items = state.items, key = { it.key }) { card ->
+                else -> items(items = state.items, key = { it.key }) { card ->
                     TvPosterGridCard(
                         card = artwork[card.key] ?: card,
                         onClick = { onOpenAnime(card) },
@@ -322,6 +331,8 @@ fun TvSourceBrowseScreen(
             onApply = viewModel::applyFilters,
             onReset = viewModel::resetFilters,
             onDismiss = { viewModel.setFilterPanelOpen(false) },
+            focusApplyOnRight = true,
+            applyHint = stringResource(R.string.tv_filters_apply_hint),
         )
     }
 }
@@ -337,6 +348,7 @@ fun TvSourceBrowseScreen(
 private fun TvBrowseHeader(
     sourceName: String,
     state: BrowseUiState,
+    query: String,
     supportsLatest: Boolean,
     onQueryChange: (String) -> Unit,
     onSubmitQuery: () -> Unit,
@@ -430,7 +442,7 @@ private fun TvBrowseHeader(
         Spacer(Modifier.height(16.dp))
 
         WbSearchField(
-            value = state.query,
+            value = query,
             onValueChange = onQueryChange,
             placeholder = stringResource(R.string.source_search_hint),
             onSubmit = onSubmitQuery,

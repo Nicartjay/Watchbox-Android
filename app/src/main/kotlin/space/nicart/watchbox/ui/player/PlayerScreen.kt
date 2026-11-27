@@ -77,6 +77,7 @@ import space.nicart.watchbox.ui.components.WbEmptyState
 import space.nicart.watchbox.ui.components.WbLoading
 import space.nicart.watchbox.ui.components.WbLoadingStatus
 import space.nicart.watchbox.WatchBoxApplication
+import space.nicart.watchbox.BuildConfig
 
 /** Track groups are valid only for the media item that produced them. */
 private data class PlayerTrackIdentity(
@@ -349,6 +350,15 @@ fun PlayerScreen(
      * is not composed while an error is showing, so focus must not be sent to it.
      */
     var playbackError by remember { mutableStateOf<PlaybackException?>(null) }
+    var speedBoostHeld by remember(exoPlayer) { mutableStateOf(false) }
+    val selectedPlaybackSpeed by rememberUpdatedState(state.speed)
+    val speedBoostAvailable = supportsHoldToBoost(
+        isMobileBuild = BuildConfig.FORM_FACTOR == "mobile",
+        formFactor = deviceFormFactor,
+    ) && !state.locked && !castState.isCasting && openPanel == PlayerPanel.NONE &&
+        keepTempPrompt == null && !state.isResolving && state.selectedStream != null &&
+        playbackError == null && (isPlaying || exoPlayer.playWhenReady)
+    val speedBoostActive = speedBoostHeld && speedBoostAvailable
 
     /**
      * Whether the on-screen controls are the D-pad's target.
@@ -819,6 +829,9 @@ fun PlayerScreen(
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE -> {
+                    // A temporary touch hold must never survive background playback.
+                    speedBoostHeld = false
+                    exoPlayer.setPlaybackSpeed(selectedPlaybackSpeed)
                     // Paused unless the user asked for background playback. Progress is written
                     // either way: leaving the app is exactly when the position must survive, and
                     // a background session can still be killed by the system at any point.
@@ -973,7 +986,9 @@ fun PlayerScreen(
     }
 
     // --- speed
-    LaunchedEffect(state.speed) { exoPlayer.setPlaybackSpeed(state.speed) }
+    LaunchedEffect(exoPlayer, state.speed, speedBoostActive) {
+        exoPlayer.setPlaybackSpeed(effectivePlaybackSpeed(state.speed, speedBoostActive))
+    }
 
     // Closes the search once a download has succeeded. Keyed on the dedicated Applied state
     // rather than Idle: the search begins from Idle, so testing for that would dismiss the
@@ -1313,8 +1328,31 @@ fun PlayerScreen(
                 .focusable(enabled = !controlsOwnFocus)
                 // Updated callbacks carry the live seek limit and transport into this
                 // detector without cancelling a double-tap when a playback tick arrives.
-                .pointerInput(state.locked, portraitPlayer, exoPlayer) {
+                .pointerInput(
+                    state.locked, portraitPlayer, exoPlayer, speedBoostAvailable,
+                    state.episode?.url, state.selectedStream?.url,
+                ) {
                     detectTapGestures(
+                        onPress = {
+                            try {
+                                tryAwaitRelease()
+                            } finally {
+                                // Runs on release, gesture cancellation and disposal.
+                                speedBoostHeld = false
+                            }
+                        },
+                        onLongPress = if (speedBoostAvailable) {
+                            { offset ->
+                                val edgePx = SYSTEM_EDGE_EXCLUSION_DP.dp.toPx()
+                                if (isSpeedHoldArea(offset.x, size.width) &&
+                                    !isInSystemEdgeZone(offset.y, size.height, edgePx)
+                                ) {
+                                    speedBoostHeld = true
+                                }
+                            }
+                        } else {
+                            null
+                        },
                         onTap = {
                             if (state.locked) {
                                 // Reveal the locked overlay briefly rather than
@@ -1360,7 +1398,7 @@ fun PlayerScreen(
                                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                 // Multi-touch/cancelled gestures never navigate.
                                 if (event.changes.any { it.id != down.id && it.pressed } ||
-                                    change.isConsumed
+                                    change.isConsumed || speedBoostHeld
                                 ) break
                                 if (change.changedToUpIgnoreConsumed()) {
                                     if (vertical) latestReelSwipe(dy, threshold)
@@ -1389,72 +1427,79 @@ fun PlayerScreen(
                         val nearSystemEdge =
                             isInSystemEdgeZone(down.position.y, size.height, edgePx)
 
-                        if (isLeftHalf) brightness.apply(brightness.currentOrDefault())
-                        else volume.sync()
+                        var level = 0f
 
-                        var level = if (isLeftHalf) brightness.currentOrDefault() else volume.level
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (change.isConsumed || speedBoostHeld ||
+                                    event.changes.any { it.id != down.id && it.pressed }
+                                ) break
+                                if (change.changedToUpIgnoreConsumed()) break
 
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (change.changedToUpIgnoreConsumed()) break
+                                val delta = change.positionChange()
+                                totalDx += delta.x
+                                totalDy += delta.y
 
-                            val delta = change.positionChange()
-                            totalDx += delta.x
-                            totalDy += delta.y
+                                if (axis == DragAxis.UNDECIDED) {
+                                    val moved = kotlin.math.hypot(totalDx, totalDy)
+                                    if (moved < slop) continue
 
-                            if (axis == DragAxis.UNDECIDED) {
-                                val moved = kotlin.math.hypot(totalDx, totalDy)
-                                if (moved < slop) continue
-
-                                axis = if (isVerticalDrag(totalDx, totalDy)) {
-                                    // Drags beginning at the very top or bottom
-                                    // belong to the system shade and nav gesture.
-                                    if (nearSystemEdge) DragAxis.IGNORED else DragAxis.VERTICAL
-                                } else {
-                                    DragAxis.HORIZONTAL
-                                }
-                            }
-
-                            when (axis) {
-                                DragAxis.VERTICAL -> {
-                                    change.consume()
-                                    level = (level + verticalDragToDelta(delta.y, size.height))
-                                        .coerceIn(0f, 1f)
-
-                                    if (isLeftHalf) {
-                                        brightness.apply(level)
-                                        activeGesture = VerticalGesture.BRIGHTNESS
+                                    axis = if (isVerticalDrag(totalDx, totalDy)) {
+                                        // Drags beginning at the very top or bottom
+                                        // belong to the system shade and nav gesture.
+                                        if (nearSystemEdge) DragAxis.IGNORED else DragAxis.VERTICAL
                                     } else {
-                                        volume.apply(level)
-                                        activeGesture = VerticalGesture.VOLUME
+                                        DragAxis.HORIZONTAL
                                     }
-                                    gestureLevel = level
+                                    // Taps and holds must not change brightness or volume.
+                                    if (axis == DragAxis.VERTICAL) {
+                                        if (!isLeftHalf) volume.sync()
+                                        level = if (isLeftHalf) brightness.currentOrDefault() else volume.level
+                                    }
                                 }
 
-                                DragAxis.HORIZONTAL -> {
-                                    change.consume()
-                                    seekAccumulated += delta.x
+                                when (axis) {
+                                    DragAxis.VERTICAL -> {
+                                        change.consume()
+                                        level = (level + verticalDragToDelta(delta.y, size.height))
+                                            .coerceIn(0f, 1f)
 
-                                    // Full-width drag spans 60s/90s/120s by runtime.
-                                    val window = when {
-                                        durationMs >= 3_600_000L -> 120_000f
-                                        durationMs >= 1_800_000L -> 90_000f
-                                        else -> 60_000f
+                                        if (isLeftHalf) {
+                                            brightness.apply(level)
+                                            activeGesture = VerticalGesture.BRIGHTNESS
+                                        } else {
+                                            volume.apply(level)
+                                            activeGesture = VerticalGesture.VOLUME
+                                        }
+                                        gestureLevel = level
                                     }
-                                    val seekDelta = (seekAccumulated / size.width) * window
-                                    if (kotlin.math.abs(seekDelta) >= 1_000f) {
-                                        transportSeekBy(seekDelta.toLong())
-                                        seekAccumulated = 0f
+
+                                    DragAxis.HORIZONTAL -> {
+                                        change.consume()
+                                        seekAccumulated += delta.x
+
+                                        // Full-width drag spans 60s/90s/120s by runtime.
+                                        val window = when {
+                                            durationMs >= 3_600_000L -> 120_000f
+                                            durationMs >= 1_800_000L -> 90_000f
+                                            else -> 60_000f
+                                        }
+                                        val seekDelta = (seekAccumulated / size.width) * window
+                                        if (kotlin.math.abs(seekDelta) >= 1_000f) {
+                                            transportSeekBy(seekDelta.toLong())
+                                            seekAccumulated = 0f
+                                        }
+                                        controlsVisible = true
                                     }
-                                    controlsVisible = true
+
+                                    else -> Unit
                                 }
-
-                                else -> Unit
                             }
+                        } finally {
+                            activeGesture = VerticalGesture.NONE
                         }
-
-                        activeGesture = VerticalGesture.NONE
                     }
                 }
         )
@@ -1617,6 +1662,10 @@ fun PlayerScreen(
             level = gestureLevel,
             modifier = Modifier.align(Alignment.Center),
         )
+        HoldSpeedIndicator(
+            visible = speedBoostActive,
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 64.dp),
+        )
 
         // --- controls
         if (portraitPlayer && !state.locked) {
@@ -1679,7 +1728,14 @@ fun PlayerScreen(
                 durationMs = durationMs,
                 bufferedMs = bufferedMs,
                 onPlayPause = transportTogglePlay,
-                onSeek = transportSeekTo,
+                onSeek = { target ->
+                    transportSeekTo(target)
+                    if (metricsForFocus.isTv) {
+                        // A held timeline key must keep controls up and the thumb responsive.
+                        if (!castState.isCasting) positionMs = transportPosition().coerceAtLeast(0L)
+                        lastInteraction++
+                    }
+                },
                 // Announced, so the buttons draw the same readout as a double-tap.
                 onSeekBy = ::seekByAnnounced,
                 // Null on the last episode and on a film, so the control is absent rather than

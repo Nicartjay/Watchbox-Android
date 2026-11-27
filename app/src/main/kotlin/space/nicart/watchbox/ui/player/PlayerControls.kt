@@ -48,6 +48,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -56,9 +57,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.graphicsLayer
@@ -605,6 +604,9 @@ private fun ProgressControls(
 ) {
     val isFocusDriven = LocalLayoutMetrics.current.isFocusDriven
     val sliderInteraction = rememberFocusInteraction()
+    val timelineSeek = remember(state.episode?.url, state.selectedStream?.url, seekable) {
+        TimelineKeySeek()
+    }
     // A download fraction wins when there is one: it is known before the duration is, which an
     // MKV with its index at the end does not report until that end has been read.
     val bufferedFraction = when {
@@ -665,34 +667,30 @@ private fun ProgressControls(
                     if (isFocusDriven) {
                         Modifier
                             .adaptiveFocus(sliderInteraction, RoundedCornerShape(4.dp), scale = false)
-                            .focusable(interactionSource = sliderInteraction)
+                            .onFocusChanged { if (!it.isFocused) timelineSeek.reset() }
+                            .focusable(
+                                enabled = seekable && durationMs > 0L,
+                                interactionSource = sliderInteraction,
+                            )
                             .onPreviewKeyEvent { event ->
+                                val native = event.nativeKeyEvent
+                                if (event.type == KeyEventType.KeyUp) {
+                                    timelineSeek.keyUp(native.keyCode)
+                                    return@onPreviewKeyEvent false
+                                }
                                 if (event.type != KeyEventType.KeyDown) {
                                     return@onPreviewKeyEvent false
                                 }
-                                when (event.key) {
-                                    Key.DirectionLeft -> {
-                                        onSeek(
-                                            (positionMs - SLIDER_SEEK_STEP_MS)
-                                                .coerceAtLeast(0L),
-                                        )
-                                        true
-                                    }
-
-                                    Key.DirectionRight -> {
-                                        // Clamped to the duration so a press at the end does
-                                        // not ask for a position past it.
-                                        onSeek(
-                                            (positionMs + SLIDER_SEEK_STEP_MS)
-                                                .coerceAtMost(durationMs.coerceAtLeast(0L)),
-                                        )
-                                        true
-                                    }
-
-                                    // Everything else falls through, so Up and Down still move
-                                    // focus out of the scrubber to the surrounding controls.
-                                    else -> false
-                                }
+                                if (!seekable) return@onPreviewKeyEvent false
+                                val target = timelineSeek.keyDown(
+                                    keyCode = native.keyCode,
+                                    repeatCount = native.repeatCount,
+                                    eventTimeMs = native.eventTime,
+                                    positionMs = positionMs,
+                                    durationMs = durationMs,
+                                ) ?: return@onPreviewKeyEvent false
+                                onSeek(target)
+                                true
                             }
                     } else {
                         Modifier
@@ -988,15 +986,6 @@ fun LockedPlayerOverlay(
 
 private fun Float.formatSpeed(): String =
     if (this == this.toInt().toFloat()) this.toInt().toString() else "%.2f".format(this).trimEnd('0').trimEnd('.')
-
-/**
- * How far one directional press moves the scrubber.
- *
- * Coarser than the ±10s buttons on purpose: those exist for a precise nudge, whereas holding a
- * direction on the timeline is how someone crosses a long film, and ten seconds a press makes
- * that unusable.
- */
-internal const val SLIDER_SEEK_STEP_MS = 15_000L
 
 /**
  * Horizontal inset matching Material's slider.

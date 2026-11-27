@@ -17,17 +17,23 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import kotlinx.coroutines.delay
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -56,6 +62,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import space.nicart.watchbox.R
@@ -81,10 +88,14 @@ fun SourceFilterPanel(
     onApply: () -> Unit,
     onReset: () -> Unit,
     onDismiss: () -> Unit,
+    /** Enabled only by the TV browse screen; the mobile drawer keeps its navigation. */
+    focusApplyOnRight: Boolean = false,
+    applyHint: String? = null,
 ) {
     val tokens = MaterialTheme.wb
     val panelFocus = remember { FocusRequester() }
     val applyFocus = remember { FocusRequester() }
+    var panelHasFocus by remember { mutableStateOf(false) }
 
     // Closes the drawer instead of leaving the screen.
     //
@@ -101,11 +112,14 @@ fun SourceFilterPanel(
 
     // Pull focus in when the drawer opens, so the first D-pad press acts on a filter
     // rather than the grid behind it.
-    LaunchedEffect(visible) {
+    LaunchedEffect(visible, focusApplyOnRight) {
         if (!visible) return@LaunchedEffect
         // Retried because requestFocus reports success even when no focusable node is
         // attached yet: the drawer is still animating in on the first frames.
         repeat(20) {
+            // On TV, stop as soon as focus arrived. Continuing the retries
+            // would steal focus back after a quick Right press to Apply.
+            if (focusApplyOnRight && panelHasFocus) return@LaunchedEffect
             runCatching { panelFocus.requestFocus() }
             delay(25)
         }
@@ -142,6 +156,7 @@ fun SourceFilterPanel(
                     // grid and the panel can never be reached with a remote. Back and
                     // Escape close it, since focus can no longer leave by moving.
                     .focusRequester(panelFocus)
+                    .onFocusChanged { panelHasFocus = it.hasFocus }
                     // Cancels focus exit outright: the grid behind stays focusable, and
                     // a remote has no pointer to dismiss with, so focus escaping the
                     // drawer leaves no way back into it.
@@ -160,6 +175,16 @@ fun SourceFilterPanel(
 
                             else -> false
                         }
+                    }
+                    // Bubble rather than preview: an editing text field or IME
+                    // must get the first chance to use Right for typing/caret movement.
+                    .onKeyEvent { event ->
+                        handleFilterApplyShortcut(
+                            enabled = focusApplyOnRight,
+                            key = event.key,
+                            type = event.type,
+                            focusApply = { runCatching { applyFocus.requestFocus() }.isSuccess },
+                        )
                     }
                     .padding(20.dp),
             ) {
@@ -210,18 +235,24 @@ fun SourceFilterPanel(
 
                 Spacer(Modifier.height(12.dp))
 
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                val footerModifier = if (applyHint != null) Modifier.height(IntrinsicSize.Min) else Modifier
+                val buttonHeight = if (applyHint != null) Modifier.fillMaxHeight() else Modifier
+                Row(
+                    modifier = footerModifier,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                     PanelButton(
                         label = stringResource(R.string.source_filters_reset),
                         filled = false,
                         onClick = onReset,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).then(buttonHeight),
                     )
                     PanelButton(
                         label = stringResource(R.string.source_filters_apply),
                         filled = true,
                         onClick = onApply,
-                        modifier = Modifier.weight(1f).focusRequester(applyFocus),
+                        modifier = Modifier.weight(1f).then(buttonHeight).focusRequester(applyFocus),
+                        hint = applyHint,
                     )
                 }
             }
@@ -235,6 +266,7 @@ private fun PanelButton(
     filled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    hint: String? = null,
 ) {
     val tokens = MaterialTheme.wb
     val interaction = rememberFocusInteraction()
@@ -260,12 +292,27 @@ private fun PanelButton(
             .padding(vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = if (filled) tokens.colors.onAccent else tokens.colors.textSecondary,
-        )
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = if (filled) tokens.colors.onAccent else tokens.colors.textSecondary,
+            )
+            if (hint != null) {
+                Text(
+                    text = hint,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (filled) tokens.colors.onAccent else tokens.colors.textMuted,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                )
+            }
+        }
     }
 }
 

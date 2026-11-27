@@ -70,6 +70,10 @@ fun List<Extension.Installed>.sourceEntries(
  */
 enum class BrowseMode { POPULAR, LATEST, SEARCH }
 
+/** An explicitly submitted empty query returns to the source's normal listing. */
+internal fun submittedBrowseMode(query: String): BrowseMode =
+    if (query.isBlank()) BrowseMode.POPULAR else BrowseMode.SEARCH
+
 data class BrowseUiState(
     val items: List<AnimeCard> = emptyList(),
     val mode: BrowseMode = BrowseMode.POPULAR,
@@ -199,6 +203,16 @@ class BrowseViewModel(
         searchDebounce?.cancel()
         if (_uiState.value.query.isBlank()) return
         load(BrowseMode.SEARCH, reset = true)
+    }
+
+    /**
+     * Commits an explicit search from a UI that keeps its typing draft locally.
+     * The TV caller uses this; the mobile caller retains debounced onQueryChange.
+     */
+    fun submitQuery(query: String) {
+        searchDebounce?.cancel()
+        _uiState.value = _uiState.value.copy(query = query)
+        load(submittedBrowseMode(query), reset = true)
     }
 
     fun setFilterPanelOpen(open: Boolean) {

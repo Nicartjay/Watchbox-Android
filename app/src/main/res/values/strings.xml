@@ -204,6 +204,7 @@
     <string name="player_subtitles">Subs</string>
     <string name="player_audio">Audio</string>
     <string name="player_speed">Speed</string>
+    <string name="player_hold_speed">2× speed</string>
     <string name="player_quality">Quality</string>
     <string name="player_server">Server</string>
     <string name="player_dub">Audio</string>

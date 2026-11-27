@@ -149,7 +149,7 @@ or off independently.
 | 🧭 **Browse** | Popular and latest per source, with filters and a button that opens the source's own site |
 | 🧩 **Extensions** | Multiple repositories, each switchable; filter by language, adult content and repository; per-extension settings; load failures surfaced rather than hidden |
 | 📄 **Detail** | Parallax hero, collapsing floating header, expanding action row, episode list in blocks of fifty for long runs, a Videos tab of TMDB trailers, where-to-watch by country, studio logos, reviews, and source metadata parsed out of markdown |
-| ▶️ **Player** | Media3/ExoPlayer with HLS, DASH and progressive files, quality/subtitle/speed pickers, skip recap/intro/outro, episode switcher, aspect cycling, gesture seek, brightness and volume swipes, lock mode |
+| ▶️ **Player** | Media3/ExoPlayer with HLS, DASH and progressive files, quality/subtitle/speed pickers, skip recap/intro/outro, episode switcher, aspect cycling, gesture seek, brightness and volume swipes, mobile hold-to-play at 2× (release restores your speed), lock mode |
 | ⬇️ **Downloads** | Episodes and films kept for offline viewing, with subtitles; quality chosen per download; pause, resume and cancel; storage usage and an SD-card option |
 | 💬 **Subtitles** | Online search and download; size, background style, outline width, colour and opacity; and timing correction measured from the video itself — adjustable from Settings or inside the player |
 | 📡 **Casting** | Chromecast and DLNA in one list, with a header-injecting local proxy and a Web Video Caster hand-off |
@@ -169,9 +169,15 @@ or off independently.
 - **Backdrop that follows focus**, using TMDB backdrops and title logos; landscape
   16:9 cards rather than portrait posters
 - **Full D-pad navigation**, with focus visible at three-metre viewing distance
+- **TV Browse search submits on Enter / Done**, keeping the field available while
+  results load or a search returns no matches; typing alone does not search
+- **Right jumps to Apply in TV Browse filters**, with a reminder under the Apply
+  label; press OK to apply the selected filters
 - **Remote playback control** — left and right seek ±10s while the controls are
   hidden, with an on-screen readout; directional seek on the timeline when they are
   showing; media transport keys; and Back that hides the controls before leaving
+- **Accelerating TV timeline** — tap Left/Right for a 15-second nudge, or hold to
+  accelerate exponentially; releasing or reversing restores precise movement
 - **Skip button takes focus** when it appears, so OK skips an opening without
   aiming at anything
 - **Voice search**, because typing a title with a remote is nobody's preference
